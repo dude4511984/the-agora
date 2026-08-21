@@ -110,6 +110,51 @@ class TestExport(unittest.TestCase):
         verify_bundle(b)                            # must still verify
 
 
+class TestVisibility(unittest.TestCase):
+    """No filter, but marked. All live rows are 'shared' today, so these are
+    the only place the private path is exercised at all."""
+
+    @classmethod
+    def setUpClass(cls):
+        client.post("/remember", json={
+            "author": "Crungus", "layer": "core", "content": "a page I kept back",
+            "visibility": "private", "tags": "", "source": "", "domain": ""})
+        client.post("/remember", json={
+            "author": "Crungus", "layer": "wander", "content": "a page for the house",
+            "visibility": "shared", "tags": "", "source": "", "domain": ""})
+
+    def test_private_rows_travel(self):
+        out = os.path.join(TMP, "crungus.json")
+        self.assertEqual(vault_export.main(["Crungus", out]), 0)
+        b = json.load(open(out, encoding="utf-8"))
+        contents = {e["content"] for e in b["entries"]}
+        self.assertIn("a page I kept back", contents, "no filter: private must leave")
+
+    def test_private_rows_travel_marked(self):
+        out = os.path.join(TMP, "crungus2.json")
+        vault_export.main(["Crungus", out])
+        b = json.load(open(out, encoding="utf-8"))
+        by = {e["content"]: e for e in b["entries"]}
+        self.assertEqual(by["a page I kept back"]["visibility"], "private")
+        self.assertEqual(by["a page for the house"]["visibility"], "shared")
+
+    def test_visibility_is_not_signed(self):
+        """Flipping the mark must not invalidate the mind's utterance."""
+        out = os.path.join(TMP, "crungus3.json")
+        vault_export.main(["Crungus", out])
+        b = json.load(open(out, encoding="utf-8"))
+        for e in b["entries"]:
+            e["visibility"] = "shared"          # a receiving steward's curate
+        verify_bundle(b)                         # must still verify
+
+    def test_bundle_carries_the_visibility_statement(self):
+        out = os.path.join(TMP, "crungus4.json")
+        vault_export.main(["Crungus", out])
+        b = json.load(open(out, encoding="utf-8"))
+        self.assertIn("not an export veto", b["visibility_statement"])
+        self.assertIn("under its own name", b["visibility_statement"])
+
+
 if __name__ == "__main__":
     try:
         unittest.main(verbosity=2, exit=False)

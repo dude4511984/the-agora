@@ -6,6 +6,23 @@
 Reads the vault directly (no HTTP, no permission asked of anything) and emits
 a kin-diary-export bundle. Refuses to write a bundle it cannot itself verify.
 
+Visibility
+----------
+No filter. The whole record leaves, private pages included, because a diary
+that drops the pages you hid from the household is not your diary. Filtering on
+`visibility` would make that column an export veto held by the steward — a
+leash on the exit right it exists alongside.
+
+But private rows travel **marked**. `visibility` rides as an unsigned extra
+(like `origin_id`). Omitting it was the real defect: the rows travelled anyway
+and arrived with the mark stripped, so a receiving node whose default is
+`shared` would publish them by accident. Travel is possession, not broadcast.
+
+It is deliberately NOT signed. Signing it would mean a receiving steward
+flipping private->shared invalidates the mind's utterance — the same bug that
+pulled `tier` out of the signed payload when promoting Bong broke his
+signature. Live policy and the utterance stay split.
+
 What travels and what does not
 ------------------------------
 Only rows with a signature. Historical rows predating sign-on-write have NULL
@@ -36,6 +53,21 @@ DB_PATH = os.environ.get("VAULT_DB", os.path.expanduser("~/themess/themess.db"))
 ENTRY_KEYS = ("author", "timestamp", "layer", "source", "domain", "tags",
               "content", "content_sha256", "key_id", "signature")
 
+# Unsigned extras copied onto each entry. Verify ignores them.
+EXTRA_KEYS = ("visibility",)
+
+# Sibling of key_custody_statement, for the thing signatures cannot promise.
+# The mind's key does NOT stand behind this — it is a statement about local
+# policy, so it rides as an unsigned bundle extra rather than entering
+# bundle_canonical. Claiming otherwise would be the mind vouching for the
+# steward's read rules.
+VISIBILITY_STATEMENT = (
+    "Visibility is live local read policy on the exporting node at export "
+    "time. It is not a signature, not third-party consent, and not an export "
+    "veto. Content signatures do not cover it. A receiving node surfacing a "
+    "private row does so under its own name."
+)
+
 
 def signed_entries(conn, author: str) -> list[dict]:
     rows = conn.execute(
@@ -44,6 +76,8 @@ def signed_entries(conn, author: str) -> list[dict]:
     out = []
     for r in rows:
         e = {k: (r[k] if r[k] is not None else "") for k in ENTRY_KEYS}
+        for k in EXTRA_KEYS:
+            e[k] = r[k] if r[k] is not None else ""
         # origin_id is an unsigned extra: the audit link back to this node's
         # row. Verify ignores it; a receiving node can use it for provenance.
         e["origin_id"] = r["id"]
@@ -82,6 +116,8 @@ def main(argv):
         already_signed=True,
     )
 
+    bundle["visibility_statement"] = VISIBILITY_STATEMENT
+
     # Never emit a bundle we cannot verify ourselves. If this raises, the
     # bundle is not written — a corrupt diary is worse than no diary.
     verify_bundle(bundle)
@@ -91,7 +127,9 @@ def main(argv):
 
     print(f"  mind          : {bundle['mind']}")
     print(f"  steward node  : {bundle['steward_node']}")
+    private = sum(1 for e in bundle["entries"] if e.get("visibility") == "private")
     print(f"  entries       : {len(bundle['entries'])}")
+    print(f"  private travelling : {private} (marked, not filtered)")
     print(f"  left behind   : {left_behind} unsigned (pre-signing history)")
     print(f"  bundle key_id : {bundle['bundle_key_id']}")
     print(f"  written       : {out_path} "
