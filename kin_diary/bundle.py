@@ -6,7 +6,7 @@ import time
 
 from cryptography.exceptions import InvalidSignature
 
-from .canonical import bundle_canonical
+from .canonical import bundle_canonical, keyring_sha256
 from .keys import (
     KEY_CUSTODY,
     KEY_CUSTODY_STATEMENT,
@@ -66,13 +66,14 @@ def export_bundle(
         entry_signatures=entry_sigs,
         retraction_signatures=retract_sigs,
         curation_signatures=curate_sigs,
+        keyring_sha256_hex=keyring_sha256(keyring.get("prior")),
     )
     return {
         "format": "kin-diary-export",
         "version": 1,
         "canonical": "kin-diary-entry-v1",
         "rotation_canonical": "kin-diary-rotation-v1",
-        "bundle_canonical": "kin-diary-bundle-v1",
+        "bundle_canonical": "kin-diary-bundle-v2",
         "retract_canonical": "kin-diary-retract-v1",
         "curate_canonical": "kin-diary-curate-v1",
         "curate_unsigned_canonical": "kin-diary-curate-unsigned-v1",
@@ -175,6 +176,7 @@ def verify_bundle(bundle: dict) -> None:
         entry_signatures=[e["signature"] for e in bundle.get("entries") or []],
         retraction_signatures=[r["signature"] for r in bundle.get("retractions") or []],
         curation_signatures=[c["signature"] for c in bundle.get("curations") or []],
+        keyring_sha256_hex=keyring_sha256(keyring.get("prior")),
     )
     try:
         load_public(current).verify(bytes.fromhex(bundle["bundle_signature"]), canon)

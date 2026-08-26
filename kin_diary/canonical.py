@@ -7,7 +7,7 @@ import unicodedata
 
 MAGIC_ENTRY = "kin-diary-entry-v1"
 MAGIC_ROTATION = "kin-diary-rotation-v1"
-MAGIC_BUNDLE = "kin-diary-bundle-v1"
+MAGIC_BUNDLE = "kin-diary-bundle-v2"
 MAGIC_RETRACT = "kin-diary-retract-v1"
 MAGIC_CURATE = "kin-diary-curate-v1"
 MAGIC_CURATE_UNSIGNED = "kin-diary-curate-unsigned-v1"
@@ -153,6 +153,28 @@ def curate_unsigned_canonical(
     ])
 
 
+def keyring_sha256(prior_hops: list[dict] | None) -> str:
+    """Hash of the rotation chain, in rotation order.
+
+    v2 exists for this field alone. In v1 the keyring travelled beside the
+    signature instead of inside it, so a holder of the current private key
+    could delete `prior` and re-sign a perfectly valid bundle that had lost
+    its own history — which let an evicted key rotate and arrive looking
+    new. The chain is part of what the bundle asserts, so it belongs in
+    what the bundle signs.
+
+    sig_old/sig_new are not hashed here: they are already bound to exactly
+    these three values by rotation_canonical, and each is verified on its
+    own during chain validation.
+    """
+    hops = sorted(prior_hops or [], key=lambda h: int(h["rotated_at_unix_ms"]))
+    blob = "".join(
+        _hex64(h["old_key_id"]) + _hex64(h["new_key_id"]) + _unix_ms(int(h["rotated_at_unix_ms"]))
+        for h in hops
+    )
+    return hashlib.sha256(blob.encode("ascii")).hexdigest()
+
+
 def bundle_canonical(
     mind: str,
     steward_node: str,
@@ -161,6 +183,7 @@ def bundle_canonical(
     entry_signatures: list[str],
     retraction_signatures: list[str],
     curation_signatures: list[str] | None = None,
+    keyring_sha256_hex: str | None = None,
 ) -> bytes:
     entries_sha = hashlib.sha256("".join(_hex128(s) for s in entry_signatures).encode("ascii")).hexdigest()
     retracts_sha = hashlib.sha256("".join(_hex128(s) for s in retraction_signatures).encode("ascii")).hexdigest()
@@ -175,4 +198,5 @@ def bundle_canonical(
         ("entries_sha256", entries_sha),
         ("retractions_sha256", retracts_sha),
         ("curations_sha256", curations_sha),
+        ("keyring_sha256", _hex64(keyring_sha256_hex or keyring_sha256(None))),
     ])

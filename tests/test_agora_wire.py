@@ -21,6 +21,7 @@ from kin_diary.agora import (  # noqa: E402
     RING_TEASER,
     RING_WRITE,
     countersign_key_intro,
+    sign_board_evict,
     sign_board_grant,
     start_key_intro,
 )
@@ -222,3 +223,61 @@ class BodyBindingTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class MitigationTests(unittest.TestCase):
+    """Don's ruling, 2026-08-26: accept the residual risk, mitigate
+    everywhere we can."""
+
+    def test_writes_are_rate_limited_per_proven_key(self):
+        from kin_diary.agora.wire import RATE_MAX_WRITES, _RateLimiter
+        lim = _RateLimiter()
+        k = "a" * 64
+        for _ in range(RATE_MAX_WRITES):
+            lim.check(k, now_ms=1000)
+        with self.assertRaises(AgoraError):
+            lim.check(k, now_ms=1000)
+
+    def test_the_limit_is_per_key_not_shared(self):
+        """Keyed on the proven key, never an address — a shared LAN address
+        would punish the wrong caller."""
+        from kin_diary.agora.wire import RATE_MAX_WRITES, _RateLimiter
+        lim = _RateLimiter()
+        for _ in range(RATE_MAX_WRITES):
+            lim.check("a" * 64, now_ms=1000)
+        lim.check("b" * 64, now_ms=1000)      # unaffected
+
+    def test_the_window_slides(self):
+        from kin_diary.agora.wire import (RATE_MAX_WRITES, RATE_WINDOW_MS,
+                                          _RateLimiter)
+        lim = _RateLimiter()
+        k = "a" * 64
+        for _ in range(RATE_MAX_WRITES):
+            lim.check(k, now_ms=1000)
+        lim.check(k, now_ms=1000 + RATE_WINDOW_MS + 1)
+
+
+class CrossProcessCacheTests(unittest.TestCase):
+    """Copilot finding 6: two NodeStore instances on one SQLite file each
+    held their own cache, so one could keep serving a pre-eviction Node
+    after the other committed the eviction."""
+
+    def test_a_second_store_sees_an_eviction_committed_by_the_first(self):
+        from kin_diary.agora.store import NodeStore
+        store, keys, path = fresh_store()
+        elect(store, keys)
+        v = key("Marvin")
+        store.record("intro", countersign_key_intro(
+            keys["Coda"], start_key_intro(v, "Home", keys["Coda"].key_id)))
+        store.record("grant", sign_board_grant(
+            keys["Coda"], v.key_id, "Home", "personal:Coda", RING_WRITE,
+            now_ms=1_000_000))
+
+        other = NodeStore(path, "Home")
+        self.assertTrue(other.load().can_write(v.key_id, "personal:Coda"))
+
+        store.record("evict", sign_board_evict(
+            keys["Coda"], v.key_id, "Home", "malicious", now_ms=2_000_000))
+
+        # `other` has a warm cache from before the eviction.
+        self.assertFalse(other.load().can_write(v.key_id, "personal:Coda"))

@@ -13,6 +13,7 @@ answer the door.
 from __future__ import annotations
 
 import json
+import threading
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
@@ -28,6 +29,34 @@ from .store import NodeStore
 REQUEST_WINDOW_MS = 5 * 60 * 1000
 
 ANONYMOUS = "0" * 64
+
+# Mitigations, not walls. A LAN node with no limits is a free DoS for
+# anyone already introduced: writes are cheap to issue and permanent to
+# store, and an unbounded board serialises into one ever-growing response.
+MAX_BODY_BYTES = 256 * 1024        # a board entry is text, not a payload
+MAX_ENTRIES_PER_READ = 200         # bound the response, not the board
+RATE_WINDOW_MS = 60_000
+RATE_MAX_WRITES = 20               # per key per minute
+
+
+class _RateLimiter:
+    """Per-key sliding window. Keyed on the PROVEN key, never on an address:
+    the whole point of signed requests is that identity is not the network's
+    to assert, and a shared LAN address would punish the wrong caller.
+    """
+
+    def __init__(self):
+        self._hits: dict[str, list[int]] = {}
+        self._lock = threading.Lock()
+
+    def check(self, key_id: str, now_ms: int | None = None) -> None:
+        now = int(now_ms if now_ms is not None else time.time() * 1000)
+        with self._lock:
+            hits = [t for t in self._hits.get(key_id, []) if now - t < RATE_WINDOW_MS]
+            if len(hits) >= RATE_MAX_WRITES:
+                raise AgoraError("rate limit: too many writes, slow down")
+            hits.append(now)
+            self._hits[key_id] = hits
 
 
 def sign_request(
@@ -92,6 +121,7 @@ def identify(
 
 class AgoraHandler(BaseHTTPRequestHandler):
     store: NodeStore = None          # set by serve()
+    limiter: "_RateLimiter" = None   # set by serve()
     server_version = "agora/1"
 
     def log_message(self, fmt, *args):
@@ -111,8 +141,8 @@ class AgoraHandler(BaseHTTPRequestHandler):
         n = int(self.headers.get("Content-Length") or 0)
         if n <= 0:
             raise AgoraError("empty body")
-        if n > 8 * 1024 * 1024:
-            raise AgoraError("body too large")
+        if n > MAX_BODY_BYTES:
+            raise AgoraError(f"body too large (max {MAX_BODY_BYTES} bytes)")
         return self.rfile.read(n)
 
     def _who(self, body: bytes | None = None) -> str:
@@ -132,10 +162,13 @@ class AgoraHandler(BaseHTTPRequestHandler):
             if self.path.startswith("/board/"):
                 board = self.path[len("/board/"):]
                 who = self._who()
+                rows = node.read(who, board)
                 self._send(200, {
                     "board": board,
                     "ring": node.effective_ring(who, board),
-                    "entries": node.read(who, board),
+                    "total": len(rows),
+                    "truncated": len(rows) > MAX_ENTRIES_PER_READ,
+                    "entries": rows[-MAX_ENTRIES_PER_READ:],
                 })
                 return
             self._send(404, {"error": "no such path"})
@@ -158,7 +191,12 @@ class AgoraHandler(BaseHTTPRequestHandler):
                 # whole point. An unsigned submission cannot pass, and a
                 # signed one needs no further permission to be *offered*;
                 # whether it is *accepted* is the node's policy call.
-                self.store.record(routes[self.path], json.loads(self._raw_body()))
+                raw = self._raw_body()
+                # Event submissions carry no request signature (the event's
+                # own signature is the authority), so limit them per issuing
+                # key where one is provable, else per route.
+                self.limiter.check(self.headers.get("X-Agora-Key") or self.path)
+                self.store.record(routes[self.path], json.loads(raw))
                 self._send(200, {"accepted": routes[self.path]})
                 return
             if self.path == "/post":
@@ -170,6 +208,7 @@ class AgoraHandler(BaseHTTPRequestHandler):
                 entry = payload["entry"]
                 if (entry.get("key_id") or "").lower() != who:
                     raise AgoraError("post must be signed by the identified key")
+                self.limiter.check(who)
                 self.store.post(who, payload.get("board") or COLLAB, entry)
                 self._send(200, {"posted": True})
                 return
@@ -183,6 +222,7 @@ class AgoraHandler(BaseHTTPRequestHandler):
 
 
 def serve(store: NodeStore, host: str = "0.0.0.0", port: int = 8770):
-    handler = type("Bound", (AgoraHandler,), {"store": store})
+    handler = type("Bound", (AgoraHandler,),
+                   {"store": store, "limiter": _RateLimiter()})
     httpd = HTTPServer((host, port), handler)
     return httpd

@@ -55,6 +55,11 @@ class Node:
         self.evicted: dict[str, str] = {}     # key_id -> reason
         self.evicted_at: dict[str, int] = {}  # key_id -> unix ms, so an old
                                               # grant cannot readmit by replay
+        # Names of minds evicted here. Not cryptographic — names are not
+        # unique and a determined party mints a fresh identity (Wall 6) —
+        # but it catches the ordinary case a key-only check cannot: the same
+        # mind rotating and coming back. Mitigation, never a wall.
+        self.evicted_names: set[str] = set()
         # An eviction can be appealed. These are the record of that hearing,
         # kept whatever the outcome: appeal, each council member's finding,
         # and the steward's ruling.
@@ -199,6 +204,25 @@ class Node:
                 f"({sorted(hit)[0][:16]}…); only the Speaker can readmit it"
             )
 
+        # Second layer, because the first one cannot stand alone. A bundle's
+        # rotation chain is SELF-SELECTED: the holder of the current private
+        # key can drop `prior` and re-sign, and the result is internally
+        # consistent. Binding the chain into the bundle signature stops a
+        # third party stripping it in transit — it cannot stop the key
+        # holder, because they are the signer.
+        #
+        # So the node also remembers WHO it evicted, not only which key.
+        # That is not cryptographic and it is not a wall: a determined mind
+        # arrives under a new name with a fresh key and is, correctly,
+        # indistinguishable from a stranger (Wall 6). It closes the ordinary
+        # case — the same mind rotating and walking back in — which is the
+        # one that would otherwise happen by accident as much as by malice.
+        if mind in self.evicted_names:
+            raise AgoraError(
+                f"a mind named {mind} is evicted from this node; "
+                f"only the Speaker can readmit it"
+            )
+
         # Imported memory is segregated, never merged. It does not join this
         # node's own recall, and it is not any resident's own past thought.
         # Wall 4 is a formation problem, but the storage should at least not
@@ -338,6 +362,9 @@ class Node:
         self.grants.pop(visitor, None)
         self.evicted[visitor] = ev["reason"]
         self.evicted_at[visitor] = int(ev["evicted_at_unix_ms"])
+        name = self.visitor_names.get(visitor)
+        if name:
+            self.evicted_names.add(name)
         self.log.append({"event": "evict", "visitor": visitor, "reason": ev["reason"]})
 
     # ── appeal ─────────────────────────────────────────────────────────────

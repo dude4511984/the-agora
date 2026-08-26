@@ -72,6 +72,7 @@ class NodeStore:
         self.conn.commit()
         self._lock = threading.RLock()
         self._cache: Node | None = None
+        self._cache_rev: tuple | None = None
 
     # ── residents ──────────────────────────────────────────────────────────
 
@@ -121,12 +122,33 @@ class NodeStore:
         any write, so it can never serve a stale ring.
         """
         with self._lock:
-            if self._cache is None:
+            rev = self._revision()
+            if self._cache is None or rev != self._cache_rev:
                 self._cache = self._load_locked()
+                self._cache_rev = rev
             return self._cache
+
+    def _revision(self) -> tuple:
+        """Highest event and post ids actually in the file.
+
+        The in-process cache alone is not enough: two NodeStore instances on
+        one SQLite file (the wire in one process, a CLI in another) would
+        each hold their own cache, and one could keep serving a
+        pre-eviction Node after the other committed the eviction. Asking
+        the database what it holds costs one cheap query and makes the
+        cache correct across processes rather than only within one.
+        """
+        row = self.conn.execute(
+            "SELECT (SELECT COALESCE(MAX(seq),0) FROM agora_events WHERE node=?) e, "
+            "       (SELECT COALESCE(MAX(seq),0) FROM agora_posts  WHERE node=?) p, "
+            "       (SELECT COUNT(*) FROM agora_residents WHERE node=?) r",
+            (self.node_name, self.node_name, self.node_name),
+        ).fetchone()
+        return (row["e"], row["p"], row["r"])
 
     def _invalidate(self) -> None:
         self._cache = None
+        self._cache_rev = None
 
     def _load_locked(self) -> Node:
         node = Node(self.node_name)

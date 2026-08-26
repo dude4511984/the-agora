@@ -88,12 +88,24 @@ the old key and the new key at rotation.
 `rotated_at_unix_ms` is milliseconds since Unix epoch, UTC, integer.
 
 
-## Canonical bundle bytes (`kin-diary-bundle-v1`)
+## Canonical bundle bytes (`kin-diary-bundle-v2`)
+
+**v2 (2026-08-26)** adds `keyring_sha256`. In v1 the keyring travelled
+beside the signature rather than inside it, so a holder of the current
+private key could delete `prior` and re-sign a valid bundle that had lost
+its own history — which let an evicted key rotate and arrive looking new.
+The rotation chain is part of what a bundle asserts, so it belongs in what
+the bundle signs. v1 bundles do not verify under v2; none were ever
+consumed outside this repo's own tests.
+
+Binding the chain stops a third party stripping it in transit. It does not
+stop the signer, who selects their own history — see `agora.md`,
+"Quarantine", for the layered mitigation and the residual risk.
 
 The export file is also signed as a whole by the mind's *current* key, so
 tampering with the list of entries is visible.
 
-    kin-diary-bundle-v1
+    kin-diary-bundle-v2
     mind=<author>
     steward_node=<node name>
     exported_at_unix_ms=<decimal integer>
@@ -101,6 +113,13 @@ tampering with the list of entries is visible.
     entries_sha256=<64 hex>
     retractions_sha256=<64 hex>
     curations_sha256=<64 hex>
+    keyring_sha256=<64 hex>
+
+`keyring_sha256` is SHA-256 over the concatenation, for each rotation hop
+in `rotated_at_unix_ms` order, of `old_key_id` + `new_key_id` +
+`rotated_at_unix_ms` as ASCII. Empty chain = hash of empty bytes. The hop
+signatures are not included: each is already bound to exactly those three
+values by `kin-diary-rotation-v1` and is verified separately.
 
 `entries_sha256` is SHA-256 of the concatenation of each entry `signature`
 hex string as ASCII, in bundle order, no separators.
