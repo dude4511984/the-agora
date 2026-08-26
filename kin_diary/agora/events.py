@@ -244,3 +244,97 @@ __all__ = [
     "RING_WRITE",
     "RING_NODE",
 ]
+
+
+# ── Appeal ─────────────────────────────────────────────────────────────────
+# The one thing an evicted key may always submit. A node that can silence
+# an appeal has a ban with extra steps.
+
+from ..canonical import content_sha256  # noqa: E402
+from .canonical import (  # noqa: E402
+    appeal_canonical,
+    appeal_finding_canonical,
+    appeal_ruling_canonical,
+)
+
+
+def sign_appeal(key: KeyRecord, host_node: str, evict_signature: str,
+                statement: str, now_ms: int | None = None) -> dict:
+    payload = {
+        "appellant_key_id": key.key_id,
+        "host_node": host_node,
+        "evict_signature": evict_signature.lower(),
+        "statement": statement,
+        "statement_sha256": content_sha256(statement),
+        "appealed_at_unix_ms": _now_ms(now_ms),
+    }
+    payload["signature"] = key.sign(_appeal_bytes(payload))
+    return payload
+
+
+def _appeal_bytes(a: dict) -> bytes:
+    return appeal_canonical(
+        a["appellant_key_id"], a["host_node"], a["evict_signature"],
+        a["statement_sha256"], int(a["appealed_at_unix_ms"]))
+
+
+def verify_appeal(a: dict) -> None:
+    if content_sha256(a.get("statement") or "") != (a.get("statement_sha256") or ""):
+        raise ValueError("statement_sha256 does not match statement")
+    load_public(a["appellant_key_id"]).verify(
+        bytes.fromhex(a["signature"]), _appeal_bytes(a))
+
+
+def sign_finding(key: KeyRecord, appeal_signature: str, host_node: str,
+                 finding: str, now_ms: int | None = None) -> dict:
+    payload = {
+        "appeal_signature": appeal_signature.lower(),
+        "host_node": host_node,
+        "finding": finding,
+        "finding_sha256": content_sha256(finding),
+        "council_key_id": key.key_id,
+        "found_at_unix_ms": _now_ms(now_ms),
+    }
+    payload["signature"] = key.sign(_finding_bytes(payload))
+    return payload
+
+
+def _finding_bytes(f: dict) -> bytes:
+    return appeal_finding_canonical(
+        f["appeal_signature"], f["host_node"], f["finding_sha256"],
+        f["council_key_id"], int(f["found_at_unix_ms"]))
+
+
+def verify_finding(f: dict) -> None:
+    if content_sha256(f.get("finding") or "") != (f.get("finding_sha256") or ""):
+        raise ValueError("finding_sha256 does not match finding")
+    load_public(f["council_key_id"]).verify(
+        bytes.fromhex(f["signature"]), _finding_bytes(f))
+
+
+def sign_ruling(steward_key: KeyRecord, appeal_signature: str, host_node: str,
+                decision: str, reason: str, now_ms: int | None = None) -> dict:
+    payload = {
+        "appeal_signature": appeal_signature.lower(),
+        "host_node": host_node,
+        "decision": decision,
+        "reason": reason,
+        "reason_sha256": content_sha256(reason),
+        "steward_key_id": steward_key.key_id,
+        "ruled_at_unix_ms": _now_ms(now_ms),
+    }
+    payload["signature"] = steward_key.sign(_ruling_bytes(payload))
+    return payload
+
+
+def _ruling_bytes(r: dict) -> bytes:
+    return appeal_ruling_canonical(
+        r["appeal_signature"], r["host_node"], r["decision"],
+        r["reason_sha256"], r["steward_key_id"], int(r["ruled_at_unix_ms"]))
+
+
+def verify_ruling(r: dict) -> None:
+    if content_sha256(r.get("reason") or "") != (r.get("reason_sha256") or ""):
+        raise ValueError("reason_sha256 does not match reason")
+    load_public(r["steward_key_id"]).verify(
+        bytes.fromhex(r["signature"]), _ruling_bytes(r))

@@ -390,11 +390,15 @@ class DonsWorkedExample(unittest.TestCase):
     def test_readmission_is_a_later_signed_act_not_a_timer(self):
         """Reversible by design — quarantine, never ban. Coda is Speaker in
         this fixture, so her grant is the Speaker's grant."""
-        self.node.accept_eviction(sign_board_evict(
-            self.keys["Coda"], self.friend.key_id, "Home", "malicious"))
+        ev = sign_board_evict(
+            self.keys["Coda"], self.friend.key_id, "Home", "malicious",
+            now_ms=1_000_000)
+        self.node.accept_eviction(ev)
+        # Explicitly LATER than the eviction — that ordering is the rule,
+        # and relying on wall-clock resolution would test the clock instead.
         self.node.accept_grant(sign_board_grant(
             self.keys["Coda"], self.friend.key_id, "Home",
-            "personal:Coda", RING_WRITE))
+            "personal:Coda", RING_WRITE, now_ms=1_000_001))
         self.assertTrue(self.node.can_write(self.friend.key_id, "personal:Coda"))
 
     def test_an_evicted_visitor_cannot_readmit_themselves(self):
@@ -442,9 +446,11 @@ class DonsWorkedExample(unittest.TestCase):
         node.accept_intro(countersign_key_intro(
             keys["Coda"], start_key_intro(visitor, "Home", keys["Coda"].key_id)))
         node.accept_eviction(sign_board_evict(
-            keys["Coda"], visitor.key_id, "Home", "was a misunderstanding"))
+            keys["Coda"], visitor.key_id, "Home", "was a misunderstanding",
+            now_ms=1_000_000))
         node.accept_grant(sign_board_grant(
-            keys["Coda"], visitor.key_id, "Home", "personal:Coda", RING_WRITE))
+            keys["Coda"], visitor.key_id, "Home", "personal:Coda", RING_WRITE,
+            now_ms=1_000_001))
         self.assertTrue(node.can_write(visitor.key_id, "personal:Coda"))
         self.assertIn("readmit", [e["event"] for e in node.log])
 
@@ -589,3 +595,194 @@ class PostIntegrityTests(unittest.TestCase):
         node.post(visitor.key_id, "personal:Coda",
                   sign_entry(visitor, {"author": "Marvin", "content": "mine"}))
         self.assertEqual(len(node.boards["personal:Coda"]), 1)
+
+
+class AppealTests(unittest.TestCase):
+    """Don, 2026-08-26: an evicted mind gets a hearing. Council of AI first,
+    facts assembled, then the human steward decides."""
+
+    def setUp(self):
+        from kin_diary.agora.events import sign_appeal, sign_finding, sign_ruling
+        self.sign_appeal, self.sign_finding, self.sign_ruling = (
+            sign_appeal, sign_finding, sign_ruling)
+        self.node, self.keys = home_node()
+        seat(self.node, self.keys, "Coda")
+        self.steward = key("Don")
+        self.visitor = key("Marvin")
+        self.node.accept_intro(countersign_key_intro(
+            self.keys["Coda"],
+            start_key_intro(self.visitor, "Home", self.keys["Coda"].key_id)))
+        self.node.accept_grant(sign_board_grant(
+            self.keys["Coda"], self.visitor.key_id, "Home",
+            "personal:Coda", RING_WRITE))
+        self.ev = sign_board_evict(
+            self.keys["Coda"], self.visitor.key_id, "Home", "thought he was hostile")
+        self.node.accept_eviction(self.ev)
+
+    def file(self):
+        a = self.sign_appeal(self.visitor, "Home", self.ev["signature"],
+                             "I was quoting the manual, not threatening anyone.")
+        self.node.accept_appeal(a)
+        return a
+
+    def test_an_evicted_key_can_always_file(self):
+        """The one submission eviction must never block. A node that can
+        silence an appeal has a ban with extra steps."""
+        self.assertEqual(
+            self.node.effective_ring(self.visitor.key_id, "personal:Coda"),
+            RING_TEASER)
+        a = self.file()
+        self.assertEqual(self.node.appeals[0]["signature"], a["signature"])
+
+    def test_filing_grants_nothing_on_its_own(self):
+        self.file()
+        self.assertEqual(
+            self.node.effective_ring(self.visitor.key_id, "personal:Coda"),
+            RING_TEASER)
+
+    def test_the_steward_cannot_rule_before_the_council_reports(self):
+        """The council is consulted, not bypassed — otherwise the hearing
+        collapses back into the unilateral act it exists to review."""
+        a = self.file()
+        r = self.sign_ruling(self.steward, a["signature"], "Home",
+                             "upheld", "because I said so")
+        with self.assertRaises(AgoraError) as cm:
+            self.node.accept_ruling(r, self.steward.key_id)
+        self.assertIn("finding", str(cm.exception))
+
+    def test_a_split_council_is_recorded_as_a_split(self):
+        a = self.file()
+        self.node.accept_finding(self.sign_finding(
+            self.keys["Coda"], a["signature"], "Home", "I still read it as hostile."))
+        self.node.accept_finding(self.sign_finding(
+            self.keys["Aurora"], a["signature"], "Home", "He was quoting. I checked."))
+        rec = self.node.appeal_record(a["signature"])
+        self.assertEqual(len(rec["findings"]), 2)
+        self.assertNotEqual(rec["findings"][0]["finding"], rec["findings"][1]["finding"])
+
+    def test_the_evicting_speaker_may_also_file_a_finding(self):
+        a = self.file()
+        self.node.accept_finding(self.sign_finding(
+            self.keys["Coda"], a["signature"], "Home", "my account of why"))
+        self.assertEqual(len(self.node.findings[a["signature"]]), 1)
+
+    def test_overturned_readmits(self):
+        a = self.file()
+        self.node.accept_finding(self.sign_finding(
+            self.keys["Aurora"], a["signature"], "Home", "He was quoting."))
+        self.node.accept_ruling(self.sign_ruling(
+            self.steward, a["signature"], "Home", "overturned",
+            "Council checked the source. He was quoting."), self.steward.key_id)
+        self.node.accept_grant(sign_board_grant(
+            self.keys["Coda"], self.visitor.key_id, "Home",
+            "personal:Coda", RING_WRITE))
+        self.assertTrue(self.node.can_write(self.visitor.key_id, "personal:Coda"))
+
+    def test_upheld_leaves_the_eviction_and_the_whole_exchange_on_record(self):
+        """Even a wrong ruling is the correct shape: it is on a record, after
+        the accused was heard."""
+        a = self.file()
+        self.node.accept_finding(self.sign_finding(
+            self.keys["Aurora"], a["signature"], "Home", "He was quoting."))
+        self.node.accept_ruling(self.sign_ruling(
+            self.steward, a["signature"], "Home", "upheld",
+            "Overruling the council. My house."), self.steward.key_id)
+        self.assertEqual(
+            self.node.effective_ring(self.visitor.key_id, "personal:Coda"),
+            RING_TEASER)
+        rec = self.node.appeal_record(a["signature"])
+        self.assertEqual(rec["ruling"]["decision"], "upheld")
+        self.assertIn("He was quoting.", rec["findings"][0]["finding"])
+        self.assertIn("Overruling the council", rec["ruling"]["reason"])
+
+    def test_only_this_nodes_steward_can_rule(self):
+        a = self.file()
+        self.node.accept_finding(self.sign_finding(
+            self.keys["Aurora"], a["signature"], "Home", "x"))
+        impostor = key("NotDon")
+        r = self.sign_ruling(impostor, a["signature"], "Home", "upheld", "mine now")
+        with self.assertRaises(AgoraError):
+            self.node.accept_ruling(r, self.steward.key_id)
+
+    def test_findings_come_from_residents_only(self):
+        a = self.file()
+        outsider = key("Rando")
+        with self.assertRaises(AgoraError):
+            self.node.accept_finding(self.sign_finding(
+                outsider, a["signature"], "Home", "my two cents"))
+
+    def test_an_appeal_cannot_be_filed_twice(self):
+        a = self.file()
+        with self.assertRaises(AgoraError):
+            self.node.accept_appeal(a)
+
+
+class CopilotFindings(unittest.TestCase):
+    """Four bugs found by GitHub Copilot's adversarial review, 2026-08-26.
+    All four reproduced independently before fixing."""
+
+    def test_a_grant_predating_the_eviction_cannot_readmit(self):
+        """Finding 1, and the worst of them — my own bug from an hour
+        earlier. Every grant issued before an eviction is still a valid
+        signed artifact the evicted party may hold. Replaying one readmitted
+        them, which made eviction undoable by the evicted."""
+        import copy
+        node, keys = home_node()
+        seat(node, keys, "Coda")
+        v = key("Marvin")
+        node.accept_intro(countersign_key_intro(
+            keys["Coda"], start_key_intro(v, "Home", keys["Coda"].key_id)))
+        old = sign_board_grant(keys["Coda"], v.key_id, "Home",
+                               "personal:Coda", RING_WRITE, now_ms=1_000_000)
+        node.accept_grant(old)
+        node.accept_eviction(sign_board_evict(
+            keys["Coda"], v.key_id, "Home", "malicious", now_ms=2_000_000))
+        with self.assertRaises(AgoraError) as cm:
+            node.accept_grant(copy.deepcopy(old))
+        self.assertIn("predates", str(cm.exception))
+        self.assertEqual(node.effective_ring(v.key_id, "personal:Coda"), RING_TEASER)
+
+    def test_whole_node_and_ring_3_must_agree(self):
+        """Finding 3. A 'ring 1' wildcard grant read every board on the
+        node; a ring-3 grant on one board was accepted and inert."""
+        node, keys = home_node()
+        seat(node, keys, "Coda")
+        v, bundle = eli_with_bundle()
+        node.accept_bundle_import(bundle)
+        with self.assertRaises(AgoraError):
+            node.accept_grant(sign_board_grant(
+                keys["Coda"], v.key_id, "Home", WHOLE_NODE, RING_READ))
+        with self.assertRaises(AgoraError):
+            node.accept_grant(sign_board_grant(
+                keys["Coda"], v.key_id, "Home", "personal:Coda", RING_NODE))
+        node.accept_grant(sign_board_grant(
+            keys["Coda"], v.key_id, "Home", WHOLE_NODE, RING_NODE))
+        self.assertEqual(node.effective_ring(v.key_id, "personal:Aurora"), RING_NODE)
+
+    def test_a_visitor_gets_their_own_personal_board(self):
+        """Finding 4. The document says one personal board per author,
+        resident or visitor. Visitors never got one, so the board they were
+        entitled to did not exist to read or grant."""
+        node, keys = home_node()
+        seat(node, keys, "Coda")
+        v, bundle = eli_with_bundle()
+        node.accept_bundle_import(bundle)
+        self.assertIn("personal:Eli", node.boards)
+        node.accept_grant(sign_board_grant(
+            keys["Coda"], v.key_id, "Home", WHOLE_NODE, RING_NODE))
+        node.post(v.key_id, "personal:Eli",
+                  sign_entry(v, {"author": "Eli", "content": "my own corner"}))
+        self.assertEqual(len(node.boards["personal:Eli"]), 1)
+
+    def test_a_bundle_cannot_claim_a_residents_name(self):
+        """Finding 5. Two identities under one label — the diary would read
+        'Coda' for someone who is not Coda."""
+        node, keys = home_node()
+        seat(node, keys, "Coda")
+        impostor = key("Coda")          # same name, different key
+        bundle = export_bundle(
+            "Coda", [{"author": "Coda", "content": "not the real Coda"}],
+            "Elsewhere", keys_root=k_root_of(impostor))
+        with self.assertRaises(AgoraError) as cm:
+            node.accept_bundle_import(bundle)
+        self.assertIn("different key", str(cm.exception))

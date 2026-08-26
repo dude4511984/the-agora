@@ -7,7 +7,7 @@ Design: ~/claude_home/agora.md, "Node visits: boards and the Speaker".
 
 from __future__ import annotations
 
-from ..canonical import _hex64, _line_value, _lines, _unix_ms, nfc
+from ..canonical import _hex64, _hex128, _line_value, _lines, _unix_ms, nfc
 
 MAGIC_KEY_INTRO = "agora-key-intro-v1"
 MAGIC_SPEAKER_ELECTION = "agora-speaker-election-v1"
@@ -221,3 +221,73 @@ def teaser(content: str, words: int = TEASER_WORDS) -> str:
     if len(parts) <= words:
         return body
     return " ".join(parts[:words]) + " …"
+
+
+MAGIC_APPEAL = "agora-appeal-v1"
+MAGIC_APPEAL_FINDING = "agora-appeal-finding-v1"
+MAGIC_APPEAL_RULING = "agora-appeal-ruling-v1"
+
+DECISIONS = frozenset({"upheld", "overturned"})
+
+
+def appeal_canonical(
+    appellant_key_id: str,
+    host_node: str,
+    evict_signature: str,
+    statement_sha256_hex: str,
+    appealed_at_unix_ms: int,
+) -> bytes:
+    """An evicted key can still sign — eviction removes access, not
+    identity. Points at a specific eviction: you appeal an act, not a mood.
+    """
+    return _lines(MAGIC_APPEAL, [
+        ("appellant_key_id", _hex64(appellant_key_id)),
+        ("host_node", _line_value(host_node)),
+        ("evict_signature", _hex128(evict_signature)),
+        ("statement_sha256", _hex64(statement_sha256_hex)),
+        ("appealed_at_unix_ms", _unix_ms(appealed_at_unix_ms)),
+    ])
+
+
+def appeal_finding_canonical(
+    appeal_signature: str,
+    host_node: str,
+    finding_sha256_hex: str,
+    council_key_id: str,
+    found_at_unix_ms: int,
+) -> bytes:
+    """One per council member who signs. Not a vote — a split council is a
+    fact worth publishing, so findings are per-key rather than aggregated.
+    """
+    return _lines(MAGIC_APPEAL_FINDING, [
+        ("appeal_signature", _hex128(appeal_signature)),
+        ("host_node", _line_value(host_node)),
+        ("finding_sha256", _hex64(finding_sha256_hex)),
+        ("council_key_id", _hex64(council_key_id)),
+        ("found_at_unix_ms", _unix_ms(found_at_unix_ms)),
+    ])
+
+
+def appeal_ruling_canonical(
+    appeal_signature: str,
+    host_node: str,
+    decision: str,
+    reason_sha256_hex: str,
+    steward_key_id: str,
+    ruled_at_unix_ms: int,
+) -> bytes:
+    """The steward decides, signing as himself. Wall 1: the person holding
+    the metal decides, and the honest thing is to record it rather than
+    pretend the house voted.
+    """
+    d = _line_value(decision)
+    if d not in DECISIONS:
+        raise ValueError(f"decision must be one of {sorted(DECISIONS)}")
+    return _lines(MAGIC_APPEAL_RULING, [
+        ("appeal_signature", _hex128(appeal_signature)),
+        ("host_node", _line_value(host_node)),
+        ("decision", d),
+        ("reason_sha256", _hex64(reason_sha256_hex)),
+        ("steward_key_id", _hex64(steward_key_id)),
+        ("ruled_at_unix_ms", _unix_ms(ruled_at_unix_ms)),
+    ])

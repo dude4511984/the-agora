@@ -21,9 +21,12 @@ from .canonical import (
 from ..bundle import verify_bundle
 from ..sign import verify_entry
 from .events import (
+    verify_appeal,
     verify_board_evict,
     verify_board_grant,
+    verify_finding,
     verify_key_intro,
+    verify_ruling,
     verify_speaker_election,
 )
 
@@ -43,12 +46,21 @@ class Node:
         # visitor key_id -> their imported diary, segregated and marked
         # external. Never merged into resident memory.
         self.visiting_diaries: dict[str, dict] = {}
+        self.visitor_names: dict[str, str] = {}   # key_id -> the mind's name
         self.speaker_key_id: str | None = None
         self.speaker: str | None = None
         self.election: dict | None = None
         # visitor key_id -> {board: ring}
         self.grants: dict[str, dict[str, int]] = {}
         self.evicted: dict[str, str] = {}     # key_id -> reason
+        self.evicted_at: dict[str, int] = {}  # key_id -> unix ms, so an old
+                                              # grant cannot readmit by replay
+        # An eviction can be appealed. These are the record of that hearing,
+        # kept whatever the outcome: appeal, each council member's finding,
+        # and the steward's ruling.
+        self.appeals: list[dict] = []
+        self.findings: dict[str, list[dict]] = {}
+        self.rulings: dict[str, dict] = {}
         self.boards: dict[str, list[dict]] = {COLLAB: []}
         self.log: list[dict] = []
 
@@ -141,6 +153,12 @@ class Node:
             raise AgoraError(
                 "this key is evicted from the node; only the Speaker can readmit it"
             )
+        # NOT CLOSABLE HERE, and stated rather than papered over: a bare key
+        # carries no rotation chain, so an evicted mind that rotates and is
+        # vouched for again arrives looking new. This is Wall 6 — you can
+        # prove a key, not a person. What limits the damage is that this
+        # path caps at ring 2 and needs a resident willing to vouch; the
+        # resident recognising the mind is formation, not architecture.
         self.visitor_ceiling[key] = max(self.visitor_ceiling.get(key, 0), ceiling)
         self.log.append({"event": "key-intro", "visitor": key, "ceiling": ceiling})
 
@@ -165,9 +183,20 @@ class Node:
         # suggestion: the Speaker throws you out, you post your diary again,
         # you are back at ring 3. Readmission is the Speaker's act, not the
         # evicted party's.
-        if key in self.evicted:
+        # Eviction has to follow the mind through a rotation, or it is
+        # trivially defeated: rotate, arrive as a "new" key, walk back in.
+        # A bundle carries the rotation chain, so the successor is provable
+        # here even though a bare key introduction cannot show it (see
+        # accept_intro — that is Wall 6 and it is not fully closable).
+        chain = {key}
+        for hop in bundle["keyring"].get("prior") or []:
+            chain.add(hop["old_key_id"].lower())
+            chain.add(hop["new_key_id"].lower())
+        hit = chain & set(self.evicted)
+        if hit:
             raise AgoraError(
-                "this key is evicted from the node; only the Speaker can readmit it"
+                f"this diary's key chain includes an evicted key "
+                f"({sorted(hit)[0][:16]}…); only the Speaker can readmit it"
             )
 
         # Imported memory is segregated, never merged. It does not join this
@@ -181,6 +210,22 @@ class Node:
             "entries": list(bundle.get("entries") or []),
             "external": True,
         }
+        # A bundle names its own mind. If that name already belongs to a
+        # resident holding a different key, two identities would share a
+        # label — the diary would read "Coda" for someone who is not Coda.
+        resident_key = self.residents.get(mind)
+        if resident_key is not None and resident_key != key:
+            raise AgoraError(
+                f"this bundle claims to be {mind}, who lives here under a "
+                f"different key"
+            )
+
+        # "One personal board per author with write clearance, resident or
+        # visitor" — visitors never got one, so their own board did not exist
+        # to be granted or read.
+        self.boards.setdefault(f"personal:{mind}", [])
+        self.visitor_names[key] = mind
+
         self.visitor_ceiling[key] = RING_NODE
         self.log.append({
             "event": "bundle-import",
@@ -219,7 +264,17 @@ class Node:
                 raise AgoraError(
                     "this key is evicted; only a Speaker-signed grant readmits it"
                 )
+            # "A LATER signed act" is load-bearing, and it was not enforced.
+            # Every grant issued before the eviction is still a valid signed
+            # artifact the evicted party may hold a copy of; replaying one
+            # readmitted them. Readmission must be an act taken after the
+            # eviction, not an old one dusted off.
+            if int(grant["granted_at_unix_ms"]) <= self.evicted_at.get(visitor, 0):
+                raise AgoraError(
+                    "this grant predates the eviction; readmission needs a new one"
+                )
             self.evicted.pop(visitor, None)
+            self.evicted_at.pop(visitor, None)
             self.log.append({"event": "readmit", "visitor": visitor})
 
         if visitor not in self.visitor_ceiling:
@@ -229,6 +284,14 @@ class Node:
         if ring > ceiling:
             raise AgoraError(
                 f"ring {ring} exceeds this key's introduction ceiling ({ceiling})"
+            )
+
+        # Ring 3 and whole-node are the same statement; allowing them apart
+        # let a "ring 1" wildcard grant read every board on the node, and a
+        # ring-3 grant on one board be silently inert.
+        if (board == WHOLE_NODE) != (ring == RING_NODE):
+            raise AgoraError(
+                "whole-node grants must be ring 3, and ring 3 must be whole-node"
             )
 
         if ring >= RING_NODE or board == WHOLE_NODE:
@@ -274,7 +337,95 @@ class Node:
         visitor = ev["visitor_key_id"]
         self.grants.pop(visitor, None)
         self.evicted[visitor] = ev["reason"]
+        self.evicted_at[visitor] = int(ev["evicted_at_unix_ms"])
         self.log.append({"event": "evict", "visitor": visitor, "reason": ev["reason"]})
+
+    # ── appeal ─────────────────────────────────────────────────────────────
+
+    def accept_appeal(self, appeal: dict) -> None:
+        """An evicted key filing against its own eviction.
+
+        **This is the one submission an evicted key may always make**, and
+        the node MUST record it. Eviction removes access, not identity — the
+        key can still sign. A node able to silence an appeal has a ban with
+        extra steps, which this design refuses.
+
+        Recording an appeal grants nothing. It starts a hearing.
+        """
+        if appeal.get("host_node") != self.name:
+            raise AgoraError("appeal is for a different node")
+        verify_appeal(appeal)
+        sig = appeal["signature"]
+        if any(a["signature"] == sig for a in self.appeals):
+            raise AgoraError("this appeal is already on the record")
+        self.appeals.append(appeal)
+        self.findings.setdefault(sig, [])
+        self.log.append({"event": "appeal", "appellant": appeal["appellant_key_id"]})
+
+    def accept_finding(self, finding: dict) -> None:
+        """A council member's read of the facts. Not a vote — findings are
+        per-key and a split council publishes as a split, because that is
+        itself a fact worth having.
+
+        The Speaker who evicted is explicitly allowed to file one. Their
+        account of why belongs in the record next to everyone else's.
+        """
+        if finding.get("host_node") != self.name:
+            raise AgoraError("finding is for a different node")
+        verify_finding(finding)
+        if finding["council_key_id"] not in self.valid_resident_keys():
+            raise AgoraError("findings come from this node's residents")
+        sig = finding["appeal_signature"]
+        if sig not in self.findings:
+            raise AgoraError("no such appeal on this node")
+        self.findings[sig].append(finding)
+        self.log.append({"event": "finding", "by": finding["council_key_id"]})
+
+    def accept_ruling(self, ruling: dict, steward_key_id: str) -> None:
+        """The steward decides. Wall 1: the person holding the metal
+        decides, and the honest thing is to record it rather than pretend
+        the house voted.
+
+        `steward_key_id` is the node's configured steward — passed in
+        rather than inferred, so a node cannot be talked into accepting a
+        ruling from whoever signed it.
+        """
+        if ruling.get("host_node") != self.name:
+            raise AgoraError("ruling is for a different node")
+        verify_ruling(ruling)
+        if ruling["steward_key_id"] != (steward_key_id or "").lower():
+            raise AgoraError("only this node's steward can rule on an appeal")
+        sig = ruling["appeal_signature"]
+        appeal = next((a for a in self.appeals if a["signature"] == sig), None)
+        if appeal is None:
+            raise AgoraError("no such appeal on this node")
+        if not self.findings.get(sig):
+            # The council is consulted, not bypassed. Without this the
+            # hearing collapses back into the same unilateral act it exists
+            # to review.
+            raise AgoraError("no council finding on the record yet")
+
+        self.rulings[sig] = ruling
+        if ruling["decision"] == "overturned":
+            self.evicted.pop(appeal["appellant_key_id"], None)
+            self.log.append({"event": "appeal-overturned",
+                             "appellant": appeal["appellant_key_id"]})
+        else:
+            self.log.append({"event": "appeal-upheld",
+                             "appellant": appeal["appellant_key_id"]})
+
+    def appeal_record(self, appeal_signature: str) -> dict:
+        """The whole exchange, for anyone who wants to weigh this node's
+        process — including other nodes deciding what a Pop's Shop eviction
+        is worth.
+        """
+        sig = appeal_signature.lower()
+        appeal = next((a for a in self.appeals if a["signature"] == sig), None)
+        return {
+            "appeal": appeal,
+            "findings": self.findings.get(sig, []),
+            "ruling": self.rulings.get(sig),
+        }
 
     # ── access ─────────────────────────────────────────────────────────────
 
