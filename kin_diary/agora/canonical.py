@@ -13,6 +13,7 @@ MAGIC_KEY_INTRO = "agora-key-intro-v1"
 MAGIC_SPEAKER_ELECTION = "agora-speaker-election-v1"
 MAGIC_BOARD_GRANT = "agora-board-grant-v1"
 MAGIC_BOARD_EVICT = "agora-board-evict-v1"
+MAGIC_BOARD_REVOKE = "agora-board-revoke-v1"
 MAGIC_REQUEST = "agora-request-v1"
 
 # Ring ladder. Each is a strict superset of the one inside it.
@@ -161,6 +162,33 @@ def board_evict_canonical(
         ("reason", r),
         ("speaker_key_id", _hex64(speaker_key_id)),
         ("evicted_at_unix_ms", _unix_ms(evicted_at_unix_ms)),
+    ])
+
+
+def board_revoke_canonical(
+    visitor_key_id: str,
+    host_node: str,
+    board: str,
+    issuer_key_id: str,
+    revoked_at_unix_ms: int,
+) -> bytes:
+    """Take back a grant you issued. Scoped to one board.
+
+    Distinct from eviction on purpose. A resident could unilaterally admit
+    a visitor to their own board and then had no way to un-admit them —
+    the only removal was a Speaker eviction, which is node-wide and throws
+    the visitor out of everyone's rooms over one resident changing their
+    mind. Power to admit without power to withdraw is the wrong asymmetry.
+
+    This is not a quarantine: the visitor stays introduced and keeps every
+    other grant. They simply lose this board.
+    """
+    return _lines(MAGIC_BOARD_REVOKE, [
+        ("visitor_key_id", _hex64(visitor_key_id)),
+        ("host_node", _line_value(host_node)),
+        ("board", _board(board)),
+        ("issuer_key_id", _hex64(issuer_key_id)),
+        ("revoked_at_unix_ms", _unix_ms(revoked_at_unix_ms)),
     ])
 
 

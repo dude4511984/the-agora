@@ -246,6 +246,34 @@ __all__ = [
 ]
 
 
+# ── Revocation ─────────────────────────────────────────────────────────────
+
+
+def sign_board_revoke(issuer_key: KeyRecord, visitor_key_id: str, host_node: str,
+                      board: str, now_ms: int | None = None) -> dict:
+    payload = {
+        "visitor_key_id": visitor_key_id.lower(),
+        "host_node": host_node,
+        "board": board,
+        "issuer_key_id": issuer_key.key_id,
+        "revoked_at_unix_ms": _now_ms(now_ms),
+    }
+    payload["signature"] = issuer_key.sign(_revoke_bytes(payload))
+    return payload
+
+
+def _revoke_bytes(r: dict) -> bytes:
+    from .canonical import board_revoke_canonical
+    return board_revoke_canonical(
+        r["visitor_key_id"], r["host_node"], r["board"],
+        r["issuer_key_id"], int(r["revoked_at_unix_ms"]))
+
+
+def verify_board_revoke(r: dict) -> None:
+    load_public(r["issuer_key_id"]).verify(
+        bytes.fromhex(r["signature"]), _revoke_bytes(r))
+
+
 # ── Appeal ─────────────────────────────────────────────────────────────────
 # The one thing an evicted key may always submit. A node that can silence
 # an appeal has a ban with extra steps.

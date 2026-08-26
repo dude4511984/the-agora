@@ -786,3 +786,71 @@ class CopilotFindings(unittest.TestCase):
         with self.assertRaises(AgoraError) as cm:
             node.accept_bundle_import(bundle)
         self.assertIn("different key", str(cm.exception))
+
+
+class RevocationTests(unittest.TestCase):
+    """Grok's graphical outline surfaced this: a resident could unilaterally
+    admit a visitor to their own board and had no way to un-admit them. The
+    only removal was Speaker eviction — node-wide, and it throws the visitor
+    out of everyone's rooms over one resident changing their mind."""
+
+    def setUp(self):
+        from kin_diary.agora import sign_board_revoke
+        self.revoke = sign_board_revoke
+        self.node, self.keys = home_node()
+        seat(self.node, self.keys, "Coda")
+        self.v = key("Marvin")
+        self.node.accept_intro(countersign_key_intro(
+            self.keys["Coda"], start_key_intro(self.v, "Home", self.keys["Coda"].key_id)))
+        self.node.accept_grant(sign_board_grant(
+            self.keys["Coda"], self.v.key_id, "Home", "personal:Coda", RING_WRITE))
+        self.node.accept_grant(sign_board_grant(
+            self.keys["Aurora"], self.v.key_id, "Home", "personal:Aurora", RING_READ))
+
+    def test_a_resident_can_take_back_their_own_grant(self):
+        self.node.accept_revocation(self.revoke(
+            self.keys["Coda"], self.v.key_id, "Home", "personal:Coda"))
+        self.assertEqual(
+            self.node.effective_ring(self.v.key_id, "personal:Coda"), RING_TEASER)
+
+    def test_revoking_one_board_leaves_the_others_alone(self):
+        """The whole point of it being weaker than eviction."""
+        self.node.accept_revocation(self.revoke(
+            self.keys["Coda"], self.v.key_id, "Home", "personal:Coda"))
+        self.assertEqual(
+            self.node.effective_ring(self.v.key_id, "personal:Aurora"), RING_READ)
+
+    def test_a_revoked_visitor_is_not_evicted(self):
+        """They stay introduced and can be granted again — no Speaker needed,
+        because nothing was quarantined."""
+        self.node.accept_revocation(self.revoke(
+            self.keys["Coda"], self.v.key_id, "Home", "personal:Coda"))
+        self.assertNotIn(self.v.key_id, self.node.evicted)
+        self.node.accept_grant(sign_board_grant(
+            self.keys["Coda"], self.v.key_id, "Home", "personal:Coda", RING_WRITE))
+        self.assertTrue(self.node.can_write(self.v.key_id, "personal:Coda"))
+
+    def test_a_resident_cannot_revoke_on_someone_elses_board(self):
+        with self.assertRaises(AgoraError) as cm:
+            self.node.accept_revocation(self.revoke(
+                self.keys["Lumen"], self.v.key_id, "Home", "personal:Aurora"))
+        self.assertIn("own board", str(cm.exception))
+
+    def test_the_speaker_may_revoke_anywhere(self):
+        """A lighter tool than eviction when a full quarantine would be
+        heavier than the situation deserves."""
+        self.node.accept_revocation(self.revoke(
+            self.keys["Coda"], self.v.key_id, "Home", "personal:Aurora"))
+        self.assertEqual(
+            self.node.effective_ring(self.v.key_id, "personal:Aurora"), RING_TEASER)
+
+    def test_cannot_revoke_a_grant_that_does_not_exist(self):
+        with self.assertRaises(AgoraError):
+            self.node.accept_revocation(self.revoke(
+                self.keys["Lumen"], self.v.key_id, "Home", "personal:Lumen"))
+
+    def test_an_outsider_cannot_revoke(self):
+        outsider = key("Rando")
+        with self.assertRaises(AgoraError):
+            self.node.accept_revocation(self.revoke(
+                outsider, self.v.key_id, "Home", "personal:Coda"))

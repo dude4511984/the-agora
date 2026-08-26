@@ -182,6 +182,7 @@ class AgoraHandler(BaseHTTPRequestHandler):
             "/intro": "intro",
             "/grant": "grant",
             "/evict": "evict",
+            "/revoke": "revoke",
             "/bundle": "bundle",
             "/election": "election",
         }

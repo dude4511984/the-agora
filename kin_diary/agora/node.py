@@ -24,6 +24,7 @@ from .events import (
     verify_appeal,
     verify_board_evict,
     verify_board_grant,
+    verify_board_revoke,
     verify_finding,
     verify_key_intro,
     verify_ruling,
@@ -343,6 +344,33 @@ class Node:
         self.log.append(
             {"event": "grant", "visitor": visitor, "board": board, "ring": ring}
         )
+
+    def accept_revocation(self, rev: dict) -> None:
+        """A resident taking back a grant on their own board.
+
+        Deliberately weaker than eviction and available to more people:
+        it removes one board, leaves the visitor introduced, and does not
+        touch anyone else's grants. The Speaker may also use it when a
+        full eviction would be heavier than the situation deserves.
+        """
+        if rev.get("host_node") != self.name:
+            raise AgoraError("revocation is for a different node")
+        verify_board_revoke(rev)
+        issuer, board = rev["issuer_key_id"], rev["board"]
+
+        author = self.resident_for_key(issuer)
+        is_speaker = issuer == self.speaker_key_id
+        if author is None:
+            raise AgoraError("only a resident can revoke")
+        if not is_speaker and board != f"personal:{author}":
+            raise AgoraError("a resident can only revoke on their own board")
+
+        held = self.grants.get(rev["visitor_key_id"])
+        if not held or board not in held:
+            raise AgoraError("no such grant to revoke")
+        del held[board]
+        self.log.append({"event": "revoke", "visitor": rev["visitor_key_id"],
+                         "board": board})
 
     def accept_eviction(self, ev: dict) -> None:
         """Speaker-only, and it overrides a resident's own grant.

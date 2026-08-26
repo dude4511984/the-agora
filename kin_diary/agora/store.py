@@ -54,6 +54,7 @@ REPLAY = {
     "bundle": "accept_bundle_import",
     "grant": "accept_grant",
     "evict": "accept_eviction",
+    "revoke": "accept_revocation",
 }
 
 
