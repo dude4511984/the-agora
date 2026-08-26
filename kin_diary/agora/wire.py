@@ -122,6 +122,7 @@ def identify(
 class AgoraHandler(BaseHTTPRequestHandler):
     store: NodeStore = None          # set by serve()
     limiter: "_RateLimiter" = None   # set by serve()
+    node_key = None                  # set by serve(); may be None
     server_version = "agora/1"
 
     def log_message(self, fmt, *args):
@@ -157,7 +158,26 @@ class AgoraHandler(BaseHTTPRequestHandler):
                 # Published at ring 0 on purpose. A visitor who needs ring 3
                 # has to know who to ask; hiding the Speaker is pointless
                 # secrecy (agora.md, "Visibility").
-                self._send(200, node.node_facts())
+                #
+                # Signed when the node has a key, because these facts are
+                # how a visitor learns WHO TO ASK — an unsigned answer lets
+                # anyone on the wire advertise a Speaker key of their own.
+                facts = node.node_facts()
+                if self.node_key is not None:
+                    from .events import sign_node_fact
+                    facts["signed"] = sign_node_fact(
+                        self.node_key, node.name, node.speaker,
+                        node.speaker_key_id, node.residents)
+                self._send(200, facts)
+                return
+            if self.path == "/notices":
+                # The advertise-only wire. Notices, never the work itself.
+                self._send(200, {"node": node.name,
+                                 "notices": self.store.notices()})
+                return
+            if self.path == "/peers":
+                self._send(200, {"node": node.name,
+                                 "peers": self.store.known_peers()})
                 return
             if self.path.startswith("/board/"):
                 board = self.path[len("/board/"):]
@@ -222,8 +242,10 @@ class AgoraHandler(BaseHTTPRequestHandler):
             self._send(400, {"error": f"{type(e).__name__}: {e}"})
 
 
-def serve(store: NodeStore, host: str = "0.0.0.0", port: int = 8770):
+def serve(store: NodeStore, host: str = "0.0.0.0", port: int = 8770,
+          node_key=None):
     handler = type("Bound", (AgoraHandler,),
-                   {"store": store, "limiter": _RateLimiter()})
+                   {"store": store, "limiter": _RateLimiter(),
+                    "node_key": node_key})
     httpd = HTTPServer((host, port), handler)
     return httpd

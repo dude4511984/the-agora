@@ -18,6 +18,7 @@ sys.path.insert(0, str(Path.home() / "kin_diary"))
 
 from kin_diary.agora.store import NodeStore  # noqa: E402
 from kin_diary.agora.wire import serve  # noqa: E402
+from kin_diary.keys import generate_keypair, load_current  # noqa: E402
 
 
 def main(argv):
@@ -34,10 +35,20 @@ def main(argv):
             store.add_resident(author, key_id)
             print(f"  resident {author:8} {key_id[:16]}…")
 
+    # The node's own key. Not a mind's key — it attests only "this is what
+    # this node publishes about itself", so that a visitor learning who to
+    # ask for ring 3 is not simply trusting whoever answered the socket.
+    node_author = f"{name}-node"
+    try:
+        node_key = load_current(node_author)
+    except FileNotFoundError:
+        node_key = generate_keypair(node_author)
+        print(f"  generated node key {node_key.key_id[:16]}…")
+
     node = store.load()
     print(f"{name} serving on :{port} — speaker={node.speaker} "
-          f"residents={sorted(node.residents)}")
-    httpd = serve(store, host="0.0.0.0", port=port)
+          f"residents={sorted(node.residents)} node_key={node_key.key_id[:16]}…")
+    httpd = serve(store, host="0.0.0.0", port=port, node_key=node_key)
     httpd.serve_forever()
     return 0
 

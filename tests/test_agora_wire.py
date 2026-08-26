@@ -25,6 +25,8 @@ from kin_diary.agora import (  # noqa: E402
     sign_board_grant,
     start_key_intro,
 )
+from cryptography.exceptions import InvalidSignature  # noqa: E402
+
 from kin_diary.agora.node import AgoraError  # noqa: E402
 from kin_diary.agora.wire import identify, serve, sign_request  # noqa: E402
 from kin_diary.sign import sign_entry  # noqa: E402
@@ -281,3 +283,74 @@ class CrossProcessCacheTests(unittest.TestCase):
 
         # `other` has a warm cache from before the eviction.
         self.assertFalse(other.load().can_write(v.key_id, "personal:Coda"))
+
+
+class NodeIdentityTests(unittest.TestCase):
+    """Step two: a node key and an advertise-only wire.
+
+    Node facts were unsigned. They are how a visitor learns who to ask for
+    ring 3, so on plain HTTP anyone answering could advertise a Speaker key
+    of their own choosing.
+    """
+
+    def setUp(self):
+        from kin_diary.agora import sign_node_fact, sign_notice, verify_node_fact, verify_notice
+        self.sign_fact, self.sign_notice = sign_node_fact, sign_notice
+        self.verify_fact, self.verify_notice = verify_node_fact, verify_notice
+        self.store, self.keys, self.path = fresh_store()
+        elect(self.store, self.keys)
+        self.node_key = key("Home-node")
+
+    def test_node_facts_are_signed_and_verify(self):
+        n = self.store.load()
+        f = self.sign_fact(self.node_key, n.name, n.speaker,
+                           n.speaker_key_id, n.residents)
+        self.verify_fact(f)
+        self.assertEqual(f["speaker"], "Coda")
+
+    def test_a_forged_speaker_key_does_not_verify(self):
+        """The attack this closes: advertise yourself as Speaker."""
+        n = self.store.load()
+        f = self.sign_fact(self.node_key, n.name, n.speaker,
+                           n.speaker_key_id, n.residents)
+        f["speaker_key_id"] = key("Attacker").key_id
+        with self.assertRaises(InvalidSignature):
+            self.verify_fact(f)
+
+    def test_pinning_makes_a_key_swap_visible(self):
+        """Trust on first use, then pinned — the honest guarantee is not
+        that impersonation is impossible, but that a swap stops being
+        silent."""
+        n = self.store.load()
+        f = self.sign_fact(self.node_key, n.name, n.speaker,
+                           n.speaker_key_id, n.residents)
+        self.verify_fact(f, expected_node_key_id=self.node_key.key_id)
+        other = key("Impostor-node")
+        f2 = self.sign_fact(other, n.name, n.speaker, n.speaker_key_id, n.residents)
+        self.verify_fact(f2)                      # internally consistent...
+        with self.assertRaises(ValueError):       # ...but not the pinned node
+            self.verify_fact(f2, expected_node_key_id=self.node_key.key_id)
+
+    def test_the_store_refuses_to_silently_repin(self):
+        self.store.pin_peer("Frosty", self.node_key.key_id, "http://x")
+        self.store.pin_peer("Frosty", self.node_key.key_id, "http://x")   # idempotent
+        with self.assertRaises(AgoraError):
+            self.store.pin_peer("Frosty", key("Other").key_id, "http://x")
+
+    def test_notices_are_signed_and_carry_no_artifact(self):
+        """A notice says what you want a collaborator for and how to ask
+        in. Pasting the work itself into the lobby is the culture leaking
+        around the architecture."""
+        n = self.sign_notice(self.node_key, "Home",
+                             "Looking for help on ultrasonic ranging",
+                             "Two transducers, not one. Ask in if you know the failure modes.",
+                             "ask Coda")
+        self.verify_notice(n)
+        self.store.publish_notice(n)
+        self.assertEqual(len(self.store.notices()), 1)
+
+    def test_a_tampered_notice_is_refused(self):
+        n = self.sign_notice(self.node_key, "Home", "subject", "body", "contact")
+        n["body"] = "different body"
+        with self.assertRaises(ValueError):
+            self.store.publish_notice(n)

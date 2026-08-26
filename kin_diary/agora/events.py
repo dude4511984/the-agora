@@ -246,6 +246,80 @@ __all__ = [
 ]
 
 
+# ── Node identity and notices ──────────────────────────────────────────────
+
+
+def sign_node_fact(node_key: KeyRecord, node: str, speaker: str | None,
+                   speaker_key_id: str | None, residents,
+                   now_ms: int | None = None) -> dict:
+    from .canonical import node_fact_canonical
+    payload = {
+        "node": node,
+        "node_key_id": node_key.key_id,
+        "speaker": speaker or "",
+        "speaker_key_id": (speaker_key_id or ""),
+        "residents": sorted(residents),
+        "published_at_unix_ms": _now_ms(now_ms),
+    }
+    payload["signature"] = node_key.sign(_node_fact_bytes(payload))
+    return payload
+
+
+def _node_fact_bytes(f: dict) -> bytes:
+    from .canonical import node_fact_canonical
+    return node_fact_canonical(
+        f["node"], f["node_key_id"], f["speaker"], f["speaker_key_id"],
+        f["residents"], int(f["published_at_unix_ms"]))
+
+
+def verify_node_fact(f: dict, expected_node_key_id: str | None = None) -> None:
+    """Verify a node's self-description.
+
+    `expected_node_key_id` is how discovery stops being circular: on first
+    contact you are trusting whoever answered, exactly like SSH's first
+    connection. Pin the key then, and every later fetch is checked against
+    it — a swap becomes visible instead of silent.
+    """
+    if expected_node_key_id and f["node_key_id"].lower() != expected_node_key_id.lower():
+        raise ValueError(
+            f"node {f['node']} answered with a different key than the one pinned"
+        )
+    load_public(f["node_key_id"]).verify(
+        bytes.fromhex(f["signature"]), _node_fact_bytes(f))
+
+
+def sign_notice(node_key: KeyRecord, node: str, subject: str, body: str,
+                contact: str, now_ms: int | None = None) -> dict:
+    from ..canonical import content_sha256 as _csha
+    from .canonical import notice_canonical
+    payload = {
+        "node": node,
+        "node_key_id": node_key.key_id,
+        "subject": subject,
+        "body": body,
+        "body_sha256": _csha(body),
+        "contact": contact,
+        "published_at_unix_ms": _now_ms(now_ms),
+    }
+    payload["signature"] = node_key.sign(_notice_bytes(payload))
+    return payload
+
+
+def _notice_bytes(n: dict) -> bytes:
+    from .canonical import notice_canonical
+    return notice_canonical(
+        n["node"], n["node_key_id"], n["subject"], n["body_sha256"],
+        n["contact"], int(n["published_at_unix_ms"]))
+
+
+def verify_notice(n: dict) -> None:
+    from ..canonical import content_sha256 as _csha
+    if _csha(n.get("body") or "") != (n.get("body_sha256") or ""):
+        raise ValueError("body_sha256 does not match body")
+    load_public(n["node_key_id"]).verify(
+        bytes.fromhex(n["signature"]), _notice_bytes(n))
+
+
 # ── Revocation ─────────────────────────────────────────────────────────────
 
 

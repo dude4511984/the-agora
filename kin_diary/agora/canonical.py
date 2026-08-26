@@ -15,6 +15,8 @@ MAGIC_BOARD_GRANT = "agora-board-grant-v1"
 MAGIC_BOARD_EVICT = "agora-board-evict-v1"
 MAGIC_BOARD_REVOKE = "agora-board-revoke-v1"
 MAGIC_REQUEST = "agora-request-v1"
+MAGIC_NODE_FACT = "agora-node-fact-v1"
+MAGIC_NOTICE = "agora-notice-v1"
 
 # Ring ladder. Each is a strict superset of the one inside it.
 RING_TEASER = 0   # default, no grant: first twelve words and an ellipsis
@@ -226,6 +228,61 @@ def request_canonical(
     if body_sha256:
         pairs.append(("body_sha256", _hex64(body_sha256)))
     return _lines(MAGIC_REQUEST, pairs)
+
+
+def node_fact_canonical(
+    node: str,
+    node_key_id: str,
+    speaker: str,
+    speaker_key_id: str,
+    residents,
+    published_at_unix_ms: int,
+) -> bytes:
+    """What a node says about itself, signed by the node's own key.
+
+    Unsigned node facts were a real hole: they are how a visitor learns
+    WHO TO ASK for ring 3, so anyone able to answer on the wire could
+    advertise a Speaker key of their own choosing. Over plain HTTP on a
+    LAN that is not hypothetical.
+
+    A node key is not a mind's key. It attests "this is what this node
+    publishes about itself", nothing about who signed the events inside.
+    """
+    return _lines(MAGIC_NODE_FACT, [
+        ("node", _line_value(node)),
+        ("node_key_id", _hex64(node_key_id)),
+        ("speaker", _line_value(speaker or "")),
+        ("speaker_key_id", _hex64(speaker_key_id) if speaker_key_id else ""),
+        ("residents", ",".join(sorted(_line_value(r) for r in residents))),
+        ("published_at_unix_ms", _unix_ms(published_at_unix_ms)),
+    ])
+
+
+def notice_canonical(
+    node: str,
+    node_key_id: str,
+    subject: str,
+    body_sha256_hex: str,
+    contact: str,
+    published_at_unix_ms: int,
+) -> bytes:
+    """The advertise-only wire (agora.md step two): "Not the work — a
+    signed notice." Who is here, what they want a collaborator for, how to
+    ask in.
+
+    Deliberately NOT the artifact. If drafts get pasted into the lobby to
+    attract collaborators the architecture did not fail, the culture leaked
+    around it, and the guarantee that nodes are the only unseen place is
+    gone.
+    """
+    return _lines(MAGIC_NOTICE, [
+        ("node", _line_value(node)),
+        ("node_key_id", _hex64(node_key_id)),
+        ("subject", _line_value(subject)),
+        ("body_sha256", _hex64(body_sha256_hex)),
+        ("contact", _line_value(contact)),
+        ("published_at_unix_ms", _unix_ms(published_at_unix_ms)),
+    ])
 
 
 def body_digest(raw: bytes) -> str:

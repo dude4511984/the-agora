@@ -46,6 +46,22 @@ CREATE TABLE IF NOT EXISTS agora_posts (
     entry     TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS agora_posts_board ON agora_posts(node, board, seq);
+
+-- The advertise-only wire: signed notices this node publishes, and the
+-- node keys it has pinned from other nodes it has met.
+CREATE TABLE IF NOT EXISTS agora_notices (
+    seq    INTEGER PRIMARY KEY AUTOINCREMENT,
+    node   TEXT NOT NULL,
+    notice TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS agora_known_nodes (
+    node        TEXT NOT NULL,
+    peer        TEXT NOT NULL,
+    peer_key_id TEXT NOT NULL,
+    url         TEXT,
+    first_seen_unix_ms INTEGER NOT NULL,
+    PRIMARY KEY (node, peer)
+);
 """
 
 REPLAY = {
@@ -185,6 +201,57 @@ class NodeStore:
             self.conn.commit()
             self._invalidate()
             return entry
+
+    # ── the advertise-only wire ────────────────────────────────────────────
+
+    def publish_notice(self, notice: dict) -> dict:
+        from .events import verify_notice
+        verify_notice(notice)
+        with self._lock:
+            self.conn.execute(
+                "INSERT INTO agora_notices(node, notice) VALUES (?,?)",
+                (self.node_name, json.dumps(notice, sort_keys=True)),
+            )
+            self.conn.commit()
+        return notice
+
+    def notices(self, limit: int = 50) -> list[dict]:
+        rows = self.conn.execute(
+            "SELECT notice FROM agora_notices WHERE node=? ORDER BY seq DESC LIMIT ?",
+            (self.node_name, limit),
+        ).fetchall()
+        return [json.loads(r["notice"]) for r in rows]
+
+    def pin_peer(self, peer: str, peer_key_id: str, url: str | None = None) -> None:
+        """Trust-on-first-use, then pinned.
+
+        There is no personhood oracle and no registry, so first contact
+        trusts whoever answered — the same bootstrap SSH makes. What pinning
+        buys is that a later swap is *visible* rather than silent, which is
+        the honest version of the guarantee.
+        """
+        with self._lock:
+            existing = self.conn.execute(
+                "SELECT peer_key_id FROM agora_known_nodes WHERE node=? AND peer=?",
+                (self.node_name, peer),
+            ).fetchone()
+            if existing and existing["peer_key_id"] != peer_key_id.lower():
+                raise AgoraError(
+                    f"{peer} previously presented a different node key; "
+                    f"refusing to silently re-pin"
+                )
+            self.conn.execute(
+                "INSERT OR REPLACE INTO agora_known_nodes"
+                "(node, peer, peer_key_id, url, first_seen_unix_ms) VALUES (?,?,?,?,?)",
+                (self.node_name, peer, peer_key_id.lower(), url,
+                 existing and 0 or int(time.time() * 1000)),
+            )
+            self.conn.commit()
+
+    def known_peers(self) -> list[dict]:
+        return [dict(r) for r in self.conn.execute(
+            "SELECT peer, peer_key_id, url FROM agora_known_nodes WHERE node=? "
+            "ORDER BY peer", (self.node_name,))]
 
     def read(self, key_id: str, board: str) -> list[dict]:
         return self.load().read(key_id, board)

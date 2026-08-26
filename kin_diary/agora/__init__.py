@@ -14,6 +14,10 @@ from .canonical import (
     teaser,
 )
 from .events import (
+    sign_node_fact,
+    sign_notice,
+    verify_node_fact,
+    verify_notice,
     countersign_key_intro,
     open_speaker_election,
     sign_board_evict,
@@ -30,6 +34,10 @@ from .events import (
 from .node import AgoraError, Node
 
 __all__ = [
+    "sign_node_fact",
+    "verify_node_fact",
+    "sign_notice",
+    "verify_notice",
     "Node",
     "AgoraError",
     "board_id",
