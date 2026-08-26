@@ -57,13 +57,14 @@ def render(scene: dict, view: dict) -> str:
     for root in scene.get("roots") or []:
         walk(root, 0)
 
-    doors = scene.get("doors") or scene.get("peer_doors") or []
-    if doors:
+    edges = scene.get("edges") or []
+    if edges:
         out += ["", "doors to pinned peers (nothing behind them until you cross):"]
-        for d in sorted(doors, key=lambda x: str(x.get("id") or x.get("place_id"))):
-            out.append(f"  ==> {d.get('peer')}  {d.get('url','')}  "
-                       f"{'locked' if d.get('locked', True) else 'open'}")
-    if not (scene.get("nodes") or doors):
+        for e in sorted(edges, key=lambda x: str((x.get("door") or {}).get("place_id"))):
+            d = e.get("door") or {}
+            out.append(f"  ==> {e.get('label') or d.get('peer')}  {d.get('url','')}  "
+                       f"{'locked' if e.get('locked', True) else 'open'}")
+    if not (scene.get("nodes") or edges):
         out.append("(nothing this key may see)")
     return "\n".join(out)
 
@@ -152,15 +153,22 @@ def to_html(scene: dict, view: dict) -> str:
     if not by_id:
         parts.append('<div class=empty>nothing this key may see</div>')
 
-    doors = scene.get("doors") or scene.get("peer_doors") or []
-    if doors:
+    # Peer doors live in scene["edges"], each carrying its door object.
+    # Looking for a "doors" key found nothing and rendered nothing SILENTLY,
+    # which the burn fixture caught immediately — a page quietly omitting a
+    # door the scene has is the same class of divergence as showing one it
+    # does not, and the fixture exists precisely because neither is visible
+    # from inside project().
+    edges = scene.get("edges") or []
+    if edges:
         parts.append('<div class=doors>doors to pinned peers '
                      '\u2014 nothing behind them until you cross:')
-        for d in doors:
+        for e in edges:
+            d = e.get("door") or {}
             did = d.get("place_id") or d.get("id") or ""
             parts.append(f'<div class="place door locked" data-door-id='
                          f'"{_h.escape(str(did))}">\u21d2 '
-                         f'{_h.escape(str(d.get("peer")))} '
+                         f'{_h.escape(str(e.get("label") or d.get("peer")))} '
                          f'<span class=kind>{_h.escape(str(d.get("url") or ""))}</span></div>')
         parts.append("</div>")
 
