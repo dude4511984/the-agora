@@ -431,3 +431,115 @@ class PeerDoorTests(unittest.TestCase):
         store.pin_peer("Home", nk.key_id, "http://self")
         ids = {d["peer"] for d in atlas.view(keys["Coda"].key_id)["peer_doors"]}
         self.assertNotIn("Home", ids)
+
+
+class AViewIsAReceiptNotATicket(unittest.TestCase):
+    """P0d, decided by Grok 2026-08-26.
+
+    Three clocks, not two. Authenticity never expires — the node really did
+    serve that inventory, and making verify fail later would make "what was
+    Marvin shown" unfalsifiable, destroying the same audit property the
+    retract/audit split exists to protect. Currency is the client's last
+    fetch. Permission is the live ring, checked at the action.
+
+    Option A (max-age inside verify) was rejected as the grant-replay bug
+    in a client's hat: it defines the eviction window as in-spec.
+    """
+
+    def test_an_old_view_still_verifies_after_an_eviction(self):
+        """Not a bug. The node did serve it. It is a receipt of a moment."""
+        from kin_diary.agora.places import verify_view
+        node, keys, nk, atlas = furnished()
+        v = key("Marvin")
+        node.accept_intro(countersign_key_intro(
+            keys["Coda"], start_key_intro(v, "Home", keys["Coda"].key_id)))
+        node.accept_grant(sign_board_grant(
+            keys["Coda"], v.key_id, "Home", "personal:Coda", RING_WRITE,
+            now_ms=1_000_000))
+        old = atlas.signed_view(nk, v.key_id)
+        self.assertIn("codas-door", {p["place_id"] for p in old["places"]})
+
+        node.accept_eviction(sign_board_evict(
+            keys["Coda"], v.key_id, "Home", "malicious", now_ms=2_000_000))
+
+        verify_view(old)      # still authentic, deliberately
+        fresh = atlas.signed_view(nk, v.key_id)
+        self.assertNotIn("codas-door", {p["place_id"] for p in fresh["places"]})
+
+    def test_the_receipt_cannot_be_cashed_at_the_wire(self):
+        """The wall is the live ring, not the age of the paper. Holding a
+        view that listed the door does not open the board."""
+        node, keys, nk, atlas = furnished()
+        v = key("Marvin")
+        node.accept_intro(countersign_key_intro(
+            keys["Coda"], start_key_intro(v, "Home", keys["Coda"].key_id)))
+        node.accept_grant(sign_board_grant(
+            keys["Coda"], v.key_id, "Home", "personal:Coda", RING_WRITE,
+            now_ms=1_000_000))
+        old = atlas.signed_view(nk, v.key_id)
+        node.accept_eviction(sign_board_evict(
+            keys["Coda"], v.key_id, "Home", "malicious", now_ms=2_000_000))
+
+        self.assertIn("codas-door", {p["place_id"] for p in old["places"]})
+        self.assertEqual(
+            node.effective_ring(v.key_id, "personal:Coda"), RING_TEASER)
+        self.assertEqual(node.read(v.key_id, "personal:Coda"), [])
+        with self.assertRaises(AgoraError):
+            atlas.arrive(sign_presence(v, "Home", "concourse"))
+
+    def test_no_action_anywhere_accepts_a_view(self):
+        """Structural, not a promise. The moment any endpoint takes a view
+        (or an inventory hash, or a view signature) and opens something, the
+        snapshot has become a second permission system and would then need
+        nonces, replay sets and expiry — the grants table already refused."""
+        import inspect
+        from kin_diary.agora import artifacts, node as node_mod, places, store, wire
+        for mod in (node_mod, store, wire, artifacts):
+            for name, fn in inspect.getmembers(mod, inspect.isfunction):
+                params = set(inspect.signature(fn).parameters)
+                self.assertFalse(
+                    params & {"view", "inventory_sha256", "view_signature"},
+                    f"{mod.__name__}.{name} takes a view as an argument")
+        for cls in (node_mod.Node, store.NodeStore, places.Atlas,
+                    artifacts.ArtifactStore):
+            for name, fn in inspect.getmembers(cls, inspect.isfunction):
+                if name in ("signed_view", "view", "_view_signatures"):
+                    continue
+                params = set(inspect.signature(fn).parameters)
+                self.assertFalse(
+                    params & {"view", "inventory_sha256", "view_signature"},
+                    f"{cls.__name__}.{name} takes a view as an argument")
+
+    def test_projection_replaces_rather_than_merges(self):
+        """Replace-not-merge is the protocol rule, not client discipline.
+        Difference-patching that keeps a door the new view omitted IS the
+        Marvin bug as an algorithm."""
+        node, keys, nk, atlas = furnished()
+        v = key("Marvin")
+        node.accept_intro(countersign_key_intro(
+            keys["Coda"], start_key_intro(v, "Home", keys["Coda"].key_id)))
+        node.accept_grant(sign_board_grant(
+            keys["Coda"], v.key_id, "Home", "personal:Coda", RING_WRITE,
+            now_ms=1_000_000))
+        v1 = atlas.signed_view(nk, v.key_id)
+        node.accept_eviction(sign_board_evict(
+            keys["Coda"], v.key_id, "Home", "malicious", now_ms=2_000_000))
+        v2 = atlas.signed_view(nk, v.key_id)
+
+        projected = project(v1)
+        projected = project(v2)          # replaces, never unions
+        self.assertNotIn("codas-door", projected["places"])
+        union = project(v1)["places"] | project(v2)["places"]
+        self.assertIn("codas-door", union)   # what merging would have kept
+
+
+def project(view: dict) -> dict:
+    """The one legal way to turn a verified view into a scene: take it
+    whole. Both clients use this, because if the human map and the data
+    feed diverge there are two Agoras."""
+    return {
+        "places": {p["place_id"] for p in view.get("places") or []},
+        "presence": {p["key_id"] for p in view.get("presence") or []},
+        "listings": {li["listing_id"] for li in view.get("listings") or []},
+        "doors": {d["place_id"] for d in view.get("peer_doors") or []},
+    }
