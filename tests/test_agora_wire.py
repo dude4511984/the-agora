@@ -13,7 +13,7 @@ from pathlib import Path
 sys.path.insert(0, os.path.expanduser("~/kin_diary"))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from test_agora import key  # noqa: E402
+from test_agora import NOW_MS, key  # noqa: E402
 from test_agora_store import elect, fresh_store  # noqa: E402
 
 from kin_diary.agora import (  # noqa: E402
@@ -330,13 +330,13 @@ class CrossProcessCacheTests(unittest.TestCase):
             now_ms=1_000_000))
 
         other = NodeStore(path, "Home")
-        self.assertTrue(other.load().can_write(v.key_id, "personal:Coda", 0))
+        self.assertTrue(other.load().can_write(v.key_id, "personal:Coda", NOW_MS))
 
         store.record("evict", sign_board_evict(
             keys["Coda"], v.key_id, "Home", "malicious", now_ms=2_000_000))
 
         # `other` has a warm cache from before the eviction.
-        self.assertFalse(other.load().can_write(v.key_id, "personal:Coda", 0))
+        self.assertFalse(other.load().can_write(v.key_id, "personal:Coda", NOW_MS))
 
 
 class NodeIdentityTests(unittest.TestCase):

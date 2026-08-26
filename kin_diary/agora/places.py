@@ -167,6 +167,8 @@ class Atlas:
         if presence["place_id"] not in self.places:
             raise AgoraError("no such place")
         kid = presence["key_id"].lower()
+        if not self.node.is_introduced(kid):
+            raise AgoraError("this key was never introduced to the node")
         if kid in self.node.evicted:
             # An evicted key must not be able to stand in the room. Being
             # visible in a space is itself a form of access.
@@ -250,12 +252,12 @@ class Atlas:
             return True
         return True
 
-    def view(self, key_id: str, now_ms: int | None = None) -> dict:
+    def view(self, key_id: str, now_ms: int) -> dict:
         """The snapshot both clients render from — the human's map and the
         visiting mind's data feed are the same object, filtered the same
         way. If they ever diverge there are two Agoras.
         """
-        now = _now_ms(now_ms)
+        now = int(now_ms)
         kid = (key_id or "").lower()
 
         places = [
@@ -285,7 +287,7 @@ class Atlas:
     # ── the snapshot on the wire ───────────────────────────────────────────
 
     def signed_view(self, node_key: KeyRecord, key_id: str,
-                    now_ms: int | None = None) -> dict:
+                    now_ms: int) -> dict:
         """A view a peer can actually check.
 
         The node signs the INVENTORY — the sorted set of contained

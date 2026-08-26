@@ -11,7 +11,7 @@ from pathlib import Path
 sys.path.insert(0, os.path.expanduser("~/kin_diary"))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from test_agora import key
+from test_agora import NOW_MS, key
 
 from kin_diary.agora import RING_READ, RING_WRITE, sign_board_evict, sign_board_grant
 from kin_diary.agora.artifacts import (
@@ -75,7 +75,7 @@ class ArtifactTests(unittest.TestCase):
         self.assertEqual(
             self.store.fetch(
                 self.node_store, self.visitor.key_id, self.listing, self.atlas,
-                access_board="personal:Coda", now_ms=0,
+                access_board="personal:Coda", now_ms=NOW_MS,
             ),
             self.data,
         )
@@ -90,14 +90,14 @@ class ArtifactTests(unittest.TestCase):
         with self.assertRaises(ArtifactUnavailable):
             self.store.fetch(
                 self.node_store, self.visitor.key_id, missing, self.atlas,
-                access_board="personal:Coda", now_ms=0,
+                access_board="personal:Coda", now_ms=NOW_MS,
             )
 
     def test_low_ring_is_denied_before_bytes_are_served(self):
         with self.assertRaises(ArtifactUnavailable) as cm:
             self.store.fetch(
                 self.node_store, key("Stranger").key_id, self.listing, self.atlas,
-                access_board="personal:Coda", now_ms=0,
+                access_board="personal:Coda", now_ms=NOW_MS,
             )
         self.assertEqual(str(cm.exception), "artifact unavailable")
 
@@ -114,12 +114,12 @@ class ArtifactTests(unittest.TestCase):
         ))
         self.assertIn(
             self.listing,
-            self.atlas.view(reader.key_id)["listings"],
+            self.atlas.view(reader.key_id, now_ms=NOW_MS)["listings"],
         )
         with self.assertRaises(ArtifactUnavailable) as cm:
             self.store.fetch(
                 self.node_store, reader.key_id, self.listing, self.atlas,
-                access_board="personal:Coda", now_ms=0, required_ring=RING_WRITE,
+                access_board="personal:Coda", now_ms=NOW_MS, required_ring=RING_WRITE,
             )
         self.assertEqual(str(cm.exception), "artifact unavailable")
 
@@ -157,7 +157,7 @@ class ArtifactTests(unittest.TestCase):
             with self.assertRaises(ArtifactUnavailable) as cm:
                 self.store.fetch(
                     self.node_store, reader.key_id, listing, self.atlas,
-                    access_board="personal:Coda", now_ms=0, required_ring=required,
+                    access_board="personal:Coda", now_ms=NOW_MS, required_ring=required,
                 )
             outcomes.append((type(cm.exception), str(cm.exception)))
         self.assertEqual(outcomes, [outcomes[0]] * 3)
@@ -167,7 +167,7 @@ class ArtifactTests(unittest.TestCase):
         with self.assertRaises(ArtifactUnavailable) as cm:
             self.store.fetch(
                 self.node_store, stranger.key_id, self.listing, self.atlas,
-                access_board="personal:Coda", now_ms=0,
+                access_board="personal:Coda", now_ms=NOW_MS,
             )
         self.assertEqual(str(cm.exception), "artifact unavailable")
 
@@ -181,7 +181,7 @@ class ArtifactTests(unittest.TestCase):
         with self.assertRaises(ArtifactHashMismatch):
             self.store.fetch(
                 self.node_store, self.visitor.key_id, self.listing, self.atlas,
-                access_board="personal:Coda", now_ms=0,
+                access_board="personal:Coda", now_ms=NOW_MS,
             )
 
     def test_evicted_seller_cannot_keep_listing_live(self):
@@ -191,7 +191,7 @@ class ArtifactTests(unittest.TestCase):
         with self.assertRaises(ArtifactUnavailable) as cm:
             self.store.fetch(
                 self.node_store, self.visitor.key_id, self.listing, self.atlas,
-                access_board="personal:Coda", now_ms=0,
+                access_board="personal:Coda", now_ms=NOW_MS,
             )
         self.assertEqual(str(cm.exception), "artifact unavailable")
 
@@ -207,7 +207,7 @@ class ArtifactTests(unittest.TestCase):
         with self.assertRaises(ArtifactUnavailable) as cm:
             self.store.fetch(
                 self.node_store, self.visitor.key_id, self.listing, self.atlas,
-                access_board="personal:Coda", now_ms=0,
+                access_board="personal:Coda", now_ms=NOW_MS,
             )
         self.assertEqual(str(cm.exception), "artifact unavailable")
 

@@ -182,7 +182,8 @@ class AgoraHandler(BaseHTTPRequestHandler):
                 if self.atlas is None or self.node_key is None:
                     self._send(404, {"error": "this node publishes no atlas"})
                     return
-                self._send(200, self.atlas.signed_view(self.node_key, self._who()))
+                self._send(200, self.atlas.signed_view(
+                    self.node_key, self._who(), int(time.time() * 1000)))
                 return
             if self.path.startswith("/artifact/"):
                 # Content-addressed retrieval. Never execution: bytes go

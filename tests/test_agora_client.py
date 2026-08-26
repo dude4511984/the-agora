@@ -9,6 +9,7 @@ sys.path.insert(0, os.path.expanduser("~/kin_diary"))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from test_agora import (  # noqa: E402
+    NOW_MS,
     countersign_key_intro,
     key,
     sign_board_evict,
@@ -112,7 +113,7 @@ class ClientTests(unittest.TestCase):
         checks it rather than assuming the server got it right."""
         other = key("SomeoneElse")
         c = self.client()
-        stolen = self.atlas.signed_view(self.nk, other.key_id)
+        stolen = self.atlas.signed_view(self.nk, other.key_id, now_ms=NOW_MS)
         from kin_diary.agora.places import verify_view
         with self.assertRaises(AgoraError):
             verify_view(stolen, expected_viewer_key_id=c.key.key_id)

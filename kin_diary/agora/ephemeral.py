@@ -7,9 +7,6 @@ the signed receipt remains verifiable forever.
 
 from __future__ import annotations
 
-import json
-import sqlite3
-import time
 from typing import Any
 
 from cryptography.exceptions import InvalidSignature
@@ -135,69 +132,26 @@ def verify_ephemeral(
 
 
 class EphemeralStore:
-    """Append-only durable journal for ephemeral receipts.
-
-    This is intentionally separate from the current admission query: expired
-    receipts remain available for provenance and dead-end enforcement.
-    """
+    """Compatibility facade over the production NodeStore journal."""
 
     def __init__(self, node_store: NodeStore):
         self.node_store = node_store
-        self.conn = sqlite3.connect(node_store.path)
-        self.conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS agora_ephemeral (
-                seq INTEGER PRIMARY KEY AUTOINCREMENT,
-                node TEXT NOT NULL,
-                visitor_key_id TEXT NOT NULL,
-                event TEXT NOT NULL
-            )
-            """
-        )
-        self.conn.commit()
 
     def close(self) -> None:
-        self.conn.close()
+        pass
 
     def record(self, event: dict[str, Any]) -> dict[str, Any]:
-        node = self.node_store.load()
-        verify_ephemeral(event, node)
-        self.conn.execute(
-            "INSERT INTO agora_ephemeral(node, visitor_key_id, event) VALUES (?,?,?)",
-            (node.name, event["visitor_key_id"].lower(),
-             json.dumps(event, sort_keys=True)),
-        )
-        self.conn.commit()
+        self.node_store.record("ephemeral", event)
         return event
 
     def was_ephemeral(self, key_id: str) -> bool:
-        row = self.conn.execute(
-            "SELECT 1 FROM agora_ephemeral WHERE node=? AND visitor_key_id=? LIMIT 1",
-            (self.node_store.node_name, key_id.lower()),
-        ).fetchone()
-        return row is not None
+        return key_id.lower() in self.node_store.load().ephemeral_key_ids
 
     def current(
-        self, key_id: str, board: str, now_ms: int | None = None
+        self, key_id: str, board: str, now_ms: int
     ) -> dict[str, Any] | None:
-        now = int(time.time() * 1000) if now_ms is None else int(now_ms)
-        node = self.node_store.load()
-        rows = self.conn.execute(
-            "SELECT event FROM agora_ephemeral WHERE node=? AND visitor_key_id=? "
-            "ORDER BY seq DESC",
-            (node.name, key_id.lower()),
-        ).fetchall()
-        for row in rows:
-            event = json.loads(row[0])
-            if (event["board"] == board
-                    and int(event["expires_at_unix_ms"]) > now
-                    and event["visitor_key_id"].lower() not in node.evicted):
-                try:
-                    verify_ephemeral(event, node)
-                except EphemeralError:
-                    return None
-                return event
-        return None
+        query = current_admission
+        return query(self.node_store.load(), key_id, board, now_ms)
 
 
 def reject_if_ephemeral(source, key_id: str) -> None:
@@ -226,6 +180,9 @@ def current_admission(
             continue
         if int(event["expires_at_unix_ms"]) <= int(now_ms):
             continue
+        evicted_at = node.evicted_at.get(kid)
+        if evicted_at is not None and evicted_at >= int(event["issued_at_unix_ms"]):
+            return None
         if kid in node.evicted:
             return None
         try:

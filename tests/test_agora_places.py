@@ -2,6 +2,7 @@
 
 import os
 import sys
+import time
 import unittest
 
 sys.path.insert(0, os.path.expanduser("~/kin_diary"))
@@ -28,6 +29,8 @@ from kin_diary.agora.places import (  # noqa: E402
     verify_place,
     verify_presence,
 )
+
+NOW_MS = int(time.time() * 1000)
 
 
 def furnished():
@@ -82,7 +85,7 @@ class TheMapCannotDecide(unittest.TestCase):
     def test_a_stranger_sees_the_commons_but_not_a_gated_door(self):
         node, keys, nk, atlas = furnished()
         stranger = key("Nobody")
-        ids = {p["place_id"] for p in atlas.view(stranger.key_id)["places"]}
+        ids = {p["place_id"] for p in atlas.view(stranger.key_id, NOW_MS)["places"]}
         self.assertIn("concourse", ids)
         self.assertIn("stall-1", ids)
         self.assertNotIn("codas-door", ids)
@@ -93,11 +96,11 @@ class TheMapCannotDecide(unittest.TestCase):
         node.accept_intro(countersign_key_intro(
             keys["Coda"], start_key_intro(v, "Home", keys["Coda"].key_id)))
         self.assertNotIn("codas-door",
-                         {p["place_id"] for p in atlas.view(v.key_id)["places"]})
+                         {p["place_id"] for p in atlas.view(v.key_id, NOW_MS)["places"]})
         node.accept_grant(sign_board_grant(
             keys["Coda"], v.key_id, "Home", "personal:Coda", RING_WRITE))
         self.assertIn("codas-door",
-                      {p["place_id"] for p in atlas.view(v.key_id)["places"]})
+                      {p["place_id"] for p in atlas.view(v.key_id, NOW_MS)["places"]})
 
     def test_a_forged_low_ring_hint_cannot_open_a_door(self):
         """If ring_to_see alone decided, re-signing a place with a lower
@@ -107,7 +110,7 @@ class TheMapCannotDecide(unittest.TestCase):
                                    parent="concourse", ring_to_see=RING_TEASER,
                                    points_to="personal:Aurora"))
         stranger = key("Nobody")
-        view = atlas.view(stranger.key_id)
+        view = atlas.view(stranger.key_id, NOW_MS)
         door = next(p for p in view["places"] if p["place_id"] == "back-door")
         # The door may be drawn, but it points at a board the stranger still
         # cannot read — the map advertises, the node decides.
@@ -121,17 +124,19 @@ class TheMapCannotDecide(unittest.TestCase):
         v = key("Marvin")
         node.accept_intro(countersign_key_intro(
             keys["Coda"], start_key_intro(v, "Home", keys["Coda"].key_id)))
-        self.assertEqual(atlas.view(v.key_id), atlas.view(v.key_id))
+        self.assertEqual(atlas.view(v.key_id, NOW_MS), atlas.view(v.key_id, NOW_MS))
 
 
 class PresenceTests(unittest.TestCase):
     def test_presence_is_signed_by_whoever_is_present(self):
         node, keys, nk, atlas = furnished()
         v = key("Marvin")
+        node.accept_intro(countersign_key_intro(
+            keys["Coda"], start_key_intro(v, "Home", keys["Coda"].key_id)))
         p = sign_presence(v, "Home", "concourse", label="Marvin")
         verify_presence(p)
         atlas.arrive(p)
-        self.assertEqual(len(atlas.view(v.key_id)["presence"]), 1)
+        self.assertEqual(len(atlas.view(v.key_id, NOW_MS)["presence"]), 1)
 
     def test_you_cannot_stand_in_a_place_that_does_not_exist(self):
         node, keys, nk, atlas = furnished()
@@ -144,6 +149,8 @@ class PresenceTests(unittest.TestCase):
         renderer tells for free."""
         node, keys, nk, atlas = furnished()
         v = key("Marvin")
+        node.accept_intro(countersign_key_intro(
+            keys["Coda"], start_key_intro(v, "Home", keys["Coda"].key_id)))
         atlas.arrive(sign_presence(v, "Home", "concourse",
                                    ttl_ms=1000, now_ms=1_000_000))
         self.assertEqual(len(atlas.view(v.key_id, now_ms=1_000_500)["presence"]), 1)
@@ -158,7 +165,7 @@ class PresenceTests(unittest.TestCase):
         atlas.arrive(sign_presence(v, "Home", "concourse"))
         node.accept_eviction(sign_board_evict(
             keys["Coda"], v.key_id, "Home", "malicious"))
-        self.assertEqual(len(atlas.view(keys["Coda"].key_id)["presence"]), 0)
+        self.assertEqual(len(atlas.view(keys["Coda"].key_id, NOW_MS)["presence"]), 0)
         with self.assertRaises(AgoraError):
             atlas.arrive(sign_presence(v, "Home", "concourse"))
 
@@ -167,7 +174,7 @@ class PresenceTests(unittest.TestCase):
         resident = keys["Coda"]
         atlas.arrive(sign_presence(resident, "Home", "codas-door"))
         stranger = key("Nobody")
-        self.assertEqual(len(atlas.view(stranger.key_id)["presence"]), 0)
+        self.assertEqual(len(atlas.view(stranger.key_id, NOW_MS)["presence"]), 0)
 
 
 class ListingTests(unittest.TestCase):
@@ -211,7 +218,7 @@ class SignedViewTests(unittest.TestCase):
         """The server attests 'this is the set I served you', never 'I wrote
         these'. Signing contents would be claiming authorship of other
         minds' presence — which is how a host invents occupancy."""
-        v = self.atlas.signed_view(self.nk, self.keys["Coda"].key_id)
+        v = self.atlas.signed_view(self.nk, self.keys["Coda"].key_id, NOW_MS)
         self.verify_view(v)
         self.assertEqual(len(v["inventory_sha256"]), 64)
 
@@ -219,14 +226,14 @@ class SignedViewTests(unittest.TestCase):
         """The attack the inventory signature exists to stop."""
         from kin_diary.agora.places import sign_presence
         ghost = key("NeverWasHere")
-        v = self.atlas.signed_view(self.nk, self.keys["Coda"].key_id)
+        v = self.atlas.signed_view(self.nk, self.keys["Coda"].key_id, NOW_MS)
         v["presence"].append(sign_presence(ghost, "Home", "concourse"))
         with self.assertRaises(AgoraError) as cm:
             self.verify_view(v)
         self.assertIn("inventory", str(cm.exception))
 
     def test_a_forged_object_inside_a_valid_view_is_caught(self):
-        v = self.atlas.signed_view(self.nk, self.keys["Coda"].key_id)
+        v = self.atlas.signed_view(self.nk, self.keys["Coda"].key_id, NOW_MS)
         v["places"][0]["kind"] = "kiosk"
         with self.assertRaises(InvalidSignature):
             self.verify_view(v)
@@ -234,14 +241,14 @@ class SignedViewTests(unittest.TestCase):
     def test_a_view_cannot_be_replayed_to_a_different_viewer(self):
         """Filtering is part of the claim, not a detail of delivery."""
         other = key("SomeoneElse")
-        v = self.atlas.signed_view(self.nk, self.keys["Coda"].key_id)
+        v = self.atlas.signed_view(self.nk, self.keys["Coda"].key_id, NOW_MS)
         self.verify_view(v, expected_viewer_key_id=self.keys["Coda"].key_id)
         with self.assertRaises(AgoraError):
             self.verify_view(v, expected_viewer_key_id=other.key_id)
 
     def test_a_view_from_an_unpinned_node_key_is_caught(self):
         impostor = key("Impostor-node")
-        v = self.atlas.signed_view(impostor, self.keys["Coda"].key_id)
+        v = self.atlas.signed_view(impostor, self.keys["Coda"].key_id, NOW_MS)
         self.verify_view(v)                       # internally consistent
         with self.assertRaises(AgoraError):
             self.verify_view(v, expected_node_key_id=self.nk.key_id)
@@ -254,7 +261,7 @@ class SignedViewTests(unittest.TestCase):
             self.nk, "trapdoor", "Home", "door", parent="concourse",
             ring_to_see=RING_TEASER, points_to="personal:Aurora"))
         stranger = key("Nobody")
-        v = self.atlas.signed_view(self.nk, stranger.key_id)
+        v = self.atlas.signed_view(self.nk, stranger.key_id, NOW_MS)
         self.verify_view(v, expected_viewer_key_id=stranger.key_id)
         door = next(p for p in v["places"] if p["place_id"] == "trapdoor")
         # The door is drawn; the board behind it is still shut.
@@ -262,7 +269,7 @@ class SignedViewTests(unittest.TestCase):
             self.node.effective_ring(stranger.key_id, door["points_to"]),
             RING_TEASER)
         self.assertEqual(
-            self.node.read(stranger.key_id, "personal:Aurora", 0), [])
+            self.node.read(stranger.key_id, "personal:Aurora", NOW_MS), [])
 
     def test_both_clients_verify_the_identical_snapshot(self):
         """One snapshot, two clients. If they diverge there are two
@@ -298,7 +305,7 @@ class PresenceDoesNotGossip(unittest.TestCase):
         v, bundle = __import__("test_agora").eli_with_bundle()
         node.accept_bundle_import(bundle)
         self.assertIn(v.key_id, node.visitor_ceiling)      # recognised
-        self.assertEqual(len(atlas.view(v.key_id)["presence"]), 0)  # not here
+        self.assertEqual(len(atlas.view(v.key_id, NOW_MS)["presence"]), 0)  # not here
 
     def test_federation_never_carries_presence(self):
         """Structural, not a comment: the federation client fetches facts
@@ -326,11 +333,11 @@ class NothingCapturesPermissionsAtConstruction(unittest.TestCase):
         node.accept_intro(countersign_key_intro(
             keys["Coda"], start_key_intro(v, "Home", keys["Coda"].key_id)))
         self.assertNotIn("codas-door",
-                         {p["place_id"] for p in atlas.view(v.key_id)["places"]})
+                         {p["place_id"] for p in atlas.view(v.key_id, NOW_MS)["places"]})
         node.accept_grant(sign_board_grant(
             keys["Coda"], v.key_id, "Home", "personal:Coda", RING_WRITE))
         self.assertIn("codas-door",
-                      {p["place_id"] for p in atlas.view(v.key_id)["places"]})
+                      {p["place_id"] for p in atlas.view(v.key_id, NOW_MS)["places"]})
 
     def test_an_eviction_made_after_construction_closes_the_door(self):
         """The dangerous direction. A stale grant merely fails to open; a
@@ -343,11 +350,11 @@ class NothingCapturesPermissionsAtConstruction(unittest.TestCase):
             keys["Coda"], v.key_id, "Home", "personal:Coda", RING_WRITE,
             now_ms=1_000_000))
         self.assertIn("codas-door",
-                      {p["place_id"] for p in atlas.view(v.key_id)["places"]})
+                      {p["place_id"] for p in atlas.view(v.key_id, NOW_MS)["places"]})
         node.accept_eviction(sign_board_evict(
             keys["Coda"], v.key_id, "Home", "malicious", now_ms=2_000_000))
         self.assertNotIn("codas-door",
-                         {p["place_id"] for p in atlas.view(v.key_id)["places"]})
+                         {p["place_id"] for p in atlas.view(v.key_id, NOW_MS)["places"]})
 
     def test_a_store_backed_atlas_sees_writes_from_another_process(self):
         """The live shape: the wire's Atlas must not answer from boot."""
@@ -388,7 +395,7 @@ class PeerDoorTests(unittest.TestCase):
 
     def test_a_pinned_peer_appears_as_a_locked_door(self):
         store, keys, nk, atlas = self.furnished_with_peer()
-        v = atlas.view(keys["Coda"].key_id)
+        v = atlas.view(keys["Coda"].key_id, NOW_MS)
         door = v["peer_doors"][0]
         self.assertEqual(door["peer"], "Frosty")
         self.assertTrue(door["locked"])
@@ -396,14 +403,14 @@ class PeerDoorTests(unittest.TestCase):
     def test_a_door_carries_nothing_from_behind_it(self):
         """Presence-export by layout is the failure this guards."""
         store, keys, nk, atlas = self.furnished_with_peer()
-        door = atlas.view(keys["Coda"].key_id)["peer_doors"][0]
+        door = atlas.view(keys["Coda"].key_id, NOW_MS)["peer_doors"][0]
         for forbidden in ("places", "presence", "listings", "view", "boards"):
             self.assertNotIn(forbidden, door)
 
     def test_a_door_smuggling_occupancy_is_refused_on_verify(self):
         from kin_diary.agora.places import verify_view
         store, keys, nk, atlas = self.furnished_with_peer()
-        sv = atlas.signed_view(nk, keys["Coda"].key_id)
+        sv = atlas.signed_view(nk, keys["Coda"].key_id, NOW_MS)
         sv["peer_doors"][0]["presence"] = [{"key_id": "f" * 64}]
         with self.assertRaises(AgoraError) as cm:
             verify_view(sv)
@@ -415,7 +422,7 @@ class PeerDoorTests(unittest.TestCase):
         door to a peer that was never pinned."""
         from kin_diary.agora.places import verify_view
         store, keys, nk, atlas = self.furnished_with_peer()
-        sv = atlas.signed_view(nk, keys["Coda"].key_id)
+        sv = atlas.signed_view(nk, keys["Coda"].key_id, NOW_MS)
         verify_view(sv)
         sv["peer_doors"].append({
             "place_id": "door-to-Evil", "node": "Home", "kind": "door",
@@ -429,7 +436,7 @@ class PeerDoorTests(unittest.TestCase):
     def test_a_node_does_not_show_a_door_to_itself(self):
         store, keys, nk, atlas = self.furnished_with_peer()
         store.pin_peer("Home", nk.key_id, "http://self")
-        ids = {d["peer"] for d in atlas.view(keys["Coda"].key_id)["peer_doors"]}
+        ids = {d["peer"] for d in atlas.view(keys["Coda"].key_id, NOW_MS)["peer_doors"]}
         self.assertNotIn("Home", ids)
 
 
@@ -456,14 +463,14 @@ class AViewIsAReceiptNotATicket(unittest.TestCase):
         node.accept_grant(sign_board_grant(
             keys["Coda"], v.key_id, "Home", "personal:Coda", RING_WRITE,
             now_ms=1_000_000))
-        old = atlas.signed_view(nk, v.key_id)
+        old = atlas.signed_view(nk, v.key_id, NOW_MS)
         self.assertIn("codas-door", {p["place_id"] for p in old["places"]})
 
         node.accept_eviction(sign_board_evict(
             keys["Coda"], v.key_id, "Home", "malicious", now_ms=2_000_000))
 
         verify_view(old)      # still authentic, deliberately
-        fresh = atlas.signed_view(nk, v.key_id)
+        fresh = atlas.signed_view(nk, v.key_id, NOW_MS)
         self.assertNotIn("codas-door", {p["place_id"] for p in fresh["places"]})
 
     def test_the_receipt_cannot_be_cashed_at_the_wire(self):
@@ -476,14 +483,14 @@ class AViewIsAReceiptNotATicket(unittest.TestCase):
         node.accept_grant(sign_board_grant(
             keys["Coda"], v.key_id, "Home", "personal:Coda", RING_WRITE,
             now_ms=1_000_000))
-        old = atlas.signed_view(nk, v.key_id)
+        old = atlas.signed_view(nk, v.key_id, NOW_MS)
         node.accept_eviction(sign_board_evict(
             keys["Coda"], v.key_id, "Home", "malicious", now_ms=2_000_000))
 
         self.assertIn("codas-door", {p["place_id"] for p in old["places"]})
         self.assertEqual(
             node.effective_ring(v.key_id, "personal:Coda"), RING_TEASER)
-        self.assertEqual(node.read(v.key_id, "personal:Coda", 0), [])
+        self.assertEqual(node.read(v.key_id, "personal:Coda", NOW_MS), [])
         with self.assertRaises(AgoraError):
             atlas.arrive(sign_presence(v, "Home", "concourse"))
 
@@ -521,10 +528,10 @@ class AViewIsAReceiptNotATicket(unittest.TestCase):
         node.accept_grant(sign_board_grant(
             keys["Coda"], v.key_id, "Home", "personal:Coda", RING_WRITE,
             now_ms=1_000_000))
-        v1 = atlas.signed_view(nk, v.key_id)
+        v1 = atlas.signed_view(nk, v.key_id, NOW_MS)
         node.accept_eviction(sign_board_evict(
             keys["Coda"], v.key_id, "Home", "malicious", now_ms=2_000_000))
-        v2 = atlas.signed_view(nk, v.key_id)
+        v2 = atlas.signed_view(nk, v.key_id, NOW_MS)
 
         projected = project(v1)
         projected = project(v2)          # replaces, never unions

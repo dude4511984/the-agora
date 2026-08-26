@@ -9,7 +9,7 @@ from pathlib import Path
 sys.path.insert(0, os.path.expanduser("~/kin_diary"))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from test_agora import eli_with_bundle, home_node, key, seat  # noqa: E402
+from test_agora import NOW_MS, eli_with_bundle, home_node, key, seat  # noqa: E402
 
 from kin_diary.agora import (  # noqa: E402
     RING_NODE,
@@ -63,8 +63,8 @@ class StoreTests(unittest.TestCase):
 
         reopened = NodeStore(path, "Home").load()
         self.assertEqual(reopened.speaker, "Coda")
-        self.assertTrue(reopened.can_write(visitor.key_id, "personal:Coda", 0))
-        self.assertFalse(reopened.can_read(visitor.key_id, "personal:Aurora", 0))
+        self.assertTrue(reopened.can_write(visitor.key_id, "personal:Coda", NOW_MS))
+        self.assertFalse(reopened.can_read(visitor.key_id, "personal:Aurora", NOW_MS))
 
     def test_a_rejected_event_never_lands_in_the_log(self):
         """An append-only log cannot un-write a bad event, so validation has
@@ -87,11 +87,13 @@ class StoreTests(unittest.TestCase):
         entry = sign_entry(keys["Coda"], {
             "author": "Coda", "timestamp": "2026-08-26 10:00:00",
             "content": "penciling out the ranging problem"})
-        store.post(keys["Coda"].key_id, "personal:Coda", entry, 0)
+        store.post(keys["Coda"].key_id, "personal:Coda", entry, NOW_MS)
         store.close()
 
         from kin_diary.sign import verify_entry
-        rows = NodeStore(path, "Home").read(keys["Coda"].key_id, "personal:Coda", 0)
+        rows = NodeStore(path, "Home").read(
+            keys["Coda"].key_id, "personal:Coda", NOW_MS
+        )
         self.assertEqual(len(rows), 1)
         verify_entry(rows[0])          # survived the round trip through SQLite
 
@@ -103,10 +105,10 @@ class StoreTests(unittest.TestCase):
                    sign_entry(keys["Coda"], {"author": "Coda", "content": body}), 0)
 
         stranger = key("Nobody")
-        shown = store.read(stranger.key_id, "personal:Coda", 0)[0]
+        shown = store.read(stranger.key_id, "personal:Coda", NOW_MS)[0]
         self.assertTrue(shown["teaser"])
         # the full text is still on disk, unharmed
-        full = store.read(keys["Coda"].key_id, "personal:Coda", 0)[0]
+        full = store.read(keys["Coda"].key_id, "personal:Coda", NOW_MS)[0]
         self.assertEqual(full["content"], body)
 
     def test_eviction_replays_as_revocation_not_as_deletion(self):
@@ -123,7 +125,7 @@ class StoreTests(unittest.TestCase):
 
         reopened = NodeStore(path, "Home")
         node = reopened.load()
-        self.assertFalse(node.can_read(visitor.key_id, "personal:Coda", 0))
+        self.assertFalse(node.can_read(visitor.key_id, "personal:Coda", NOW_MS))
         # The grant event is still in the record. Nothing was erased.
         kinds = [r["kind"] for r in reopened.conn.execute(
             "SELECT kind FROM agora_events ORDER BY seq")]
@@ -139,7 +141,7 @@ class StoreTests(unittest.TestCase):
         store.close()
 
         node = NodeStore(path, "Home").load()
-        self.assertTrue(node.can_read(visitor.key_id, "personal:Aurora", 0))
+        self.assertTrue(node.can_read(visitor.key_id, "personal:Aurora", NOW_MS))
         held = node.visiting_diary(visitor.key_id)
         self.assertTrue(held["external"])
         self.assertEqual(held["from_node"], "Frosty")

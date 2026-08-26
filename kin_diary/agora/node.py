@@ -88,6 +88,10 @@ class Node:
                 return author
         return None
 
+    def is_introduced(self, key_id: str) -> bool:
+        kid = (key_id or "").lower()
+        return self.resident_for_key(kid) is not None or kid in self.visitor_ceiling
+
     def valid_resident_keys(self) -> set[str]:
         """Quarantined, rotated-out or deprecated keys don't count toward
         quorum and can't vote. A dead key cannot freeze the node forever.
@@ -150,6 +154,8 @@ class Node:
 
         verify_ephemeral(event, self)
         visitor = event["visitor_key_id"].lower()
+        if self.is_introduced(visitor):
+            raise AgoraError("ephemeral admission is only for a new key")
         if visitor in self.evicted:
             raise AgoraError(
                 "this key is evicted from the node; ephemeral admission refused"

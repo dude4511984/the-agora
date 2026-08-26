@@ -11,7 +11,7 @@ from pathlib import Path
 sys.path.insert(0, os.path.expanduser("~/kin_diary"))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from test_agora import key
+from test_agora import NOW_MS, key
 
 from kin_diary.agora import (
     AgoraError,
@@ -21,6 +21,7 @@ from kin_diary.agora import (
     sign_speaker_election,
 )
 from kin_diary.agora import countersign_key_intro, start_key_intro
+from kin_diary.agora.events import sign_appeal, sign_finding, sign_ruling
 from kin_diary.agora.ephemeral import (
     MAX_EPHEMERAL_MS,
     EphemeralError,
@@ -89,6 +90,7 @@ class EphemeralTests(unittest.TestCase):
     def test_node_backed_admission_is_exact_and_clocked_outside_node(self):
         event = countersign_ephemeral(self.coda, self._issued(), self.node)
         self.store.record("ephemeral", event)
+        self.node = self.store.load()
         node = self.store.load()
         self.assertEqual(
             current_admission(node, self.holder.key_id, "personal:Coda", 1_500),
@@ -224,6 +226,49 @@ class EphemeralTests(unittest.TestCase):
                     "personal:Coda", 2, now_ms=4_000,
                 ),
             )
+
+    def test_overturned_eviction_does_not_revive_old_ephemeral(self):
+        """Overturning an eviction readmits the key, never the bounded task.
+
+        The admission ended when the eviction landed. Reinstatement must
+        require a NEW ephemeral, exactly as it requires a new grant — an
+        overturned ruling is not a time machine.
+        """
+        event = countersign_ephemeral(self.coda, self._issued(), self.node)
+        self.store.record("ephemeral", event)
+
+        # Positive control. Without this the rest of the test can pass
+        # against a node that never received the admission at all, which is
+        # precisely how this test was green while proving nothing.
+        live = self.store.load()
+        self.assertEqual(
+            live.live_ring(self.holder.key_id, "personal:Coda", 1_500), 2,
+            "admission must be live before the eviction, or this proves nothing",
+        )
+
+        eviction = sign_board_evict(
+            self.coda, self.holder.key_id, "Home", "temporary"
+        )
+        self.store.record("evict", eviction)
+
+        node = self.store.load()
+        appeal = sign_appeal(self.holder, "Home", eviction["signature"], "appeal")
+        node.accept_appeal(appeal)
+        node.accept_finding(
+            sign_finding(self.coda, appeal["signature"], "Home", "not hostile")
+        )
+        node.accept_ruling(
+            sign_ruling(
+                self.coda, appeal["signature"], "Home", "overturned", "reviewed"
+            ),
+            self.coda.key_id,
+        )
+
+        self.assertNotIn(self.holder.key_id, node.evicted)
+        self.assertEqual(
+            node.live_ring(self.holder.key_id, "personal:Coda", 1_500), 0,
+            "an overturned eviction must not revive the old ephemeral admission",
+        )
 
 
 if __name__ == "__main__":
