@@ -232,7 +232,8 @@ class NodeStore:
         """
         with self._lock:
             existing = self.conn.execute(
-                "SELECT peer_key_id FROM agora_known_nodes WHERE node=? AND peer=?",
+                "SELECT peer_key_id, first_seen_unix_ms FROM agora_known_nodes "
+                "WHERE node=? AND peer=?",
                 (self.node_name, peer),
             ).fetchone()
             if existing and existing["peer_key_id"] != peer_key_id.lower():
@@ -243,8 +244,12 @@ class NodeStore:
             self.conn.execute(
                 "INSERT OR REPLACE INTO agora_known_nodes"
                 "(node, peer, peer_key_id, url, first_seen_unix_ms) VALUES (?,?,?,?,?)",
+                # first_seen must survive a re-pin — "and 0 or" always
+                # evaluated to now, so every refresh reset the very field
+                # that records when this peer was first trusted.
                 (self.node_name, peer, peer_key_id.lower(), url,
-                 existing and 0 or int(time.time() * 1000)),
+                 int(existing["first_seen_unix_ms"]) if existing
+                 else int(time.time() * 1000)),
             )
             self.conn.commit()
 
