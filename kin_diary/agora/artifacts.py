@@ -13,7 +13,8 @@ import re
 from pathlib import Path
 
 from .canonical import RING_READ
-from .node import AgoraError, Node
+from .node import AgoraError
+from .store import NodeStore
 from .places import Atlas, verify_listing
 
 
@@ -125,7 +126,7 @@ class ArtifactStore:
 
     def fetch(
         self,
-        node: Node,
+        store: NodeStore,
         key_id: str,
         listing: dict,
         atlas: Atlas,
@@ -141,6 +142,7 @@ class ArtifactStore:
         evicted after publishing remains ineligible even if the listing and
         bytes are otherwise valid.
         """
+        node = store.load()
         valid_listing = True
         try:
             verify_listing(listing)
@@ -190,7 +192,7 @@ class ArtifactStore:
 
 def fetch_artifact(
     store: ArtifactStore,
-    node: Node,
+    node_store: NodeStore,
     key_id: str,
     listing: dict,
     atlas: Atlas,
@@ -200,7 +202,7 @@ def fetch_artifact(
 ) -> bytes:
     """Functional wrapper for callers that do not retain an ArtifactStore."""
     return store.fetch(
-        node, key_id, listing, atlas,
+        node_store, key_id, listing, atlas,
         access_board=access_board, required_ring=required_ring,
     )
 

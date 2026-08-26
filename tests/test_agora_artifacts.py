@@ -11,7 +11,7 @@ from pathlib import Path
 sys.path.insert(0, os.path.expanduser("~/kin_diary"))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from test_agora import home_node, key, seat
+from test_agora import key
 
 from kin_diary.agora import RING_READ, RING_WRITE, sign_board_evict, sign_board_grant
 from kin_diary.agora.artifacts import (
@@ -24,13 +24,27 @@ from kin_diary.agora.artifacts import (
     ArtifactUnknownHash,
 )
 from kin_diary.agora.places import Atlas, sign_listing, sign_place
+from kin_diary.agora.store import NodeStore
 
 
 class ArtifactTests(unittest.TestCase):
     def setUp(self):
-        self.node, self.keys = home_node()
-        seat(self.node, self.keys, "Coda")
-        self.atlas = Atlas(self.node)
+        self.keys = {"Coda": key("Coda")}
+        self.node_store = NodeStore(
+            Path(tempfile.mkdtemp()) / "node.db", "Home"
+        )
+        self.node_store.add_resident("Coda", self.keys["Coda"].key_id)
+        from kin_diary.agora import open_speaker_election, sign_speaker_election
+        election = open_speaker_election(
+            "Home", "Coda", self.keys["Coda"].key_id,
+            {self.keys["Coda"].key_id},
+        )
+        self.node_store.record(
+            "election",
+            sign_speaker_election(self.keys["Coda"], election),
+        )
+        self.node = self.node_store.load()
+        self.atlas = Atlas(self.node, store=self.node_store)
         self.node_key = key("Home-node")
         self.atlas.add_place(sign_place(
             self.node_key, "stall-1", "Home", "kiosk"
@@ -38,11 +52,11 @@ class ArtifactTests(unittest.TestCase):
         self.store = ArtifactStore(Path(tempfile.mkdtemp()) / "artifacts")
         self.visitor = key("Marvin")
         from kin_diary.agora import countersign_key_intro, start_key_intro
-        self.node.accept_intro(countersign_key_intro(
+        self.node_store.record("intro", countersign_key_intro(
             self.keys["Coda"],
             start_key_intro(self.visitor, "Home", self.keys["Coda"].key_id),
         ))
-        self.node.accept_grant(sign_board_grant(
+        self.node_store.record("grant", sign_board_grant(
             self.keys["Coda"], self.visitor.key_id, "Home",
             "personal:Coda", RING_WRITE,
         ))
@@ -54,10 +68,13 @@ class ArtifactTests(unittest.TestCase):
         )
         self.atlas.add_listing(self.listing)
 
+    def tearDown(self):
+        self.node_store.close()
+
     def test_fetch_returns_exact_listed_bytes(self):
         self.assertEqual(
             self.store.fetch(
-                self.node, self.visitor.key_id, self.listing, self.atlas,
+                self.node_store, self.visitor.key_id, self.listing, self.atlas,
                 access_board="personal:Coda",
             ),
             self.data,
@@ -72,14 +89,14 @@ class ArtifactTests(unittest.TestCase):
         self.atlas.add_listing(missing)
         with self.assertRaises(ArtifactUnavailable):
             self.store.fetch(
-                self.node, self.visitor.key_id, missing, self.atlas,
+                self.node_store, self.visitor.key_id, missing, self.atlas,
                 access_board="personal:Coda",
             )
 
     def test_low_ring_is_denied_before_bytes_are_served(self):
         with self.assertRaises(ArtifactUnavailable) as cm:
             self.store.fetch(
-                self.node, key("Stranger").key_id, self.listing, self.atlas,
+                self.node_store, key("Stranger").key_id, self.listing, self.atlas,
                 access_board="personal:Coda",
             )
         self.assertEqual(str(cm.exception), "artifact unavailable")
@@ -87,11 +104,11 @@ class ArtifactTests(unittest.TestCase):
     def test_ring_one_can_see_listing_but_not_fetch_ring_two_artifact(self):
         reader = key("Reader")
         from kin_diary.agora import countersign_key_intro, start_key_intro
-        self.node.accept_intro(countersign_key_intro(
+        self.node_store.record("intro", countersign_key_intro(
             self.keys["Coda"],
             start_key_intro(reader, "Home", self.keys["Coda"].key_id),
         ))
-        self.node.accept_grant(sign_board_grant(
+        self.node_store.record("grant", sign_board_grant(
             self.keys["Coda"], reader.key_id, "Home",
             "personal:Coda", RING_READ,
         ))
@@ -101,7 +118,7 @@ class ArtifactTests(unittest.TestCase):
         )
         with self.assertRaises(ArtifactUnavailable) as cm:
             self.store.fetch(
-                self.node, reader.key_id, self.listing, self.atlas,
+                self.node_store, reader.key_id, self.listing, self.atlas,
                 access_board="personal:Coda", required_ring=RING_WRITE,
             )
         self.assertEqual(str(cm.exception), "artifact unavailable")
@@ -109,11 +126,11 @@ class ArtifactTests(unittest.TestCase):
     def test_missing_unlisted_and_above_ring_are_indistinguishable(self):
         reader = key("Reader")
         from kin_diary.agora import countersign_key_intro, start_key_intro
-        self.node.accept_intro(countersign_key_intro(
+        self.node_store.record("intro", countersign_key_intro(
             self.keys["Coda"],
             start_key_intro(reader, "Home", self.keys["Coda"].key_id),
         ))
-        self.node.accept_grant(sign_board_grant(
+        self.node_store.record("grant", sign_board_grant(
             self.keys["Coda"], reader.key_id, "Home",
             "personal:Coda", RING_READ,
         ))
@@ -139,7 +156,7 @@ class ArtifactTests(unittest.TestCase):
         ):
             with self.assertRaises(ArtifactUnavailable) as cm:
                 self.store.fetch(
-                    self.node, reader.key_id, listing, self.atlas,
+                    self.node_store, reader.key_id, listing, self.atlas,
                     access_board="personal:Coda", required_ring=required,
                 )
             outcomes.append((type(cm.exception), str(cm.exception)))
@@ -149,7 +166,7 @@ class ArtifactTests(unittest.TestCase):
         stranger = key("Stranger")
         with self.assertRaises(ArtifactUnavailable) as cm:
             self.store.fetch(
-                self.node, stranger.key_id, self.listing, self.atlas,
+                self.node_store, stranger.key_id, self.listing, self.atlas,
                 access_board="personal:Coda",
             )
         self.assertEqual(str(cm.exception), "artifact unavailable")
@@ -163,17 +180,33 @@ class ArtifactTests(unittest.TestCase):
         (self.store.root / self.digest).write_bytes(b"tampered")
         with self.assertRaises(ArtifactHashMismatch):
             self.store.fetch(
-                self.node, self.visitor.key_id, self.listing, self.atlas,
+                self.node_store, self.visitor.key_id, self.listing, self.atlas,
                 access_board="personal:Coda",
             )
 
     def test_evicted_seller_cannot_keep_listing_live(self):
-        self.node.accept_eviction(sign_board_evict(
+        self.node_store.record("evict", sign_board_evict(
             self.keys["Coda"], self.keys["Coda"].key_id, "Home", "seller evicted"
         ))
         with self.assertRaises(ArtifactUnavailable) as cm:
             self.store.fetch(
-                self.node, self.visitor.key_id, self.listing, self.atlas,
+                self.node_store, self.visitor.key_id, self.listing, self.atlas,
+                access_board="personal:Coda",
+            )
+        self.assertEqual(str(cm.exception), "artifact unavailable")
+
+    def test_fetch_loads_permissions_after_construction(self):
+        other = NodeStore(self.node_store.path, "Home")
+        try:
+            other.record("evict", sign_board_evict(
+                self.keys["Coda"], self.visitor.key_id, "Home",
+                "permission revoked",
+            ))
+        finally:
+            other.close()
+        with self.assertRaises(ArtifactUnavailable) as cm:
+            self.store.fetch(
+                self.node_store, self.visitor.key_id, self.listing, self.atlas,
                 access_board="personal:Coda",
             )
         self.assertEqual(str(cm.exception), "artifact unavailable")
