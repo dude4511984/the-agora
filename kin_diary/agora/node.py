@@ -133,9 +133,14 @@ class Node:
         if ceiling > MAX_RING_RESIDENT_INTRO:
             raise AgoraError("resident introductions cannot exceed ring 2")
         key = intro["visitor_key_id"]
-        # Re-introduction after an eviction is a real readmission; it takes a
-        # later signed act, which this is.
-        self.evicted.pop(key, None)
+        if key in self.evicted:
+            # A resident must not be able to undo the Speaker's eviction by
+            # vouching again. The Speaker overriding a resident's grant is
+            # the whole reason the role exists; letting the same resident
+            # reverse it with a fresh intro would hand it straight back.
+            raise AgoraError(
+                "this key is evicted from the node; only the Speaker can readmit it"
+            )
         self.visitor_ceiling[key] = max(self.visitor_ceiling.get(key, 0), ceiling)
         self.log.append({"event": "key-intro", "visitor": key, "ceiling": ceiling})
 
@@ -154,6 +159,17 @@ class Node:
         key = bundle["keyring"]["current"]["key_id"].lower()
         mind = bundle["mind"]
 
+        # An evicted visitor holds their own bundle and can re-present it
+        # unaided — /bundle needs no authority beyond the bundle's own
+        # signature. If import cleared the eviction, eviction would be a
+        # suggestion: the Speaker throws you out, you post your diary again,
+        # you are back at ring 3. Readmission is the Speaker's act, not the
+        # evicted party's.
+        if key in self.evicted:
+            raise AgoraError(
+                "this key is evicted from the node; only the Speaker can readmit it"
+            )
+
         # Imported memory is segregated, never merged. It does not join this
         # node's own recall, and it is not any resident's own past thought.
         # Wall 4 is a formation problem, but the storage should at least not
@@ -166,7 +182,6 @@ class Node:
             "external": True,
         }
         self.visitor_ceiling[key] = RING_NODE
-        self.evicted.pop(key, None)
         self.log.append({
             "event": "bundle-import",
             "visitor": key,
@@ -192,14 +207,23 @@ class Node:
         verify_board_grant(grant)
 
         visitor = grant["visitor_key_id"]
-        if visitor in self.evicted:
-            raise AgoraError("this key is evicted from the node")
-        if visitor not in self.visitor_ceiling:
-            raise AgoraError("this key was never introduced to the node")
-
         ring = int(grant["ring"])
         board = grant["board"]
         issuer = grant["issuer_key_id"]
+
+        if visitor in self.evicted:
+            # Quarantine, never ban: reversible by a later signed act. But
+            # only the Speaker's — the same authority that evicted. Anything
+            # else and eviction is undone by whoever objected to it.
+            if self.speaker_key_id is None or issuer != self.speaker_key_id:
+                raise AgoraError(
+                    "this key is evicted; only a Speaker-signed grant readmits it"
+                )
+            self.evicted.pop(visitor, None)
+            self.log.append({"event": "readmit", "visitor": visitor})
+
+        if visitor not in self.visitor_ceiling:
+            raise AgoraError("this key was never introduced to the node")
 
         ceiling = self.visitor_ceiling[visitor]
         if ring > ceiling:

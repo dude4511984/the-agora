@@ -373,25 +373,80 @@ class DonsWorkedExample(unittest.TestCase):
             self.node.accept_eviction(ev)
         self.assertIn("Speaker", str(cm.exception))
 
-    def test_evicted_key_cannot_be_re_granted_without_readmission(self):
+    def test_evicted_key_cannot_be_re_granted_by_a_non_speaker(self):
+        """Coda is Speaker in this fixture, so her grant readmits by design.
+        Aurora's must not — otherwise any resident undoes the eviction."""
         self.node.accept_eviction(sign_board_evict(
             self.keys["Coda"], self.friend.key_id, "Home", "malicious"))
-        with self.assertRaises(AgoraError):
+        with self.assertRaises(AgoraError) as cm:
             self.node.accept_grant(sign_board_grant(
-                self.keys["Coda"], self.friend.key_id, "Home",
-                "personal:Coda", RING_WRITE))
+                self.keys["Aurora"], self.friend.key_id, "Home",
+                "personal:Aurora", RING_WRITE))
+        self.assertIn("evicted", str(cm.exception))
+        self.assertEqual(
+            self.node.effective_ring(self.friend.key_id, "personal:Coda"),
+            RING_TEASER)
 
     def test_readmission_is_a_later_signed_act_not_a_timer(self):
-        """Reversible by design — quarantine, never ban."""
+        """Reversible by design — quarantine, never ban. Coda is Speaker in
+        this fixture, so her grant is the Speaker's grant."""
         self.node.accept_eviction(sign_board_evict(
             self.keys["Coda"], self.friend.key_id, "Home", "malicious"))
-        self.node.accept_intro(countersign_key_intro(
-            self.keys["Coda"],
-            start_key_intro(self.friend, "Home", self.keys["Coda"].key_id)))
         self.node.accept_grant(sign_board_grant(
             self.keys["Coda"], self.friend.key_id, "Home",
             "personal:Coda", RING_WRITE))
         self.assertTrue(self.node.can_write(self.friend.key_id, "personal:Coda"))
+
+    def test_an_evicted_visitor_cannot_readmit_themselves(self):
+        """The worst bug in this module, found 2026-08-26. An evicted key
+        holds its own bundle and /bundle takes no authority beyond that
+        bundle's signature — so re-importing cleared the eviction and handed
+        back ring 3, unaided. Eviction was a suggestion."""
+        node, keys = home_node()
+        seat(node, keys, "Coda")
+        visitor, bundle = eli_with_bundle()
+        node.accept_bundle_import(bundle)
+        node.accept_eviction(sign_board_evict(
+            keys["Coda"], visitor.key_id, "Home", "malicious"))
+        with self.assertRaises(AgoraError) as cm:
+            node.accept_bundle_import(bundle)
+        self.assertIn("Speaker", str(cm.exception))
+        self.assertEqual(node.effective_ring(visitor.key_id, COLLAB), RING_TEASER)
+
+    def test_a_resident_cannot_undo_the_speakers_eviction(self):
+        """Not by vouching again, and not by granting on their own board.
+        Otherwise the Speaker's override is handed straight back."""
+        node, keys = home_node()
+        seat(node, keys, "Coda")           # Coda is Speaker
+        visitor = key("Marvin")
+        node.accept_intro(countersign_key_intro(
+            keys["Aurora"], start_key_intro(visitor, "Home", keys["Aurora"].key_id)))
+        node.accept_grant(sign_board_grant(
+            keys["Aurora"], visitor.key_id, "Home", "personal:Aurora", RING_WRITE))
+        node.accept_eviction(sign_board_evict(
+            keys["Coda"], visitor.key_id, "Home", "malicious"))
+
+        with self.assertRaises(AgoraError):
+            node.accept_intro(countersign_key_intro(
+                keys["Aurora"],
+                start_key_intro(visitor, "Home", keys["Aurora"].key_id)))
+        with self.assertRaises(AgoraError) as cm:
+            node.accept_grant(sign_board_grant(
+                keys["Aurora"], visitor.key_id, "Home", "personal:Aurora", RING_WRITE))
+        self.assertIn("Speaker", str(cm.exception))
+
+    def test_the_speaker_can_readmit(self):
+        node, keys = home_node()
+        seat(node, keys, "Coda")
+        visitor = key("Marvin")
+        node.accept_intro(countersign_key_intro(
+            keys["Coda"], start_key_intro(visitor, "Home", keys["Coda"].key_id)))
+        node.accept_eviction(sign_board_evict(
+            keys["Coda"], visitor.key_id, "Home", "was a misunderstanding"))
+        node.accept_grant(sign_board_grant(
+            keys["Coda"], visitor.key_id, "Home", "personal:Coda", RING_WRITE))
+        self.assertTrue(node.can_write(visitor.key_id, "personal:Coda"))
+        self.assertIn("readmit", [e["event"] for e in node.log])
 
     def test_the_friend_can_actually_leave_a_mark(self):
         entry = sign_entry(self.friend, {
