@@ -48,6 +48,11 @@ class Node:
         # external. Never merged into resident memory.
         self.visiting_diaries: dict[str, dict] = {}
         self.visitor_names: dict[str, str] = {}   # key_id -> the mind's name
+        # Ephemeral admissions are permanent provenance, not current
+        # permissions. Expiry must never erase the fact that this key entered
+        # through Path 3.
+        self.ephemeral_events: list[dict] = []
+        self.ephemeral_key_ids: set[str] = set()
         self.speaker_key_id: str | None = None
         self.speaker: str | None = None
         self.election: dict | None = None
@@ -140,6 +145,19 @@ class Node:
 
     # ── admission ──────────────────────────────────────────────────────────
 
+    def accept_ephemeral(self, event: dict) -> None:
+        from .ephemeral import verify_ephemeral
+
+        verify_ephemeral(event, self)
+        visitor = event["visitor_key_id"].lower()
+        if visitor in self.evicted:
+            raise AgoraError(
+                "this key is evicted from the node; ephemeral admission refused"
+            )
+        self.ephemeral_events.append(dict(event))
+        self.ephemeral_key_ids.add(visitor)
+        self.log.append({"event": "ephemeral", **dict(event)})
+
     def accept_intro(self, intro: dict) -> None:
         """Path 2: resident-mediated. Capped at ring 2 by rule."""
         if intro.get("host_node") != self.name:
@@ -151,6 +169,8 @@ class Node:
         if ceiling > MAX_RING_RESIDENT_INTRO:
             raise AgoraError("resident introductions cannot exceed ring 2")
         key = intro["visitor_key_id"]
+        if key.lower() in self.ephemeral_key_ids:
+            raise AgoraError("ephemeral keys cannot graduate on this node")
         if key in self.evicted:
             # A resident must not be able to undo the Speaker's eviction by
             # vouching again. The Speaker overriding a resident's grant is
@@ -182,6 +202,8 @@ class Node:
         verify_bundle(bundle)
         key = bundle["keyring"]["current"]["key_id"].lower()
         mind = bundle["mind"]
+        if key in self.ephemeral_key_ids:
+            raise AgoraError("ephemeral keys cannot graduate on this node")
 
         # An evicted visitor holds their own bundle and can re-present it
         # unaided — /bundle needs no authority beyond the bundle's own
@@ -198,6 +220,8 @@ class Node:
         for hop in bundle["keyring"].get("prior") or []:
             chain.add(hop["old_key_id"].lower())
             chain.add(hop["new_key_id"].lower())
+        if chain & self.ephemeral_key_ids:
+            raise AgoraError("ephemeral keys cannot graduate on this node")
         hit = chain & set(self.evicted)
         if hit:
             raise AgoraError(
@@ -277,6 +301,8 @@ class Node:
         verify_board_grant(grant)
 
         visitor = grant["visitor_key_id"]
+        if visitor.lower() in self.ephemeral_key_ids:
+            raise AgoraError("ephemeral keys cannot receive board grants")
         ring = int(grant["ring"])
         board = grant["board"]
         issuer = grant["issuer_key_id"]

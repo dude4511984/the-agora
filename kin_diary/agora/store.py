@@ -68,6 +68,7 @@ REPLAY = {
     "election": "accept_election",
     "intro": "accept_intro",
     "bundle": "accept_bundle_import",
+    "ephemeral": "accept_ephemeral",
     "grant": "accept_grant",
     "evict": "accept_eviction",
     "revoke": "accept_revocation",

@@ -197,9 +197,13 @@ class EphemeralStore:
         return None
 
 
-def reject_if_ephemeral(store: EphemeralStore, key_id: str) -> None:
-    """Dead-end guard for Path 2, grants, bundles, and introductions."""
-    if store.was_ephemeral(key_id):
+def reject_if_ephemeral(source, key_id: str) -> None:
+    """Dead-end guard usable with replayed Node state or the standalone journal."""
+    if hasattr(source, "ephemeral_key_ids"):
+        found = key_id.lower() in source.ephemeral_key_ids
+    else:
+        found = source.was_ephemeral(key_id)
+    if found:
         raise EphemeralError("ephemeral keys cannot graduate on this node")
 
 

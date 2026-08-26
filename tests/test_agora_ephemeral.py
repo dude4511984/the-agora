@@ -13,7 +13,14 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from test_agora import key
 
-from kin_diary.agora import open_speaker_election, sign_speaker_election
+from kin_diary.agora import (
+    AgoraError,
+    open_speaker_election,
+    sign_board_evict,
+    sign_board_grant,
+    sign_speaker_election,
+)
+from kin_diary.agora import countersign_key_intro, start_key_intro
 from kin_diary.agora.ephemeral import (
     MAX_EPHEMERAL_MS,
     EphemeralError,
@@ -126,6 +133,52 @@ class EphemeralTests(unittest.TestCase):
         finally:
             second_ephemerals.close()
             second_node_store.close()
+
+    def test_node_store_replays_ephemeral_provenance_forever(self):
+        event = countersign_ephemeral(self.coda, self._issued(), self.node)
+        self.store.record("ephemeral", event)
+        reloaded = self.store.load()
+        self.assertEqual(reloaded.ephemeral_events, [event])
+        self.assertIn(self.holder.key_id, reloaded.ephemeral_key_ids)
+
+    def test_path_two_is_rejected_after_ephemeral_expiry(self):
+        event = countersign_ephemeral(self.coda, self._issued(), self.node)
+        self.store.record("ephemeral", event)
+        intro = countersign_key_intro(
+            self.coda,
+            start_key_intro(self.holder, "Home", self.coda.key_id, now_ms=3_000),
+        )
+        with self.assertRaisesRegex(AgoraError, "ephemeral keys cannot graduate"):
+            self.store.record("intro", intro)
+
+    def test_bad_ephemeral_is_rejected_before_event_insert(self):
+        event = countersign_ephemeral(self.coda, self._issued(), self.node)
+        event["purpose"] = "not-a-purpose"
+        with self.assertRaises(EphemeralError):
+            self.store.record("ephemeral", event)
+        count = self.store.conn.execute(
+            "SELECT COUNT(*) FROM agora_events WHERE kind='ephemeral'"
+        ).fetchone()[0]
+        self.assertEqual(count, 0)
+
+    def test_eviction_after_ephemeral_does_not_readmit_on_replay(self):
+        event = countersign_ephemeral(self.coda, self._issued(), self.node)
+        self.store.record("ephemeral", event)
+        self.store.record(
+            "evict",
+            sign_board_evict(self.coda, self.holder.key_id, "Home", "done"),
+        )
+        reloaded = self.store.load()
+        self.assertIn(self.holder.key_id, reloaded.evicted)
+        self.assertIn(self.holder.key_id, reloaded.ephemeral_key_ids)
+        with self.assertRaisesRegex(AgoraError, "ephemeral keys cannot receive"):
+            self.store.record(
+                "grant",
+                sign_board_grant(
+                    self.coda, self.holder.key_id, "Home",
+                    "personal:Coda", 2, now_ms=4_000,
+                ),
+            )
 
 
 if __name__ == "__main__":
