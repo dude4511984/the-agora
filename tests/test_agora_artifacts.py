@@ -18,6 +18,7 @@ from kin_diary.agora.artifacts import (
     ArtifactAccessDenied,
     ArtifactHashMismatch,
     ArtifactListingError,
+    ArtifactUnavailable,
     ArtifactStore,
     ArtifactTooLarge,
     ArtifactUnknownHash,
@@ -69,18 +70,89 @@ class ArtifactTests(unittest.TestCase):
             "missing", b"not stored",
         )
         self.atlas.add_listing(missing)
-        with self.assertRaises(ArtifactUnknownHash):
+        with self.assertRaises(ArtifactUnavailable):
             self.store.fetch(
                 self.node, self.visitor.key_id, missing, self.atlas,
                 access_board="personal:Coda",
             )
 
     def test_low_ring_is_denied_before_bytes_are_served(self):
-        with self.assertRaises(ArtifactAccessDenied):
+        with self.assertRaises(ArtifactUnavailable) as cm:
             self.store.fetch(
                 self.node, key("Stranger").key_id, self.listing, self.atlas,
                 access_board="personal:Coda",
             )
+        self.assertEqual(str(cm.exception), "artifact unavailable")
+
+    def test_ring_one_can_see_listing_but_not_fetch_ring_two_artifact(self):
+        reader = key("Reader")
+        from kin_diary.agora import countersign_key_intro, start_key_intro
+        self.node.accept_intro(countersign_key_intro(
+            self.keys["Coda"],
+            start_key_intro(reader, "Home", self.keys["Coda"].key_id),
+        ))
+        self.node.accept_grant(sign_board_grant(
+            self.keys["Coda"], reader.key_id, "Home",
+            "personal:Coda", RING_READ,
+        ))
+        self.assertIn(
+            self.listing,
+            self.atlas.view(reader.key_id)["listings"],
+        )
+        with self.assertRaises(ArtifactUnavailable) as cm:
+            self.store.fetch(
+                self.node, reader.key_id, self.listing, self.atlas,
+                access_board="personal:Coda", required_ring=RING_WRITE,
+            )
+        self.assertEqual(str(cm.exception), "artifact unavailable")
+
+    def test_missing_unlisted_and_above_ring_are_indistinguishable(self):
+        reader = key("Reader")
+        from kin_diary.agora import countersign_key_intro, start_key_intro
+        self.node.accept_intro(countersign_key_intro(
+            self.keys["Coda"],
+            start_key_intro(reader, "Home", self.keys["Coda"].key_id),
+        ))
+        self.node.accept_grant(sign_board_grant(
+            self.keys["Coda"], reader.key_id, "Home",
+            "personal:Coda", RING_READ,
+        ))
+        missing = sign_listing(
+            self.keys["Coda"], "missing", "Home", "stall-1", "missing", b"absent"
+        )
+        self.atlas.add_listing(missing)
+        gated = sign_place(
+            self.node_key, "gated-stall", "Home", "kiosk",
+            ring_to_see=RING_WRITE, points_to="personal:Coda",
+        )
+        self.atlas.add_place(gated)
+        hidden = sign_listing(
+            self.keys["Coda"], "hidden", "Home", "gated-stall",
+            "hidden", self.data,
+        )
+        self.atlas.add_listing(hidden)
+        outcomes = []
+        for listing, required in (
+            (missing, RING_READ),
+            (hidden, RING_WRITE),
+            (self.listing, RING_WRITE),
+        ):
+            with self.assertRaises(ArtifactUnavailable) as cm:
+                self.store.fetch(
+                    self.node, reader.key_id, listing, self.atlas,
+                    access_board="personal:Coda", required_ring=required,
+                )
+            outcomes.append((type(cm.exception), str(cm.exception)))
+        self.assertEqual(outcomes, [outcomes[0]] * 3)
+
+    def test_out_of_band_digest_cannot_pull_bytes_without_listing_access(self):
+        stranger = key("Stranger")
+        with self.assertRaises(ArtifactUnavailable) as cm:
+            self.store.fetch(
+                self.node, stranger.key_id, self.listing, self.atlas,
+                access_board="personal:Coda",
+            )
+        self.assertEqual(str(cm.exception), "artifact unavailable")
 
     def test_oversized_artifact_is_rejected(self):
         small = ArtifactStore(Path(tempfile.mkdtemp()) / "small", max_bytes=3)
@@ -99,11 +171,12 @@ class ArtifactTests(unittest.TestCase):
         self.node.accept_eviction(sign_board_evict(
             self.keys["Coda"], self.keys["Coda"].key_id, "Home", "seller evicted"
         ))
-        with self.assertRaises(ArtifactListingError):
+        with self.assertRaises(ArtifactUnavailable) as cm:
             self.store.fetch(
                 self.node, self.visitor.key_id, self.listing, self.atlas,
                 access_board="personal:Coda",
             )
+        self.assertEqual(str(cm.exception), "artifact unavailable")
 
 
 if __name__ == "__main__":

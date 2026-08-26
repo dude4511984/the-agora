@@ -44,6 +44,13 @@ class ArtifactListingError(ArtifactError):
     """The listing is invalid, stale, or no longer eligible for retrieval."""
 
 
+class ArtifactUnavailable(ArtifactError):
+    """The caller cannot distinguish absence from lack of authorization."""
+
+
+_UNAVAILABLE = "artifact unavailable"
+
+
 def _digest(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
@@ -134,32 +141,46 @@ class ArtifactStore:
         evicted after publishing remains ineligible even if the listing and
         bytes are otherwise valid.
         """
+        valid_listing = True
         try:
             verify_listing(listing)
-        except Exception as exc:
-            raise ArtifactListingError(f"listing signature is invalid: {exc}") from exc
-        if listing.get("node") != node.name:
-            raise ArtifactListingError("listing belongs to a different node")
-        stored_listing = atlas.listings.get(listing.get("listing_id"))
-        if stored_listing != listing:
-            raise ArtifactListingError("listing is not published by this Atlas")
+            if listing.get("node") != node.name:
+                valid_listing = False
+            stored_listing = atlas.listings.get(listing.get("listing_id"))
+            if stored_listing != listing:
+                valid_listing = False
+        except Exception:
+            valid_listing = False
 
+        # Do the bounded content lookup before the policy result is returned.
+        # This keeps "missing" and "not allowed" on one response path instead
+        # of making the existence of a digest observable through timing.
+        data = None
+        digest = None
+        integrity_error = None
+        try:
+            digest = _hash(listing.get("artifact_sha256") or "")
+            data = self._read(digest)
+        except ArtifactHashMismatch as exc:
+            integrity_error = exc
+        except ArtifactError:
+            pass
+
+        allowed = valid_listing
         seller = (listing.get("seller_key_id") or "").lower()
         if seller in node.evicted:
-            raise ArtifactListingError(
-                "listing seller is evicted; artifact retrieval is unavailable"
-            )
+            allowed = False
         try:
             ring = node.effective_ring(key_id, access_board)
-        except (AgoraError, ValueError) as exc:
-            raise ArtifactAccessDenied(f"node ring check failed: {exc}") from exc
-        if ring < required_ring:
-            raise ArtifactAccessDenied(
-                f"ring {ring} is below artifact fetch requirement {required_ring}"
-            )
-
-        digest = _hash(listing.get("artifact_sha256") or "")
-        data = self._read(digest)
+            allowed = allowed and ring >= required_ring
+        except (AgoraError, ValueError):
+            allowed = False
+        if not allowed:
+            raise ArtifactUnavailable(_UNAVAILABLE)
+        if integrity_error is not None:
+            raise integrity_error
+        if data is None or digest is None:
+            raise ArtifactUnavailable(_UNAVAILABLE)
         if _digest(data) != digest:
             raise ArtifactHashMismatch(
                 f"served bytes do not match listing artifact_sha256 {digest}"
@@ -192,5 +213,6 @@ __all__ = [
     "ArtifactHashMismatch",
     "ArtifactAccessDenied",
     "ArtifactListingError",
+    "ArtifactUnavailable",
     "fetch_artifact",
 ]

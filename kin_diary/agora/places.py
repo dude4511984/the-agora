@@ -23,6 +23,7 @@ from ..keys import KeyRecord, load_public
 from .canonical import (
     RING_TEASER,
     atlas_view_canonical,
+    doors_sha256,
     inventory_sha256,
     listing_canonical,
     place_canonical,
@@ -187,6 +188,45 @@ class Atlas:
             raise AgoraError("seller is not known to this node")
         self.listings[listing["listing_id"]] = listing
 
+    # ── doors to pinned peers ──────────────────────────────────────────────
+
+    def peer_doors(self, parent: str = "concourse") -> list[dict]:
+        """Pinned peers rendered as doors on THIS node's concourse.
+
+        The hard line, and it is Grok's: **a door is a teaser fact plus a
+        pin, never the peer's own view.** If a door ever carried the far
+        node's occupancy or listings, that is presence-export by layout —
+        the exact thing the local-presence rule exists to prevent, arriving
+        through the map instead of through the wire.
+
+        So: peer name, where it lives, the pinned key. Nothing behind the
+        door until you are actually standing on that node, which still
+        costs a real introduction.
+
+        These are assembled fresh from the store rather than stored as
+        signed places, because a pin is this node's own bookkeeping about
+        who it has met — it is not something the peer said.
+        """
+        if self._store is None:
+            return []
+        out = []
+        for peer in self._store.known_peers():
+            if peer["peer"] == self.node.name:
+                continue
+            out.append({
+                "place_id": f"door-to-{peer['peer']}",
+                "node": self.node.name,
+                "kind": "door",
+                "parent": parent,
+                "peer": peer["peer"],
+                "peer_key_id": peer["peer_key_id"],
+                "url": peer.get("url") or "",
+                "locked": True,     # crossing needs an introduction there
+                "ring_to_see": RING_TEASER,
+                "points_to": "",
+            })
+        return out
+
     # ── what a given key may see ───────────────────────────────────────────
 
     def _visible_place(self, key_id: str, place: dict) -> bool:
@@ -228,9 +268,11 @@ class Atlas:
             and p["key_id"].lower() not in self.node.evicted
         ]
         wares = [li for li in self.listings.values() if li["place_id"] in seen]
+        doors = [d for d in self.peer_doors() if d["parent"] in seen]
 
         return {
             "node": self.node.name,
+            "peer_doors": sorted(doors, key=lambda d: d["place_id"]),
             "as_of_unix_ms": now,
             "places": sorted(places, key=lambda p: p["place_id"]),
             "presence": sorted(here, key=lambda p: p["key_id"]),
@@ -253,14 +295,15 @@ class Atlas:
         not in the inventory it is handed, rather than present-and-hidden.
         """
         view = self.view(key_id, now_ms=now_ms)
-        sigs = _view_signatures(view)
-        inv = inventory_sha256(sigs)
+        inv = inventory_sha256(_view_signatures(view))
+        dsh = doors_sha256(view.get("peer_doors") or [])
         view["viewer_key_id"] = (key_id or "").lower()
         view["node_key_id"] = node_key.key_id
         view["inventory_sha256"] = inv
+        view["doors_sha256"] = dsh
         view["signature"] = node_key.sign(atlas_view_canonical(
             self.node.name, node_key.key_id, view["viewer_key_id"],
-            int(view["as_of_unix_ms"]), inv))
+            int(view["as_of_unix_ms"]), inv, dsh))
         return view
 
 
@@ -291,6 +334,22 @@ def verify_view(view: dict, expected_node_key_id: str | None = None,
     if inv != (view.get("inventory_sha256") or ""):
         raise AgoraError("inventory hash does not match the objects served")
 
+    dsh = doors_sha256(view.get("peer_doors") or [])
+    if dsh != (view.get("doors_sha256") or ""):
+        raise AgoraError("doors hash does not match the doors served")
+
+    # A door must never carry what is behind it. If one ever grows a nested
+    # view, occupancy or listings, presence-export has arrived through the
+    # map instead of the wire — which is the same rule broken by a
+    # different road.
+    for d in view.get("peer_doors") or []:
+        for forbidden in ("places", "presence", "listings", "view", "boards"):
+            if forbidden in d:
+                raise AgoraError(
+                    f"door {d.get('place_id')!r} carries {forbidden!r} — "
+                    f"a door is a teaser fact and a pin, never the far node's state"
+                )
+
     if expected_node_key_id and view["node_key_id"].lower() != expected_node_key_id.lower():
         raise AgoraError("view served by a different node key than pinned")
     if expected_viewer_key_id and view["viewer_key_id"].lower() != expected_viewer_key_id.lower():
@@ -300,4 +359,4 @@ def verify_view(view: dict, expected_node_key_id: str | None = None,
         bytes.fromhex(view["signature"]),
         atlas_view_canonical(view["node"], view["node_key_id"],
                              view["viewer_key_id"], int(view["as_of_unix_ms"]),
-                             view["inventory_sha256"]))
+                             view["inventory_sha256"], view.get("doors_sha256")))

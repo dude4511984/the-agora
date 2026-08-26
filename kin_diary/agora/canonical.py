@@ -405,12 +405,30 @@ def inventory_sha256(signatures) -> str:
     ).hexdigest()
 
 
+def doors_sha256(doors) -> str:
+    """Hash of the node's OWN door claims.
+
+    Deliberately a separate field from the inventory. The inventory hashes
+    other minds' signatures — the node is relaying those and says so. Doors
+    are the node's own bookkeeping about who it has met, so the node really
+    is the author and signing them is honest rather than an overreach.
+    Folding both into one hash would blur exactly the line this design
+    keeps drawing between relaying and authoring.
+    """
+    blob = "".join(
+        f"{d['place_id']}|{d['peer']}|{d['peer_key_id']}|{d.get('url') or ''}|{d['parent']}"
+        for d in sorted(doors, key=lambda d: d["place_id"])
+    )
+    return hashlib.sha256(nfc(blob).encode("utf-8")).hexdigest()
+
+
 def atlas_view_canonical(
     node: str,
     node_key_id: str,
     viewer_key_id: str,
     as_of_unix_ms: int,
     inventory_sha256_hex: str,
+    doors_sha256_hex: str | None = None,
 ) -> bytes:
     """A snapshot, attributable to the node that assembled it.
 
@@ -424,6 +442,7 @@ def atlas_view_canonical(
         ("viewer_key_id", _hex64(viewer_key_id)),
         ("as_of_unix_ms", _unix_ms(as_of_unix_ms)),
         ("inventory_sha256", _hex64(inventory_sha256_hex)),
+        ("doors_sha256", _hex64(doors_sha256_hex or doors_sha256([]))),
     ])
 
 

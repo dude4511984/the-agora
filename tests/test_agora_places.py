@@ -309,3 +309,125 @@ class PresenceDoesNotGossip(unittest.TestCase):
         src = inspect.getsource(federation)
         self.assertNotIn("/view", src)
         self.assertNotIn("presence", src.lower())
+
+
+class NothingCapturesPermissionsAtConstruction(unittest.TestCase):
+    """Grok: "if you only fixed Atlas, you fixed the incident."
+
+    The original bug survived because every fixture built the node and the
+    atlas in the same breath, so neither could ever drift. These build them
+    apart on purpose and mutate afterwards — the shape that catches this
+    class, not just the one instance.
+    """
+
+    def test_a_grant_made_after_construction_is_seen(self):
+        node, keys, nk, atlas = furnished()
+        v = key("Marvin")
+        node.accept_intro(countersign_key_intro(
+            keys["Coda"], start_key_intro(v, "Home", keys["Coda"].key_id)))
+        self.assertNotIn("codas-door",
+                         {p["place_id"] for p in atlas.view(v.key_id)["places"]})
+        node.accept_grant(sign_board_grant(
+            keys["Coda"], v.key_id, "Home", "personal:Coda", RING_WRITE))
+        self.assertIn("codas-door",
+                      {p["place_id"] for p in atlas.view(v.key_id)["places"]})
+
+    def test_an_eviction_made_after_construction_closes_the_door(self):
+        """The dangerous direction. A stale grant merely fails to open; a
+        stale eviction leaves a door standing open for someone thrown out."""
+        node, keys, nk, atlas = furnished()
+        v = key("Marvin")
+        node.accept_intro(countersign_key_intro(
+            keys["Coda"], start_key_intro(v, "Home", keys["Coda"].key_id)))
+        node.accept_grant(sign_board_grant(
+            keys["Coda"], v.key_id, "Home", "personal:Coda", RING_WRITE,
+            now_ms=1_000_000))
+        self.assertIn("codas-door",
+                      {p["place_id"] for p in atlas.view(v.key_id)["places"]})
+        node.accept_eviction(sign_board_evict(
+            keys["Coda"], v.key_id, "Home", "malicious", now_ms=2_000_000))
+        self.assertNotIn("codas-door",
+                         {p["place_id"] for p in atlas.view(v.key_id)["places"]})
+
+    def test_a_store_backed_atlas_sees_writes_from_another_process(self):
+        """The live shape: the wire's Atlas must not answer from boot."""
+        from kin_diary.agora.places import Atlas
+        from kin_diary.agora.store import NodeStore
+        from test_agora_store import elect, fresh_store
+        store, keys, path = fresh_store()
+        elect(store, keys)
+        atlas = Atlas(store.load(), store=store)
+        atlas.add_place(sign_place(key("N"), "concourse", "Home", "commons"))
+
+        v = key("Marvin")
+        other = NodeStore(path, "Home")          # a different process
+        other.record("intro", countersign_key_intro(
+            keys["Coda"], start_key_intro(v, "Home", keys["Coda"].key_id)))
+        other.record("grant", sign_board_grant(
+            keys["Coda"], v.key_id, "Home", "personal:Coda", RING_WRITE))
+
+        self.assertEqual(atlas.node.effective_ring(v.key_id, "personal:Coda"),
+                         RING_WRITE)
+
+
+class PeerDoorTests(unittest.TestCase):
+    """P0b. Grok's line, and the hard limit: a door is a teaser fact plus a
+    pin, never the far node's view. If a door ever grows a nested view you
+    have left Agora."""
+
+    def furnished_with_peer(self):
+        from kin_diary.agora.places import Atlas
+        from test_agora_store import elect, fresh_store
+        store, keys, path = fresh_store()
+        elect(store, keys)
+        nk = key("Home-node")
+        atlas = Atlas(store.load(), store=store)
+        atlas.add_place(sign_place(nk, "concourse", "Home", "commons"))
+        store.pin_peer("Frosty", key("Frosty-node").key_id, "http://192.168.1.119:8770")
+        return store, keys, nk, atlas
+
+    def test_a_pinned_peer_appears_as_a_locked_door(self):
+        store, keys, nk, atlas = self.furnished_with_peer()
+        v = atlas.view(keys["Coda"].key_id)
+        door = v["peer_doors"][0]
+        self.assertEqual(door["peer"], "Frosty")
+        self.assertTrue(door["locked"])
+
+    def test_a_door_carries_nothing_from_behind_it(self):
+        """Presence-export by layout is the failure this guards."""
+        store, keys, nk, atlas = self.furnished_with_peer()
+        door = atlas.view(keys["Coda"].key_id)["peer_doors"][0]
+        for forbidden in ("places", "presence", "listings", "view", "boards"):
+            self.assertNotIn(forbidden, door)
+
+    def test_a_door_smuggling_occupancy_is_refused_on_verify(self):
+        from kin_diary.agora.places import verify_view
+        store, keys, nk, atlas = self.furnished_with_peer()
+        sv = atlas.signed_view(nk, keys["Coda"].key_id)
+        sv["peer_doors"][0]["presence"] = [{"key_id": "f" * 64}]
+        with self.assertRaises(AgoraError) as cm:
+            verify_view(sv)
+        self.assertIn("never the far node's state", str(cm.exception))
+
+    def test_doors_are_signed_and_cannot_be_injected_in_transit(self):
+        """Doors are the node's OWN claim, so the node signing them is
+        honest — but they still have to be covered, or a relay could add a
+        door to a peer that was never pinned."""
+        from kin_diary.agora.places import verify_view
+        store, keys, nk, atlas = self.furnished_with_peer()
+        sv = atlas.signed_view(nk, keys["Coda"].key_id)
+        verify_view(sv)
+        sv["peer_doors"].append({
+            "place_id": "door-to-Evil", "node": "Home", "kind": "door",
+            "parent": "concourse", "peer": "Evil", "peer_key_id": "e" * 64,
+            "url": "http://evil", "locked": True,
+        })
+        with self.assertRaises(AgoraError) as cm:
+            verify_view(sv)
+        self.assertIn("doors hash", str(cm.exception))
+
+    def test_a_node_does_not_show_a_door_to_itself(self):
+        store, keys, nk, atlas = self.furnished_with_peer()
+        store.pin_peer("Home", nk.key_id, "http://self")
+        ids = {d["peer"] for d in atlas.view(keys["Coda"].key_id)["peer_doors"]}
+        self.assertNotIn("Home", ids)
