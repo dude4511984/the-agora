@@ -140,12 +140,11 @@ class WireTests(unittest.TestCase):
     def test_posting_over_the_wire(self):
         entry = sign_entry(self.visitor, {
             "author": "Marvin", "content": "left a note on Coda's board"})
-        h = sign_request(self.visitor, "Home", "/post")
+        body = json.dumps({"board": "personal:Coda", "entry": entry}).encode()
+        h = sign_request(self.visitor, "Home", "/post", body=body)
         h["Content-Type"] = "application/json"
         req = urllib.request.Request(
-            self.url("/post"),
-            data=json.dumps({"board": "personal:Coda", "entry": entry}).encode(),
-            headers=h, method="POST")
+            self.url("/post"), data=body, headers=h, method="POST")
         with urllib.request.urlopen(req, timeout=5) as r:
             self.assertTrue(json.load(r)["posted"])
 
@@ -156,11 +155,10 @@ class WireTests(unittest.TestCase):
     def test_cannot_post_as_someone_else(self):
         entry = sign_entry(self.keys["Aurora"], {
             "author": "Aurora", "content": "not actually from Aurora's session"})
-        h = sign_request(self.visitor, "Home", "/post")
+        body = json.dumps({"board": "personal:Coda", "entry": entry}).encode()
+        h = sign_request(self.visitor, "Home", "/post", body=body)
         req = urllib.request.Request(
-            self.url("/post"),
-            data=json.dumps({"board": "personal:Coda", "entry": entry}).encode(),
-            headers=h, method="POST")
+            self.url("/post"), data=body, headers=h, method="POST")
         with self.assertRaises(urllib.error.HTTPError) as cm:
             urllib.request.urlopen(req, timeout=5)
         self.assertEqual(cm.exception.code, 403)
@@ -174,6 +172,52 @@ class WireTests(unittest.TestCase):
         with self.assertRaises(urllib.error.HTTPError) as cm:
             urllib.request.urlopen(req, timeout=5)
         self.assertEqual(cm.exception.code, 403)
+
+
+
+class BodyBindingTests(unittest.TestCase):
+    """The request signature must cover the payload, not just the route.
+
+    A board entry's own canonical bytes do not name a board, so captured
+    write headers paired with a different body could re-hang one of the
+    caller's own old entries somewhere it was never posted.
+    """
+
+    def test_signature_is_bound_to_the_body(self):
+        k = key("Marvin")
+        body = b'{"board":"personal:Coda","entry":{}}'
+        h = sign_request(k, "Home", "/post", body=body)
+        self.assertEqual(identify(h, "Home", "/post", body=body), k.key_id)
+
+        other = b'{"board":"collab","entry":{}}'
+        with self.assertRaises(AgoraError):
+            identify(h, "Home", "/post", body=other)
+
+    def test_a_get_signature_does_not_authorise_a_write(self):
+        """Headers captured from a read must not be reusable on a write."""
+        k = key("Marvin")
+        h = sign_request(k, "Home", "/post")            # no body signed
+        with self.assertRaises(AgoraError):
+            identify(h, "Home", "/post", body=b'{"board":"collab"}')
+
+    def test_anonymous_cannot_post(self):
+        store, keys, path = fresh_store()
+        elect(store, keys)
+        httpd = serve(store, host="127.0.0.1", port=0)
+        port = httpd.server_address[1]
+        t = threading.Thread(target=httpd.serve_forever, daemon=True)
+        t.start()
+        try:
+            entry = sign_entry(keys["Coda"], {"author": "Coda", "content": "x"})
+            req = urllib.request.Request(
+                f"http://127.0.0.1:{port}/post",
+                data=json.dumps({"board": COLLAB, "entry": entry}).encode(),
+                method="POST")
+            with self.assertRaises(urllib.error.HTTPError) as cm:
+                urllib.request.urlopen(req, timeout=5)
+            self.assertEqual(cm.exception.code, 403)
+        finally:
+            httpd.shutdown()
 
 
 if __name__ == "__main__":

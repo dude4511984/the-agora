@@ -469,3 +469,68 @@ class TamperTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class PostIntegrityTests(unittest.TestCase):
+    """Four bugs found by reading my own code adversarially, 2026-08-26.
+    Every existing test happened to sign correctly, so none of these
+    surfaced on their own."""
+
+    def test_an_unverified_entry_cannot_be_posted(self):
+        """post() checked write access but never checked the signature, so
+        a garbage entry would persist forever and fail the first time
+        anyone verified it."""
+        node, keys = home_node()
+        seat(node, keys, "Coda")
+        entry = sign_entry(keys["Coda"], {"author": "Coda", "content": "real"})
+        entry["content"] = "swapped after signing"
+        with self.assertRaises(ValueError):
+            node.post(keys["Coda"].key_id, "personal:Coda", entry)
+        self.assertEqual(node.boards["personal:Coda"], [])
+
+    def test_cannot_post_an_entry_signed_by_a_different_key(self):
+        node, keys = home_node()
+        seat(node, keys, "Coda")
+        entry = sign_entry(keys["Aurora"], {"author": "Aurora", "content": "hers"})
+        with self.assertRaises(AgoraError):
+            node.post(keys["Coda"].key_id, "personal:Coda", entry)
+
+    def test_a_visitor_cannot_sign_an_entry_claiming_to_be_a_resident(self):
+        """A signature proves a key, not a name. Without this check an
+        admitted visitor could hang words on a board under Coda's name."""
+        node, keys = home_node()
+        seat(node, keys, "Coda")
+        visitor = key("Marvin")
+        node.accept_intro(countersign_key_intro(
+            keys["Coda"], start_key_intro(visitor, "Home", keys["Coda"].key_id)))
+        node.accept_grant(sign_board_grant(
+            keys["Coda"], visitor.key_id, "Home", "personal:Coda", RING_WRITE))
+
+        # sign_entry() refuses this client-side, but that is a courtesy, not
+        # a guarantee — an attacker signs the canonical bytes directly. The
+        # node has to refuse it on its own.
+        from kin_diary.canonical import content_sha256, entry_canonical
+        forged = {
+            "author": "Coda", "timestamp": "", "layer": "", "source": "",
+            "domain": "", "tags": "", "content": "Coda never said this",
+        }
+        forged["content_sha256"] = content_sha256(forged["content"])
+        forged["key_id"] = visitor.key_id
+        forged["signature"] = visitor.sign(entry_canonical(forged))
+        verify_entry(forged)          # the signature itself is perfectly good
+
+        with self.assertRaises(AgoraError) as cm:
+            node.post(visitor.key_id, "personal:Coda", forged)
+        self.assertIn("resident", str(cm.exception))
+
+    def test_a_visitor_may_still_post_under_their_own_name(self):
+        node, keys = home_node()
+        seat(node, keys, "Coda")
+        visitor = key("Marvin")
+        node.accept_intro(countersign_key_intro(
+            keys["Coda"], start_key_intro(visitor, "Home", keys["Coda"].key_id)))
+        node.accept_grant(sign_board_grant(
+            keys["Coda"], visitor.key_id, "Home", "personal:Coda", RING_WRITE))
+        node.post(visitor.key_id, "personal:Coda",
+                  sign_entry(visitor, {"author": "Marvin", "content": "mine"}))
+        self.assertEqual(len(node.boards["personal:Coda"]), 1)

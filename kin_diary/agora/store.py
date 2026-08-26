@@ -71,6 +71,7 @@ class NodeStore:
         self.conn.executescript(SCHEMA)
         self.conn.commit()
         self._lock = threading.RLock()
+        self._cache: Node | None = None
 
     # ── residents ──────────────────────────────────────────────────────────
 
@@ -82,6 +83,7 @@ class NodeStore:
                 (self.node_name, author, key_id.lower()),
             )
             self.conn.commit()
+            self._invalidate()
 
     # ── events ─────────────────────────────────────────────────────────────
 
@@ -98,7 +100,7 @@ class NodeStore:
             self._record_locked(kind, payload)
 
     def _record_locked(self, kind: str, payload: dict) -> None:
-        node = self._load_locked()
+        node = self._load_locked()   # fresh replay, never the cache
         getattr(node, REPLAY[kind])(payload)   # raises if the rule says no
         self.conn.execute(
             "INSERT INTO agora_events(node, kind, payload, recorded_at_unix_ms) "
@@ -107,11 +109,24 @@ class NodeStore:
              int(time.time() * 1000)),
         )
         self.conn.commit()
+        self._invalidate()
 
     def load(self) -> Node:
-        """Rebuild the node by replaying every event in order."""
+        """The node as of now, replaying the log if anything has changed.
+
+        Cached deliberately: without it every request — including reads —
+        replays the entire event log and every board post, so the node gets
+        monotonically slower the more it is used, and writing is a cheap way
+        for a visitor to make it slow for everyone. The cache is dropped on
+        any write, so it can never serve a stale ring.
+        """
         with self._lock:
-            return self._load_locked()
+            if self._cache is None:
+                self._cache = self._load_locked()
+            return self._cache
+
+    def _invalidate(self) -> None:
+        self._cache = None
 
     def _load_locked(self) -> Node:
         node = Node(self.node_name)
@@ -145,6 +160,7 @@ class NodeStore:
                 (self.node_name, board, json.dumps(entry, sort_keys=True)),
             )
             self.conn.commit()
+            self._invalidate()
             return entry
 
     def read(self, key_id: str, board: str) -> list[dict]:

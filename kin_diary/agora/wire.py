@@ -19,7 +19,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from cryptography.exceptions import InvalidSignature
 
 from ..keys import KeyRecord, load_public
-from .canonical import COLLAB, request_canonical
+from .canonical import COLLAB, body_digest, request_canonical
 from .node import AgoraError
 from .store import NodeStore
 
@@ -30,10 +30,21 @@ REQUEST_WINDOW_MS = 5 * 60 * 1000
 ANONYMOUS = "0" * 64
 
 
-def sign_request(key: KeyRecord, host_node: str, path: str, now_ms: int | None = None) -> dict:
-    """Client side. Produces the headers proving who is asking."""
+def sign_request(
+    key: KeyRecord,
+    host_node: str,
+    path: str,
+    now_ms: int | None = None,
+    body: bytes | None = None,
+) -> dict:
+    """Client side. Produces the headers proving who is asking.
+
+    Pass `body` for writes so the signature covers the payload, not just
+    the route.
+    """
     ts = int(now_ms if now_ms is not None else time.time() * 1000)
-    sig = key.sign(request_canonical(key.key_id, host_node, path, ts))
+    digest = body_digest(body) if body else ""
+    sig = key.sign(request_canonical(key.key_id, host_node, path, ts, digest))
     return {
         "X-Agora-Key": key.key_id,
         "X-Agora-Time": str(ts),
@@ -41,7 +52,13 @@ def sign_request(key: KeyRecord, host_node: str, path: str, now_ms: int | None =
     }
 
 
-def identify(headers, host_node: str, path: str, now_ms: int | None = None) -> str:
+def identify(
+    headers,
+    host_node: str,
+    path: str,
+    now_ms: int | None = None,
+    body: bytes | None = None,
+) -> str:
     """Who is asking, proven. Falls back to anonymous (ring 0) rather than
     rejecting — an unidentified caller is a legitimate visitor who simply
     hasn't been introduced, and the teaser exists precisely for them.
@@ -62,9 +79,11 @@ def identify(headers, host_node: str, path: str, now_ms: int | None = None) -> s
     now = int(now_ms if now_ms is not None else time.time() * 1000)
     if abs(now - ts) > REQUEST_WINDOW_MS:
         raise AgoraError("request is outside the freshness window")
+    digest = body_digest(body) if body else ""
     try:
         load_public(key_id).verify(
-            bytes.fromhex(sig), request_canonical(key_id, host_node, path, ts)
+            bytes.fromhex(sig),
+            request_canonical(key_id, host_node, path, ts, digest),
         )
     except (InvalidSignature, ValueError):
         raise AgoraError("request signature does not prove this key")
@@ -88,16 +107,16 @@ class AgoraHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _body(self) -> dict:
+    def _raw_body(self) -> bytes:
         n = int(self.headers.get("Content-Length") or 0)
         if n <= 0:
             raise AgoraError("empty body")
         if n > 8 * 1024 * 1024:
             raise AgoraError("body too large")
-        return json.loads(self.rfile.read(n))
+        return self.rfile.read(n)
 
-    def _who(self) -> str:
-        return identify(self.headers, self.store.node_name, self.path)
+    def _who(self, body: bytes | None = None) -> str:
+        return identify(self.headers, self.store.node_name, self.path, body=body)
 
     # ── routes ─────────────────────────────────────────────────────────────
 
@@ -139,14 +158,17 @@ class AgoraHandler(BaseHTTPRequestHandler):
                 # whole point. An unsigned submission cannot pass, and a
                 # signed one needs no further permission to be *offered*;
                 # whether it is *accepted* is the node's policy call.
-                self.store.record(routes[self.path], self._body())
+                self.store.record(routes[self.path], json.loads(self._raw_body()))
                 self._send(200, {"accepted": routes[self.path]})
                 return
             if self.path == "/post":
-                payload = self._body()
-                who = identify(self.headers, self.store.node_name, "/post")
+                raw = self._raw_body()
+                who = self._who(raw)     # signature covers this exact body
+                if who == ANONYMOUS:
+                    raise AgoraError("posting requires an identified key")
+                payload = json.loads(raw)
                 entry = payload["entry"]
-                if entry.get("key_id", "").lower() != who:
+                if (entry.get("key_id") or "").lower() != who:
                     raise AgoraError("post must be signed by the identified key")
                 self.store.post(who, payload.get("board") or COLLAB, entry)
                 self._send(200, {"posted": True})

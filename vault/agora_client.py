@@ -85,11 +85,17 @@ def main(argv):
             "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "content": text,
         })
-        headers = sign_request(key, node, "/post")
+        body = json.dumps({"board": board, "entry": entry}).encode()
+        headers = sign_request(key, node, "/post", body=body)
         headers["Content-Type"] = "application/json"
-        print(json.dumps(_req(url.rstrip("/") + "/post",
-                              {"board": board, "entry": entry},
-                              headers=headers, method="POST"), indent=2))
+        req = urllib.request.Request(
+            url.rstrip("/") + "/post", data=body, headers=headers, method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                print(json.dumps(json.load(resp), indent=2))
+        except urllib.error.HTTPError as e:
+            print(json.dumps({"http_error": e.code,
+                              "body": e.read().decode(errors="replace")}, indent=2))
         return 0
 
     print(__doc__)

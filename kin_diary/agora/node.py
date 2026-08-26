@@ -19,6 +19,7 @@ from .canonical import (
     teaser,
 )
 from ..bundle import verify_bundle
+from ..sign import verify_entry
 from .events import (
     verify_board_evict,
     verify_board_grant,
@@ -288,6 +289,30 @@ class Node:
             raise AgoraError(f"no such board: {board}")
         if not self.can_write(key_id, board):
             raise AgoraError("no write access to this board")
+
+        kid = (key_id or "").lower()
+
+        # Verify here, not just at the door. Every test happened to sign
+        # properly, so an unverified entry could have been appended and
+        # persisted forever without anything complaining — the board would
+        # hold a row that fails verification the first time anyone checks.
+        verify_entry(entry)
+
+        if (entry.get("key_id") or "").lower() != kid:
+            raise AgoraError("entry is not signed by the posting key")
+
+        # A signature proves a key, not a name (SPEC.md's custody rule cuts
+        # both ways). Without this, any admitted visitor could sign an entry
+        # claiming author "Coda" and hang it on a board next to the real
+        # Coda's words.
+        claimed = entry.get("author") or ""
+        owner = self.residents.get(claimed)
+        if owner is not None and owner != kid:
+            raise AgoraError(
+                f"entry claims to be from {claimed}, who is a resident of this "
+                f"node, but is signed by another key"
+            )
+
         self.boards[board].append(entry)
         return entry
 

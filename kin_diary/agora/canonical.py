@@ -169,6 +169,7 @@ def request_canonical(
     host_node: str,
     path: str,
     issued_at_unix_ms: int,
+    body_sha256: str = "",
 ) -> bytes:
     """Proof that a reader is who they claim, over the wire.
 
@@ -178,15 +179,30 @@ def request_canonical(
     relayed through anything.
 
     `host_node` is in the signed bytes so a request captured at one node
-    cannot be replayed at another; `issued_at_unix_ms` bounds replay in
-    time (the server enforces the window).
+    cannot be replayed at another; `path` so it cannot be replayed at
+    another board; `issued_at_unix_ms` bounds replay in time (the server
+    enforces the window).
+
+    `body_sha256` binds the signature to what was actually sent. Without
+    it, captured headers from one write could be paired with a different
+    body — and since a board entry's own signature does not name a board,
+    an old entry of the caller's could be re-hung somewhere it was never
+    posted. Empty for GETs, which carry no body.
     """
-    return _lines(MAGIC_REQUEST, [
+    pairs = [
         ("key_id", _hex64(key_id)),
         ("host_node", _line_value(host_node)),
         ("path", _line_value(path)),
         ("issued_at_unix_ms", _unix_ms(issued_at_unix_ms)),
-    ])
+    ]
+    if body_sha256:
+        pairs.append(("body_sha256", _hex64(body_sha256)))
+    return _lines(MAGIC_REQUEST, pairs)
+
+
+def body_digest(raw: bytes) -> str:
+    import hashlib
+    return hashlib.sha256(raw).hexdigest()
 
 
 TEASER_WORDS = 12
