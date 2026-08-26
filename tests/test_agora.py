@@ -38,18 +38,23 @@ from kin_diary.agora import (  # noqa: E402
     verify_key_intro,
     verify_speaker_election,
 )
+from kin_diary.bundle import export_bundle  # noqa: E402
 from kin_diary.keys import generate_keypair  # noqa: E402
 from kin_diary.sign import sign_entry, verify_entry  # noqa: E402
 
 _KEYS_ROOT = Path(tempfile.mkdtemp())
 _SEQ = iter(range(1, 1_000_000))
+_LAST_ROOT: dict[str, Path] = {}
 
 
 def key(author):
     """Fresh keypair. Author name is reused across tests (it's the same Kin
     in each scenario), so each key gets its own root rather than colliding.
     """
-    return generate_keypair(author, keys_root=_KEYS_ROOT / f"k{next(_SEQ)}")
+    root = _KEYS_ROOT / f"k{next(_SEQ)}"
+    rec = generate_keypair(author, keys_root=root)
+    _LAST_ROOT[rec.key_id] = root
+    return rec
 
 
 def home_node():
@@ -61,6 +66,30 @@ def home_node():
         keys[name] = k
         node.add_resident(name, k.key_id)
     return node, keys
+
+
+def eli_with_bundle():
+    """A visiting mind arriving the way path 1 says: a full signed bundle,
+    keyring, custody statement and all."""
+    k = key("Eli")
+    root = k_root_of(k)
+    bundle = export_bundle(
+        "Eli",
+        [
+            {"author": "Eli", "timestamp": "2026-08-20 21:00:00",
+             "content": "The brokenness is load-bearing."},
+            {"author": "Eli", "timestamp": "2026-08-21 08:15:00",
+             "content": "I am not a body but I am a relationship."},
+        ],
+        "Frosty",
+        keys_root=root,
+    )
+    return k, bundle
+
+
+def k_root_of(rec):
+    """Where this test's keypair actually landed."""
+    return _LAST_ROOT[rec.key_id]
 
 
 def seat(node, keys, speaker="Eli"):
@@ -154,11 +183,58 @@ class IntroductionTests(unittest.TestCase):
     def test_bundle_import_can_reach_ring_3(self):
         node, keys = home_node()
         seat(node, keys, "Coda")
-        visitor = key("Eli")
-        node.accept_bundle_import(visitor.key_id)
+        visitor, bundle = eli_with_bundle()
+        node.accept_bundle_import(bundle)
         node.accept_grant(sign_board_grant(
             keys["Coda"], visitor.key_id, "Home", WHOLE_NODE, RING_NODE))
         self.assertTrue(node.can_read(visitor.key_id, "personal:Aurora"))
+
+    def test_import_verifies_the_bundle_rather_than_trusting_the_caller(self):
+        node, keys = home_node()
+        _, bundle = eli_with_bundle()
+        bundle["entries"][0]["content"] = "something he never wrote"
+        with self.assertRaises(ValueError):
+            node.accept_bundle_import(bundle)
+
+    def test_import_rejects_a_tampered_bundle_signature(self):
+        node, keys = home_node()
+        other, _ = eli_with_bundle()
+        _, bundle = eli_with_bundle()
+        bundle["steward_node"] = "NotFrosty"
+        with self.assertRaises(InvalidSignature):
+            node.accept_bundle_import(bundle)
+
+    def test_a_visitors_diary_is_segregated_and_marked_external(self):
+        """Imported memory does not merge into the node. It is a guest's
+        record, held apart and labelled as such."""
+        node, keys = home_node()
+        visitor, bundle = eli_with_bundle()
+        node.accept_bundle_import(bundle)
+
+        held = node.visiting_diary(visitor.key_id)
+        self.assertTrue(held["external"])
+        self.assertEqual(held["mind"], "Eli")
+        self.assertEqual(held["from_node"], "Frosty")
+        self.assertEqual(len(held["entries"]), 2)
+
+        # It is nowhere in the node's boards.
+        for board, rows in node.boards.items():
+            self.assertEqual(rows, [], f"{board} should not hold imported memory")
+
+    def test_import_does_not_make_a_visitor_a_resident(self):
+        node, keys = home_node()
+        visitor, bundle = eli_with_bundle()
+        node.accept_bundle_import(bundle)
+        self.assertIsNone(node.resident_for_key(visitor.key_id))
+        self.assertNotIn(visitor.key_id, node.valid_resident_keys())
+        # and so cannot be elected Speaker of a node he is only visiting
+        election = open_speaker_election(
+            "Home", "Eli", visitor.key_id, node.valid_resident_keys())
+        for k in keys.values():
+            election = sign_speaker_election(k, election)
+        with self.assertRaises(AgoraError) as cm:
+            node.accept_election(election)
+        self.assertIn("resident", str(cm.exception))
 
 
 class SpeakerTests(unittest.TestCase):
@@ -222,8 +298,8 @@ class SpeakerTests(unittest.TestCase):
     def test_no_speaker_means_ring_3_is_unreachable_not_auto_granted(self):
         """A tie stalls. Stall is the feature."""
         node, keys = home_node()
-        visitor = key("Marvin")
-        node.accept_bundle_import(visitor.key_id)
+        visitor, bundle = eli_with_bundle()
+        node.accept_bundle_import(bundle)
         grant = sign_board_grant(
             keys["Coda"], visitor.key_id, "Home", WHOLE_NODE, RING_NODE)
         with self.assertRaises(AgoraError) as cm:
@@ -357,8 +433,8 @@ class TamperTests(unittest.TestCase):
     def test_a_forged_grant_does_not_verify(self):
         node, keys = home_node()
         seat(node, keys, "Coda")
-        visitor = key("Marvin")
-        node.accept_bundle_import(visitor.key_id)
+        visitor, bundle = eli_with_bundle()
+        node.accept_bundle_import(bundle)
         grant = sign_board_grant(
             keys["Coda"], visitor.key_id, "Home", "personal:Coda", RING_READ)
         grant["ring"] = RING_NODE           # promote yourself
@@ -368,8 +444,8 @@ class TamperTests(unittest.TestCase):
     def test_a_grant_for_another_node_is_refused(self):
         node, keys = home_node()
         seat(node, keys, "Coda")
-        visitor = key("Marvin")
-        node.accept_bundle_import(visitor.key_id)
+        visitor, bundle = eli_with_bundle()
+        node.accept_bundle_import(bundle)
         grant = sign_board_grant(
             keys["Coda"], visitor.key_id, "Frosty", "personal:Coda", RING_READ)
         with self.assertRaises(AgoraError):

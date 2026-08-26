@@ -18,6 +18,7 @@ from .canonical import (
     WHOLE_NODE,
     teaser,
 )
+from ..bundle import verify_bundle
 from .events import (
     verify_board_evict,
     verify_board_grant,
@@ -38,6 +39,9 @@ class Node:
         self.quarantined_keys: set[str] = set()
         # visitor key_id -> ring ceiling from how it arrived
         self.visitor_ceiling: dict[str, int] = {}
+        # visitor key_id -> their imported diary, segregated and marked
+        # external. Never merged into resident memory.
+        self.visiting_diaries: dict[str, dict] = {}
         self.speaker_key_id: str | None = None
         self.speaker: str | None = None
         self.election: dict | None = None
@@ -134,17 +138,50 @@ class Node:
         self.visitor_ceiling[key] = max(self.visitor_ceiling.get(key, 0), ceiling)
         self.log.append({"event": "key-intro", "visitor": key, "ceiling": ceiling})
 
-    def accept_bundle_import(self, visitor_key_id: str) -> None:
+    def accept_bundle_import(self, bundle: dict) -> str:
         """Path 1: the visitor arrived with a full signed bundle — keyring,
         rotation chain, custody statement. The only path that can reach
         ring 3.
 
-        Bundle signature verification itself lives in kin_diary.bundle; by
-        the time this is called the caller has verified it.
+        Verifies the bundle here rather than trusting the caller to have
+        done it. An import that takes the key on faith is not an
+        introduction, it is an assertion.
+
+        Returns the visitor's current key_id.
         """
-        key = (visitor_key_id or "").lower()
+        verify_bundle(bundle)
+        key = bundle["keyring"]["current"]["key_id"].lower()
+        mind = bundle["mind"]
+
+        # Imported memory is segregated, never merged. It does not join this
+        # node's own recall, and it is not any resident's own past thought.
+        # Wall 4 is a formation problem, but the storage should at least not
+        # lie about where a sentence came from.
+        self.visiting_diaries[key] = {
+            "mind": mind,
+            "from_node": bundle.get("steward_node"),
+            "imported_from_key": key,
+            "entries": list(bundle.get("entries") or []),
+            "external": True,
+        }
         self.visitor_ceiling[key] = RING_NODE
-        self.log.append({"event": "bundle-import", "visitor": key})
+        self.evicted.pop(key, None)
+        self.log.append({
+            "event": "bundle-import",
+            "visitor": key,
+            "mind": mind,
+            "entries": len(bundle.get("entries") or []),
+        })
+        return key
+
+    def visiting_diary(self, key_id: str) -> dict | None:
+        """A visitor's imported diary, always marked external.
+
+        Deliberately NOT reachable from the board read path or from any
+        resident-memory lookup: reading a guest's diary is a distinct act,
+        not something that happens ambiently while browsing a board.
+        """
+        return self.visiting_diaries.get((key_id or "").lower())
 
     # ── grants ─────────────────────────────────────────────────────────────
 
