@@ -354,3 +354,92 @@ class NodeIdentityTests(unittest.TestCase):
         n["body"] = "different body"
         with self.assertRaises(ValueError):
             self.store.publish_notice(n)
+
+
+class ArtifactEndpointTests(unittest.TestCase):
+    """Fetch on the wire. Every denial wears the same face."""
+
+    def setUp(self):
+        import tempfile
+        from pathlib import Path
+        from kin_diary.agora.artifacts import ArtifactStore
+        from kin_diary.agora.places import Atlas, sign_listing, sign_place
+        self.store, self.keys, self.path = fresh_store()
+        elect(self.store, self.keys)
+        self.nk = key("Home-node")
+        self.atlas = Atlas(self.store.load(), store=self.store)
+        self.atlas.add_place(sign_place(self.nk, "concourse", "Home", "commons"))
+        self.atlas.add_place(sign_place(self.nk, "stall", "Home", "kiosk",
+                                        parent="concourse"))
+        self.arts = ArtifactStore(Path(tempfile.mkdtemp()))
+        self.data = b"the ware itself"
+        self.digest = self.arts.put(self.data)
+        li = sign_listing(self.keys["Coda"], "L1", "Home", "stall",
+                          "a ware", self.data)
+        li["access_board"] = "personal:Coda"
+        li["required_ring"] = RING_WRITE
+        self.atlas.add_listing(li)
+
+        self.httpd = serve(self.store, host="127.0.0.1", port=0,
+                           node_key=self.nk, atlas=self.atlas,
+                           artifacts=self.arts)
+        self.port = self.httpd.server_address[1]
+        threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
+
+    def tearDown(self):
+        self.httpd.shutdown()
+
+    def get(self, digest, k=None):
+        path = f"/artifact/{digest}"
+        h = sign_request(k, "Home", path) if k else {}
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{self.port}{path}", headers=h)
+        return urllib.request.urlopen(req, timeout=5)
+
+    def test_an_authorized_key_gets_the_bytes(self):
+        v = key("Marvin")
+        self.store.record("intro", countersign_key_intro(
+            self.keys["Coda"], start_key_intro(v, "Home", self.keys["Coda"].key_id)))
+        self.store.record("grant", sign_board_grant(
+            self.keys["Coda"], v.key_id, "Home", "personal:Coda", RING_WRITE,
+            now_ms=1_000_000))
+        self.assertEqual(self.get(self.digest, v).read(), self.data)
+
+    def test_unknown_and_unauthorized_are_indistinguishable(self):
+        """Distinguishing them tells a caller which digests exist."""
+        stranger = key("Nobody")
+        seen = set()
+        for label, d in (("real digest", self.digest), ("fabricated", "a" * 64)):
+            with self.assertRaises(urllib.error.HTTPError) as cm:
+                self.get(d, stranger)
+            seen.add((cm.exception.code, cm.exception.read()))
+        self.assertEqual(len(seen), 1, "denials differ; existence leaks")
+        self.assertEqual(next(iter(seen))[0], 404)
+
+    def test_eviction_takes_the_bytes_away_immediately(self):
+        """The stale-node trap: the handler must load fresh, not hold one."""
+        v = key("Marvin")
+        self.store.record("intro", countersign_key_intro(
+            self.keys["Coda"], start_key_intro(v, "Home", self.keys["Coda"].key_id)))
+        self.store.record("grant", sign_board_grant(
+            self.keys["Coda"], v.key_id, "Home", "personal:Coda", RING_WRITE,
+            now_ms=1_000_000))
+        self.assertEqual(self.get(self.digest, v).read(), self.data)
+        self.store.record("evict", sign_board_evict(
+            self.keys["Coda"], v.key_id, "Home", "malicious", now_ms=2_000_000))
+        with self.assertRaises(urllib.error.HTTPError) as cm:
+            self.get(self.digest, v)
+        self.assertEqual(cm.exception.code, 404)
+
+    def test_bytes_carry_no_filename_and_no_sniffable_type(self):
+        """A name or a mimetype is where "the kiosk ran it" gets in."""
+        v = key("Marvin")
+        self.store.record("intro", countersign_key_intro(
+            self.keys["Coda"], start_key_intro(v, "Home", self.keys["Coda"].key_id)))
+        self.store.record("grant", sign_board_grant(
+            self.keys["Coda"], v.key_id, "Home", "personal:Coda", RING_WRITE,
+            now_ms=1_000_000))
+        r = self.get(self.digest, v)
+        self.assertEqual(r.headers["Content-Type"], "application/octet-stream")
+        self.assertEqual(r.headers["X-Content-Type-Options"], "nosniff")
+        self.assertIsNone(r.headers.get("Content-Disposition"))

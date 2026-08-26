@@ -20,6 +20,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from cryptography.exceptions import InvalidSignature
 
 from ..keys import KeyRecord, load_public
+from .artifacts import ArtifactHashMismatch
 from .canonical import COLLAB, body_digest, request_canonical
 from .node import AgoraError
 from .store import NodeStore
@@ -124,6 +125,7 @@ class AgoraHandler(BaseHTTPRequestHandler):
     limiter: "_RateLimiter" = None   # set by serve()
     node_key = None                  # set by serve(); may be None
     atlas = None                     # set by serve(); may be None
+    artifacts = None                 # set by serve(); may be None
     server_version = "agora/1"
 
     def log_message(self, fmt, *args):
@@ -179,6 +181,49 @@ class AgoraHandler(BaseHTTPRequestHandler):
                     self._send(404, {"error": "this node publishes no atlas"})
                     return
                 self._send(200, self.atlas.signed_view(self.node_key, self._who()))
+                return
+            if self.path.startswith("/artifact/"):
+                # Content-addressed retrieval. Never execution: bytes go
+                # out as octet-stream with no filename and no sniffable
+                # type, because a name or a mimetype is where "the kiosk
+                # ran it" gets in.
+                if self.artifacts is None or self.atlas is None:
+                    self._send(404, {"error": "artifact unavailable"})
+                    return
+                digest = self.path[len("/artifact/"):]
+                who = self._who()
+                self.limiter.check(who)
+                listing = next(
+                    (li for li in self.atlas.listings.values()
+                     if li.get("artifact_sha256") == digest.lower()), None)
+                if listing is None:
+                    # Unlistable and unknown must be indistinguishable, so
+                    # this is the same 404 and the same words as every
+                    # other denial. Telling them apart tells a caller which
+                    # digests exist.
+                    self._send(404, {"error": "artifact unavailable"})
+                    return
+                try:
+                    blob = self.artifacts.fetch(
+                        self.store, who, listing, self.atlas,
+                        access_board=listing.get("access_board") or COLLAB,
+                        required_ring=int(listing.get("required_ring") or 1))
+                except ArtifactHashMismatch:
+                    # The one case that must NOT look like the others: we
+                    # authorized this and our own copy is corrupt. Saying
+                    # "unavailable" would hide a broken store behind a
+                    # permission answer.
+                    self._send(500, {"error": "artifact integrity failure"})
+                    return
+                except Exception:
+                    self._send(404, {"error": "artifact unavailable"})
+                    return
+                self.send_response(200)
+                self.send_header("Content-Type", "application/octet-stream")
+                self.send_header("Content-Length", str(len(blob)))
+                self.send_header("X-Content-Type-Options", "nosniff")
+                self.end_headers()
+                self.wfile.write(blob)
                 return
             if self.path == "/notices":
                 # The advertise-only wire. Notices, never the work itself.
@@ -253,9 +298,10 @@ class AgoraHandler(BaseHTTPRequestHandler):
 
 
 def serve(store: NodeStore, host: str = "0.0.0.0", port: int = 8770,
-          node_key=None, atlas=None):
+          node_key=None, atlas=None, artifacts=None):
     handler = type("Bound", (AgoraHandler,),
                    {"store": store, "limiter": _RateLimiter(),
-                    "node_key": node_key, "atlas": atlas})
+                    "node_key": node_key, "atlas": atlas,
+                    "artifacts": artifacts})
     httpd = HTTPServer((host, port), handler)
     return httpd
