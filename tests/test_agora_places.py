@@ -273,3 +273,39 @@ class SignedViewTests(unittest.TestCase):
                                     now_ms=1_000_000)
         self.assertEqual(v1["inventory_sha256"], v2["inventory_sha256"])
         self.assertEqual(v1["signature"], v2["signature"])
+
+
+class PresenceDoesNotGossip(unittest.TestCase):
+    """Locked 2026-08-26: presence is local. Broadcasting "key K is at
+    place P" across nodes is how a commons becomes a surveillance network,
+    and the notice wire fans out by design — so it must never carry this."""
+
+    def test_a_presence_event_from_elsewhere_is_not_occupancy_here(self):
+        """A peer handed a presence event signed for another node must
+        refuse it as occupancy, not quietly display it."""
+        node, keys, nk, atlas = furnished()
+        from kin_diary.agora.places import sign_presence
+        visitor = key("Marvin")
+        elsewhere = sign_presence(visitor, "Frosty", "concourse")
+        with self.assertRaises(AgoraError) as cm:
+            atlas.arrive(elsewhere)
+        self.assertIn("different node", str(cm.exception))
+
+    def test_a_recognised_key_is_not_standing_anywhere_until_it_says_so(self):
+        """Co-Work: recognition is of the key. An imported collaborator is a
+        known key, not a body in a room."""
+        node, keys, nk, atlas = furnished()
+        v, bundle = __import__("test_agora").eli_with_bundle()
+        node.accept_bundle_import(bundle)
+        self.assertIn(v.key_id, node.visitor_ceiling)      # recognised
+        self.assertEqual(len(atlas.view(v.key_id)["presence"]), 0)  # not here
+
+    def test_federation_never_carries_presence(self):
+        """Structural, not a comment: the federation client fetches facts
+        and notices. If a presence endpoint ever joins that list, this
+        fails."""
+        import inspect
+        from kin_diary.agora import federation
+        src = inspect.getsource(federation)
+        self.assertNotIn("/view", src)
+        self.assertNotIn("presence", src.lower())

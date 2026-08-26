@@ -96,6 +96,12 @@ class ArtifactStore:
         return digest
 
     def _read(self, digest: str) -> bytes:
+        # Normalize once and compare against the normalized form. Comparing
+        # against the caller's raw input made a valid uppercase digest
+        # report ArtifactHashMismatch — an error that says "corrupt store"
+        # about a casing difference, which is the kind of message that
+        # wastes an afternoon.
+        digest = _hash(digest)
         path = self._path(digest)
         if not path.is_file():
             raise ArtifactUnknownHash(f"unknown artifact hash {digest}")
