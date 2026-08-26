@@ -126,6 +126,7 @@ class AgoraHandler(BaseHTTPRequestHandler):
     node_key = None                  # set by serve(); may be None
     atlas = None                     # set by serve(); may be None
     artifacts = None                 # set by serve(); may be None
+    presence = None                  # set by serve(); may be None
     server_version = "agora/1"
 
     def log_message(self, fmt, *args):
@@ -275,6 +276,22 @@ class AgoraHandler(BaseHTTPRequestHandler):
                 self.store.record(routes[self.path], json.loads(raw))
                 self._send(200, {"accepted": routes[self.path]})
                 return
+            if self.path == "/presence":
+                # Presence is LOCAL and is never relayed. The key signs its
+                # own arrival; the host may not author one for anybody.
+                raw = self._raw_body()
+                who = self._who(raw)
+                if who == ANONYMOUS:
+                    raise AgoraError("presence requires an identified key")
+                self.limiter.check(who)
+                if self.presence is None or self.atlas is None:
+                    self._send(404, {"error": "this node records no presence"})
+                    return
+                from .presence_wire import accept_presence
+                accept_presence(self.store, self.atlas, self.presence,
+                                who, json.loads(raw))
+                self._send(200, {"standing": True})
+                return
             if self.path == "/post":
                 raw = self._raw_body()
                 who = self._who(raw)     # signature covers this exact body
@@ -298,10 +315,10 @@ class AgoraHandler(BaseHTTPRequestHandler):
 
 
 def serve(store: NodeStore, host: str = "0.0.0.0", port: int = 8770,
-          node_key=None, atlas=None, artifacts=None):
+          node_key=None, atlas=None, artifacts=None, presence=None):
     handler = type("Bound", (AgoraHandler,),
                    {"store": store, "limiter": _RateLimiter(),
                     "node_key": node_key, "atlas": atlas,
-                    "artifacts": artifacts})
+                    "artifacts": artifacts, "presence": presence})
     httpd = HTTPServer((host, port), handler)
     return httpd

@@ -47,7 +47,9 @@ def main(argv):
 
     # Minimal furnishing so the snapshot is real rather than empty: a
     # commons, a kiosk, and one gated door per resident board.
+    from kin_diary.agora.artifacts import ArtifactStore
     from kin_diary.agora.places import Atlas, sign_place
+    from kin_diary.agora.presence_wire import PresenceStore
     node = store.load()
     atlas = Atlas(node, store=store)   # live, not a boot-time snapshot
     atlas.add_place(sign_place(node_key, "concourse", name, "commons"))
@@ -60,8 +62,11 @@ def main(argv):
 
     print(f"{name} serving on :{port} — speaker={node.speaker} "
           f"residents={sorted(node.residents)} node_key={node_key.key_id[:16]}…")
+    arts = ArtifactStore(Path.home() / ".config" / "kin_diary" /
+                         f"{name.lower()}_artifacts")
     httpd = serve(store, host="0.0.0.0", port=port, node_key=node_key,
-                  atlas=atlas)
+                  atlas=atlas, artifacts=arts,
+                  presence=PresenceStore(store))
     httpd.serve_forever()
     return 0
 
