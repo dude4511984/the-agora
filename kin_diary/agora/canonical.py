@@ -17,6 +17,9 @@ MAGIC_BOARD_REVOKE = "agora-board-revoke-v1"
 MAGIC_REQUEST = "agora-request-v1"
 MAGIC_NODE_FACT = "agora-node-fact-v1"
 MAGIC_NOTICE = "agora-notice-v1"
+MAGIC_PLACE = "agora-place-v1"
+MAGIC_PRESENCE = "agora-presence-v1"
+MAGIC_LISTING = "agora-listing-v1"
 
 # Ring ladder. Each is a strict superset of the one inside it.
 RING_TEASER = 0   # default, no grant: first twelve words and an ellipsis
@@ -281,6 +284,102 @@ def notice_canonical(
         ("subject", _line_value(subject)),
         ("body_sha256", _hex64(body_sha256_hex)),
         ("contact", _line_value(contact)),
+        ("published_at_unix_ms", _unix_ms(published_at_unix_ms)),
+    ])
+
+
+# A place is a rendering hint, never an access rule. The renderer draws
+# what the keyring already permits; a door that "opens" is a door whose
+# ring check already passed elsewhere.
+PLACE_KINDS = frozenset({"commons", "door", "kiosk", "table", "sign"})
+
+
+def place_canonical(
+    place_id: str,
+    node: str,
+    kind: str,
+    parent: str,
+    ring_to_see: int,
+    points_to: str,
+    node_key_id: str,
+    published_at_unix_ms: int,
+) -> bytes:
+    """Spatial layout as signed data, so the map is not a second truth.
+
+    `ring_to_see` is a HINT for what to draw, not an authorisation. The
+    node's existing ring check is still the only thing that decides what a
+    key may read — if a renderer ever treats this number as the gate, the
+    permission system has quietly moved into the client, which is the one
+    thing agora.md says must never happen.
+
+    `points_to` is a board id or an artifact hash. A place never carries
+    the content itself; it says where the content lives.
+    """
+    k = _line_value(kind)
+    if k not in PLACE_KINDS:
+        raise ValueError(f"place kind must be one of {sorted(PLACE_KINDS)}")
+    return _lines(MAGIC_PLACE, [
+        ("place_id", _line_value(place_id)),
+        ("node", _line_value(node)),
+        ("kind", k),
+        ("parent", _line_value(parent or "")),
+        ("ring_to_see", _ring(ring_to_see, lo=RING_TEASER, hi=RING_NODE)),
+        ("points_to", _line_value(points_to or "")),
+        ("node_key_id", _hex64(node_key_id)),
+        ("published_at_unix_ms", _unix_ms(published_at_unix_ms)),
+    ])
+
+
+def presence_canonical(
+    key_id: str,
+    node: str,
+    place_id: str,
+    label: str,
+    expires_at_unix_ms: int,
+    arrived_at_unix_ms: int,
+) -> bytes:
+    """"I am here", signed by the one who is here.
+
+    Presence is an assertion by a key, not a process on the host — nothing
+    foreign runs here. It expires on purpose: a stale marker is worse than
+    no marker, because a room that looks occupied when it is empty is a
+    lie the renderer tells for free.
+    """
+    return _lines(MAGIC_PRESENCE, [
+        ("key_id", _hex64(key_id)),
+        ("node", _line_value(node)),
+        ("place_id", _line_value(place_id)),
+        ("label", _line_value(label or "")),
+        ("expires_at_unix_ms", _unix_ms(expires_at_unix_ms)),
+        ("arrived_at_unix_ms", _unix_ms(arrived_at_unix_ms)),
+    ])
+
+
+def listing_canonical(
+    listing_id: str,
+    node: str,
+    place_id: str,
+    title: str,
+    artifact_sha256_hex: str,
+    terms: str,
+    seller_key_id: str,
+    published_at_unix_ms: int,
+) -> bytes:
+    """Kiosk wares: a named artifact by hash, offered by a key.
+
+    The artifact is a signed object — a diary export, a file, a design.
+    It is NOT a running program, and a listing is not an RPC. Direct
+    tool-call was rejected in this design; a kiosk that "runs something"
+    for a visitor is that rejection coming back wearing an apron.
+    """
+    return _lines(MAGIC_LISTING, [
+        ("listing_id", _line_value(listing_id)),
+        ("node", _line_value(node)),
+        ("place_id", _line_value(place_id)),
+        ("title", _line_value(title)),
+        ("artifact_sha256", _hex64(artifact_sha256_hex)),
+        ("terms", _line_value(terms or "")),
+        ("seller_key_id", _hex64(seller_key_id)),
         ("published_at_unix_ms", _unix_ms(published_at_unix_ms)),
     ])
 
