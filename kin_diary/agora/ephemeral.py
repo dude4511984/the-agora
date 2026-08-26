@@ -192,7 +192,10 @@ class EphemeralStore:
             if (event["board"] == board
                     and int(event["expires_at_unix_ms"]) > now
                     and event["visitor_key_id"].lower() not in node.evicted):
-                verify_ephemeral(event, node)
+                try:
+                    verify_ephemeral(event, node)
+                except EphemeralError:
+                    return None
                 return event
         return None
 
@@ -207,6 +210,32 @@ def reject_if_ephemeral(source, key_id: str) -> None:
         raise EphemeralError("ephemeral keys cannot graduate on this node")
 
 
+def current_admission(
+    node, key_id: str, board: str, now_ms: int
+) -> dict[str, Any] | None:
+    """Return the current verified Path 3 admission, without reading a clock.
+
+    The node supplies replayed receipts; this function supplies the
+    time-dependent query. Expired receipts are deliberately left untouched.
+    """
+    kid = (key_id or "").lower()
+    for event in reversed(node.ephemeral_events):
+        if event.get("visitor_key_id", "").lower() != kid:
+            continue
+        if event.get("board") != board:
+            continue
+        if int(event["expires_at_unix_ms"]) <= int(now_ms):
+            continue
+        if kid in node.evicted:
+            return None
+        try:
+            verify_ephemeral(event, node)
+        except EphemeralError:
+            return None
+        return event
+    return None
+
+
 __all__ = [
     "MAGIC_EPHEMERAL",
     "MAX_EPHEMERAL_MS",
@@ -214,6 +243,7 @@ __all__ = [
     "EphemeralError",
     "EphemeralStore",
     "countersign_ephemeral",
+    "current_admission",
     "issue_ephemeral",
     "reject_if_ephemeral",
     "verify_ephemeral",

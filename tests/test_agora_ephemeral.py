@@ -26,6 +26,7 @@ from kin_diary.agora.ephemeral import (
     EphemeralError,
     EphemeralStore,
     countersign_ephemeral,
+    current_admission,
     issue_ephemeral,
     reject_if_ephemeral,
     verify_ephemeral,
@@ -83,6 +84,39 @@ class EphemeralTests(unittest.TestCase):
         self.ephemerals.record(event)
         self.assertIsNone(
             self.ephemerals.current(self.holder.key_id, "personal:Coda", 2_000)
+        )
+
+    def test_node_backed_admission_is_exact_and_clocked_outside_node(self):
+        event = countersign_ephemeral(self.coda, self._issued(), self.node)
+        self.store.record("ephemeral", event)
+        node = self.store.load()
+        self.assertEqual(
+            current_admission(node, self.holder.key_id, "personal:Coda", 1_500),
+            event,
+        )
+        self.assertIsNone(
+            current_admission(node, self.holder.key_id, "personal:Coda-extra", 1_500)
+        )
+        self.assertIsNone(
+            current_admission(node, self.holder.key_id, "personal:Coda", 2_000)
+        )
+
+    def test_node_backed_query_rejects_eviction_and_speaker_change(self):
+        event = countersign_ephemeral(self.coda, self._issued(), self.node)
+        self.store.record("ephemeral", event)
+        node = self.store.load()
+        node.speaker_key_id = self.other.key_id
+        self.assertIsNone(
+            current_admission(node, self.holder.key_id, "personal:Coda", 1_500)
+        )
+        self.store.record(
+            "evict",
+            sign_board_evict(self.coda, self.holder.key_id, "Home", "gone"),
+        )
+        self.assertIsNone(
+            current_admission(
+                self.store.load(), self.holder.key_id, "personal:Coda", 1_500
+            )
         )
 
     def test_expired_ephemeral_is_a_dead_end_for_path_two(self):

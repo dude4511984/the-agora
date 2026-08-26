@@ -28,6 +28,10 @@ from kin_diary.agora import (  # noqa: E402
 from cryptography.exceptions import InvalidSignature  # noqa: E402
 
 from kin_diary.agora.node import AgoraError  # noqa: E402
+from kin_diary.agora.ephemeral import (  # noqa: E402
+    countersign_ephemeral,
+    issue_ephemeral,
+)
 from kin_diary.agora.wire import identify, serve, sign_request  # noqa: E402
 from kin_diary.sign import sign_entry  # noqa: E402
 
@@ -175,6 +179,56 @@ class WireTests(unittest.TestCase):
         with self.assertRaises(urllib.error.HTTPError) as cm:
             urllib.request.urlopen(req, timeout=5)
         self.assertEqual(cm.exception.code, 403)
+
+    def test_ephemeral_post_accepts_already_countersigned_event(self):
+        holder = key("Wire-ephemeral-holder")
+        issued = issue_ephemeral(
+            holder, "Home", self.keys["Coda"].key_id,
+            1_000, 2_000, 2, "personal:Coda", "debug",
+        )
+        event = countersign_ephemeral(self.keys["Coda"], issued, self.store.load())
+        body = json.dumps(event).encode()
+        headers = sign_request(holder, "Home", "/ephemeral", body=body)
+        req = urllib.request.Request(
+            self.url("/ephemeral"), data=body, headers=headers, method="POST")
+        with urllib.request.urlopen(req, timeout=5) as response:
+            self.assertEqual(json.load(response), {"accepted": "ephemeral"})
+        self.assertIn(holder.key_id, self.store.load().ephemeral_key_ids)
+
+    def test_ephemeral_refusals_are_identical_and_path_node_bound(self):
+        holder = key("Wire-ephemeral-refusal")
+        event = countersign_ephemeral(
+            self.keys["Coda"],
+            issue_ephemeral(
+                holder, "Home", self.keys["Coda"].key_id,
+                1_000, 2_000, 1, "personal:Coda", "debug",
+            ),
+            self.store.load(),
+        )
+        body = json.dumps(event).encode()
+
+        def refusal(headers=None):
+            req = urllib.request.Request(
+                self.url("/ephemeral"), data=body,
+                headers=headers or {}, method="POST")
+            try:
+                urllib.request.urlopen(req, timeout=5)
+            except urllib.error.HTTPError as error:
+                return error.code, error.read()
+            self.fail("request unexpectedly succeeded")
+
+        anonymous = refusal()
+        wrong_node = refusal(sign_request(
+            holder, "Frosty", "/ephemeral", body=body))
+        wrong_path = refusal(sign_request(
+            holder, "Home", "/board/collab", body=body))
+        self.assertEqual(anonymous, wrong_node)
+        self.assertEqual(anonymous, wrong_path)
+        self.assertEqual(anonymous[0], 403)
+        self.assertEqual(
+            anonymous[1],
+            b'{\n  "error": "ephemeral refused"\n}\n',
+        )
 
 
 

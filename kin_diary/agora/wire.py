@@ -13,6 +13,7 @@ answer the door.
 from __future__ import annotations
 
 import json
+import sqlite3
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -263,6 +264,23 @@ class AgoraHandler(BaseHTTPRequestHandler):
             "/election": "election",
         }
         try:
+            if self.path == "/ephemeral":
+                try:
+                    raw = self._raw_body()
+                    who = self._who(raw)
+                    if who == ANONYMOUS:
+                        raise AgoraError("anonymous cannot submit ephemeral admission")
+                    event = json.loads(raw)
+                    self.store.record("ephemeral", event)
+                except (AgoraError, InvalidSignature, ValueError, TypeError,
+                        KeyError, IndexError, AttributeError, OverflowError):
+                    self._send(403, {"error": "ephemeral refused"})
+                    return
+                except sqlite3.Error:
+                    self._send(500, {"error": "ephemeral storage failure"})
+                    return
+                self._send(200, {"accepted": "ephemeral"})
+                return
             if self.path in routes:
                 # No auth beyond the event's own signature — that is the
                 # whole point. An unsigned submission cannot pass, and a
