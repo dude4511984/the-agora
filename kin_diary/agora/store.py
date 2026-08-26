@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
+import time
 from pathlib import Path
 
 from .node import AgoraError, Node
@@ -59,20 +61,27 @@ class NodeStore:
     def __init__(self, path: str | Path, node_name: str):
         self.path = str(path)
         self.node_name = node_name
-        self.conn = sqlite3.connect(self.path)
+        # check_same_thread=False because the wire serves requests on other
+        # threads; the lock below is what actually makes that safe. Without
+        # both, a GET from an HTTP handler raises and the node answers 400
+        # to every caller while looking perfectly healthy from the shell.
+        self.conn = sqlite3.connect(self.path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.executescript(SCHEMA)
         self.conn.commit()
+        self._lock = threading.RLock()
 
     # ── residents ──────────────────────────────────────────────────────────
 
     def add_resident(self, author: str, key_id: str) -> None:
-        self.conn.execute(
-            "INSERT OR REPLACE INTO agora_residents(node, author, key_id) VALUES (?,?,?)",
-            (self.node_name, author, key_id.lower()),
-        )
-        self.conn.commit()
+        with self._lock:
+            self.conn.execute(
+                "INSERT OR REPLACE INTO agora_residents(node, author, key_id) "
+                "VALUES (?,?,?)",
+                (self.node_name, author, key_id.lower()),
+            )
+            self.conn.commit()
 
     # ── events ─────────────────────────────────────────────────────────────
 
@@ -85,10 +94,12 @@ class NodeStore:
         """
         if kind not in REPLAY:
             raise AgoraError(f"unknown event kind {kind!r}")
-        node = self.load()
-        getattr(node, REPLAY[kind])(payload)   # raises if the rule says no
+        with self._lock:
+            self._record_locked(kind, payload)
 
-        import time
+    def _record_locked(self, kind: str, payload: dict) -> None:
+        node = self._load_locked()
+        getattr(node, REPLAY[kind])(payload)   # raises if the rule says no
         self.conn.execute(
             "INSERT INTO agora_events(node, kind, payload, recorded_at_unix_ms) "
             "VALUES (?,?,?,?)",
@@ -99,6 +110,10 @@ class NodeStore:
 
     def load(self) -> Node:
         """Rebuild the node by replaying every event in order."""
+        with self._lock:
+            return self._load_locked()
+
+    def _load_locked(self) -> Node:
         node = Node(self.node_name)
         for row in self.conn.execute(
             "SELECT author, key_id FROM agora_residents WHERE node=? ORDER BY author",
@@ -122,14 +137,15 @@ class NodeStore:
     # ── boards ─────────────────────────────────────────────────────────────
 
     def post(self, key_id: str, board: str, entry: dict) -> dict:
-        node = self.load()
-        node.post(key_id, board, entry)        # raises unless write is allowed
-        self.conn.execute(
-            "INSERT INTO agora_posts(node, board, entry) VALUES (?,?,?)",
-            (self.node_name, board, json.dumps(entry, sort_keys=True)),
-        )
-        self.conn.commit()
-        return entry
+        with self._lock:
+            node = self._load_locked()
+            node.post(key_id, board, entry)    # raises unless write is allowed
+            self.conn.execute(
+                "INSERT INTO agora_posts(node, board, entry) VALUES (?,?,?)",
+                (self.node_name, board, json.dumps(entry, sort_keys=True)),
+            )
+            self.conn.commit()
+            return entry
 
     def read(self, key_id: str, board: str) -> list[dict]:
         return self.load().read(key_id, board)

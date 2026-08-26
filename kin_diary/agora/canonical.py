@@ -13,6 +13,7 @@ MAGIC_KEY_INTRO = "agora-key-intro-v1"
 MAGIC_SPEAKER_ELECTION = "agora-speaker-election-v1"
 MAGIC_BOARD_GRANT = "agora-board-grant-v1"
 MAGIC_BOARD_EVICT = "agora-board-evict-v1"
+MAGIC_REQUEST = "agora-request-v1"
 
 # Ring ladder. Each is a strict superset of the one inside it.
 RING_TEASER = 0   # default, no grant: first twelve words and an ellipsis
@@ -160,6 +161,31 @@ def board_evict_canonical(
         ("reason", r),
         ("speaker_key_id", _hex64(speaker_key_id)),
         ("evicted_at_unix_ms", _unix_ms(evicted_at_unix_ms)),
+    ])
+
+
+def request_canonical(
+    key_id: str,
+    host_node: str,
+    path: str,
+    issued_at_unix_ms: int,
+) -> bytes:
+    """Proof that a reader is who they claim, over the wire.
+
+    Without this a caller could simply assert someone else's key_id in a
+    header and be served their ring. Same single-signed-statement shape as
+    key introduction — no challenge round trip, so it survives being
+    relayed through anything.
+
+    `host_node` is in the signed bytes so a request captured at one node
+    cannot be replayed at another; `issued_at_unix_ms` bounds replay in
+    time (the server enforces the window).
+    """
+    return _lines(MAGIC_REQUEST, [
+        ("key_id", _hex64(key_id)),
+        ("host_node", _line_value(host_node)),
+        ("path", _line_value(path)),
+        ("issued_at_unix_ms", _unix_ms(issued_at_unix_ms)),
     ])
 
 
