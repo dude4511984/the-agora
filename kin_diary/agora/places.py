@@ -22,6 +22,8 @@ from ..canonical import content_sha256
 from ..keys import KeyRecord, load_public
 from .canonical import (
     RING_TEASER,
+    atlas_view_canonical,
+    inventory_sha256,
     listing_canonical,
     place_canonical,
     presence_canonical,
@@ -128,11 +130,23 @@ class Atlas:
     a fully working node.
     """
 
-    def __init__(self, node: Node):
-        self.node = node
+    def __init__(self, node: Node, store=None):
+        # `store` matters more than it looks. Holding a Node captured at
+        # construction meant the map answered from boot-time permissions
+        # forever: a grant made later never opened a door, and — far worse —
+        # an eviction made later never closed one. Caught live, because the
+        # fixtures all built the node and the atlas in the same breath and
+        # so could never drift.
+        self._store = store
+        self._node = node
         self.places: dict[str, dict] = {}
         self.presence: dict[str, dict] = {}     # key_id -> presence
         self.listings: dict[str, dict] = {}
+
+    @property
+    def node(self) -> Node:
+        """Always the node as it is now, never as it was at boot."""
+        return self._store.load() if self._store is not None else self._node
 
     def add_place(self, place: dict) -> None:
         if place.get("node") != self.node.name:
@@ -222,3 +236,68 @@ class Atlas:
             "presence": sorted(here, key=lambda p: p["key_id"]),
             "listings": sorted(wares, key=lambda li: li["listing_id"]),
         }
+
+    # ── the snapshot on the wire ───────────────────────────────────────────
+
+    def signed_view(self, node_key: KeyRecord, key_id: str,
+                    now_ms: int | None = None) -> dict:
+        """A view a peer can actually check.
+
+        The node signs the INVENTORY — the sorted set of contained
+        signatures — never the contents. It is attesting "this is the set I
+        served you", not "I wrote these". Each object inside is still
+        verified against its own author, which is the same relay-versus-
+        authorship line already drawn for notices.
+
+        Filtering happens before assembly, so an object a key may not see is
+        not in the inventory it is handed, rather than present-and-hidden.
+        """
+        view = self.view(key_id, now_ms=now_ms)
+        sigs = _view_signatures(view)
+        inv = inventory_sha256(sigs)
+        view["viewer_key_id"] = (key_id or "").lower()
+        view["node_key_id"] = node_key.key_id
+        view["inventory_sha256"] = inv
+        view["signature"] = node_key.sign(atlas_view_canonical(
+            self.node.name, node_key.key_id, view["viewer_key_id"],
+            int(view["as_of_unix_ms"]), inv))
+        return view
+
+
+def _view_signatures(view: dict) -> list[str]:
+    return ([p["signature"] for p in view.get("places") or []]
+            + [p["signature"] for p in view.get("presence") or []]
+            + [li["signature"] for li in view.get("listings") or []])
+
+
+def verify_view(view: dict, expected_node_key_id: str | None = None,
+                expected_viewer_key_id: str | None = None) -> None:
+    """Check a served snapshot without trusting the server's word for it.
+
+    Three separate things, and conflating any two of them would let a host
+    invent occupancy:
+      1. every contained object verifies against ITS OWN author;
+      2. the inventory really is the set of those objects;
+      3. the serving node signed that inventory, for this viewer.
+    """
+    for p in view.get("places") or []:
+        verify_place(p)
+    for p in view.get("presence") or []:
+        verify_presence(p)
+    for li in view.get("listings") or []:
+        verify_listing(li)
+
+    inv = inventory_sha256(_view_signatures(view))
+    if inv != (view.get("inventory_sha256") or ""):
+        raise AgoraError("inventory hash does not match the objects served")
+
+    if expected_node_key_id and view["node_key_id"].lower() != expected_node_key_id.lower():
+        raise AgoraError("view served by a different node key than pinned")
+    if expected_viewer_key_id and view["viewer_key_id"].lower() != expected_viewer_key_id.lower():
+        raise AgoraError("this view was assembled for a different viewer")
+
+    load_public(view["node_key_id"]).verify(
+        bytes.fromhex(view["signature"]),
+        atlas_view_canonical(view["node"], view["node_key_id"],
+                             view["viewer_key_id"], int(view["as_of_unix_ms"]),
+                             view["inventory_sha256"]))

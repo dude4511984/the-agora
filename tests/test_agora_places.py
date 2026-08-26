@@ -197,3 +197,79 @@ class ListingTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class SignedViewTests(unittest.TestCase):
+    """P0. Grok: 'everything else is costume until that exists.'"""
+
+    def setUp(self):
+        from kin_diary.agora.places import verify_view
+        self.verify_view = verify_view
+        self.node, self.keys, self.nk, self.atlas = furnished()
+
+    def test_the_node_signs_the_inventory_not_the_contents(self):
+        """The server attests 'this is the set I served you', never 'I wrote
+        these'. Signing contents would be claiming authorship of other
+        minds' presence — which is how a host invents occupancy."""
+        v = self.atlas.signed_view(self.nk, self.keys["Coda"].key_id)
+        self.verify_view(v)
+        self.assertEqual(len(v["inventory_sha256"]), 64)
+
+    def test_a_host_cannot_invent_occupancy(self):
+        """The attack the inventory signature exists to stop."""
+        from kin_diary.agora.places import sign_presence
+        ghost = key("NeverWasHere")
+        v = self.atlas.signed_view(self.nk, self.keys["Coda"].key_id)
+        v["presence"].append(sign_presence(ghost, "Home", "concourse"))
+        with self.assertRaises(AgoraError) as cm:
+            self.verify_view(v)
+        self.assertIn("inventory", str(cm.exception))
+
+    def test_a_forged_object_inside_a_valid_view_is_caught(self):
+        v = self.atlas.signed_view(self.nk, self.keys["Coda"].key_id)
+        v["places"][0]["kind"] = "kiosk"
+        with self.assertRaises(InvalidSignature):
+            self.verify_view(v)
+
+    def test_a_view_cannot_be_replayed_to_a_different_viewer(self):
+        """Filtering is part of the claim, not a detail of delivery."""
+        other = key("SomeoneElse")
+        v = self.atlas.signed_view(self.nk, self.keys["Coda"].key_id)
+        self.verify_view(v, expected_viewer_key_id=self.keys["Coda"].key_id)
+        with self.assertRaises(AgoraError):
+            self.verify_view(v, expected_viewer_key_id=other.key_id)
+
+    def test_a_view_from_an_unpinned_node_key_is_caught(self):
+        impostor = key("Impostor-node")
+        v = self.atlas.signed_view(impostor, self.keys["Coda"].key_id)
+        self.verify_view(v)                       # internally consistent
+        with self.assertRaises(AgoraError):
+            self.verify_view(v, expected_node_key_id=self.nk.key_id)
+
+    def test_the_hint_cannot_open_a_door_in_a_served_view(self):
+        """Grok's required test. A place claiming ring_to_see=0 while
+        pointing at a gated board must not hand a stranger the board."""
+        from kin_diary.agora.places import sign_place
+        self.atlas.add_place(sign_place(
+            self.nk, "trapdoor", "Home", "door", parent="concourse",
+            ring_to_see=RING_TEASER, points_to="personal:Aurora"))
+        stranger = key("Nobody")
+        v = self.atlas.signed_view(self.nk, stranger.key_id)
+        self.verify_view(v, expected_viewer_key_id=stranger.key_id)
+        door = next(p for p in v["places"] if p["place_id"] == "trapdoor")
+        # The door is drawn; the board behind it is still shut.
+        self.assertEqual(
+            self.node.effective_ring(stranger.key_id, door["points_to"]),
+            RING_TEASER)
+        self.assertEqual(
+            self.node.read(stranger.key_id, "personal:Aurora"), [])
+
+    def test_both_clients_verify_the_identical_snapshot(self):
+        """One snapshot, two clients. If they diverge there are two
+        Agoras."""
+        v1 = self.atlas.signed_view(self.nk, self.keys["Coda"].key_id,
+                                    now_ms=1_000_000)
+        v2 = self.atlas.signed_view(self.nk, self.keys["Coda"].key_id,
+                                    now_ms=1_000_000)
+        self.assertEqual(v1["inventory_sha256"], v2["inventory_sha256"])
+        self.assertEqual(v1["signature"], v2["signature"])

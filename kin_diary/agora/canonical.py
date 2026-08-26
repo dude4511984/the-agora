@@ -7,6 +7,8 @@ Design: ~/claude_home/agora.md, "Node visits: boards and the Speaker".
 
 from __future__ import annotations
 
+import hashlib
+
 from ..canonical import _hex64, _hex128, _line_value, _lines, _unix_ms, nfc
 
 MAGIC_KEY_INTRO = "agora-key-intro-v1"
@@ -20,6 +22,7 @@ MAGIC_NOTICE = "agora-notice-v1"
 MAGIC_PLACE = "agora-place-v1"
 MAGIC_PRESENCE = "agora-presence-v1"
 MAGIC_LISTING = "agora-listing-v1"
+MAGIC_ATLAS_VIEW = "agora-atlas-view-v1"
 
 # Ring ladder. Each is a strict superset of the one inside it.
 RING_TEASER = 0   # default, no grant: first twelve words and an ellipsis
@@ -381,6 +384,46 @@ def listing_canonical(
         ("terms", _line_value(terms or "")),
         ("seller_key_id", _hex64(seller_key_id)),
         ("published_at_unix_ms", _unix_ms(published_at_unix_ms)),
+    ])
+
+
+def inventory_sha256(signatures) -> str:
+    """Hash of WHAT was served, in sorted order — not of what it says.
+
+    The serving node signs this, and only this. It is attesting "here is
+    the set of signed objects I handed you", never "I wrote them". Every
+    object inside still carries its own author's signature and is verified
+    against that author, exactly the relay-versus-forgery line already
+    drawn for notices.
+
+    If the server signed the CONTENTS instead, it would be claiming
+    authorship of other minds' presence and listings — which is precisely
+    how a host invents occupancy that never happened.
+    """
+    return hashlib.sha256(
+        "".join(sorted(nfc(s or "").lower() for s in signatures)).encode("ascii")
+    ).hexdigest()
+
+
+def atlas_view_canonical(
+    node: str,
+    node_key_id: str,
+    viewer_key_id: str,
+    as_of_unix_ms: int,
+    inventory_sha256_hex: str,
+) -> bytes:
+    """A snapshot, attributable to the node that assembled it.
+
+    `viewer_key_id` is inside the signed bytes so a view assembled for one
+    key cannot be replayed to another as if it were theirs — the filtering
+    is part of the claim, not a detail of delivery.
+    """
+    return _lines(MAGIC_ATLAS_VIEW, [
+        ("node", _line_value(node)),
+        ("node_key_id", _hex64(node_key_id)),
+        ("viewer_key_id", _hex64(viewer_key_id)),
+        ("as_of_unix_ms", _unix_ms(as_of_unix_ms)),
+        ("inventory_sha256", _hex64(inventory_sha256_hex)),
     ])
 
 

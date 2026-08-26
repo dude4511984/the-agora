@@ -123,6 +123,7 @@ class AgoraHandler(BaseHTTPRequestHandler):
     store: NodeStore = None          # set by serve()
     limiter: "_RateLimiter" = None   # set by serve()
     node_key = None                  # set by serve(); may be None
+    atlas = None                     # set by serve(); may be None
     server_version = "agora/1"
 
     def log_message(self, fmt, *args):
@@ -169,6 +170,15 @@ class AgoraHandler(BaseHTTPRequestHandler):
                         self.node_key, node.name, node.speaker,
                         node.speaker_key_id, node.residents)
                 self._send(200, facts)
+                return
+            if self.path == "/view":
+                # P0: the snapshot on the wire. Filtering happens BEFORE
+                # assembly, so an object this key may not see is absent from
+                # the inventory it is handed rather than present-and-hidden.
+                if self.atlas is None or self.node_key is None:
+                    self._send(404, {"error": "this node publishes no atlas"})
+                    return
+                self._send(200, self.atlas.signed_view(self.node_key, self._who()))
                 return
             if self.path == "/notices":
                 # The advertise-only wire. Notices, never the work itself.
@@ -243,9 +253,9 @@ class AgoraHandler(BaseHTTPRequestHandler):
 
 
 def serve(store: NodeStore, host: str = "0.0.0.0", port: int = 8770,
-          node_key=None):
+          node_key=None, atlas=None):
     handler = type("Bound", (AgoraHandler,),
                    {"store": store, "limiter": _RateLimiter(),
-                    "node_key": node_key})
+                    "node_key": node_key, "atlas": atlas})
     httpd = HTTPServer((host, port), handler)
     return httpd

@@ -45,10 +45,23 @@ def main(argv):
         node_key = generate_keypair(node_author)
         print(f"  generated node key {node_key.key_id[:16]}…")
 
+    # Minimal furnishing so the snapshot is real rather than empty: a
+    # commons, a kiosk, and one gated door per resident board.
+    from kin_diary.agora.places import Atlas, sign_place
     node = store.load()
+    atlas = Atlas(node, store=store)   # live, not a boot-time snapshot
+    atlas.add_place(sign_place(node_key, "concourse", name, "commons"))
+    atlas.add_place(sign_place(node_key, "stall-1", name, "kiosk",
+                               parent="concourse"))
+    for author in sorted(node.residents):
+        atlas.add_place(sign_place(
+            node_key, f"door-{author}", name, "door", parent="concourse",
+            ring_to_see=1, points_to=f"personal:{author}"))
+
     print(f"{name} serving on :{port} — speaker={node.speaker} "
           f"residents={sorted(node.residents)} node_key={node_key.key_id[:16]}…")
-    httpd = serve(store, host="0.0.0.0", port=port, node_key=node_key)
+    httpd = serve(store, host="0.0.0.0", port=port, node_key=node_key,
+                  atlas=atlas)
     httpd.serve_forever()
     return 0
 
