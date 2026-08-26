@@ -229,7 +229,7 @@ class Atlas:
 
     # ── what a given key may see ───────────────────────────────────────────
 
-    def _visible_place(self, key_id: str, place: dict) -> bool:
+    def _visible_place(self, key_id: str, place: dict, now_ms: int) -> bool:
         """Both the hint AND the real check.
 
         The hint alone would let a mis-signed or stale place expose a board;
@@ -242,7 +242,7 @@ class Atlas:
         if int(place.get("ring_to_see", RING_TEASER)) > RING_TEASER:
             if not target:
                 return False
-            if self.node.effective_ring(key_id, target) < int(place["ring_to_see"]):
+            if self.node.live_ring(key_id, target, now_ms) < int(place["ring_to_see"]):
                 return False
         if target and target in self.node.boards:
             # A place pointing at a board never shows more than the board
@@ -258,7 +258,10 @@ class Atlas:
         now = _now_ms(now_ms)
         kid = (key_id or "").lower()
 
-        places = [p for p in self.places.values() if self._visible_place(kid, p)]
+        places = [
+            p for p in self.places.values()
+            if self._visible_place(kid, p, now)
+        ]
         seen = {p["place_id"] for p in places}
 
         here = [

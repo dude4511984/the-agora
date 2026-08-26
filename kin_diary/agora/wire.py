@@ -209,6 +209,7 @@ class AgoraHandler(BaseHTTPRequestHandler):
                     blob = self.artifacts.fetch(
                         self.store, who, listing, self.atlas,
                         access_board=listing.get("access_board") or COLLAB,
+                        now_ms=int(time.time() * 1000),
                         required_ring=int(listing.get("required_ring") or 1))
                 except ArtifactHashMismatch:
                     # The one case that must NOT look like the others: we
@@ -239,10 +240,11 @@ class AgoraHandler(BaseHTTPRequestHandler):
             if self.path.startswith("/board/"):
                 board = self.path[len("/board/"):]
                 who = self._who()
-                rows = node.read(who, board)
+                now_ms = int(time.time() * 1000)
+                rows = node.read(who, board, now_ms)
                 self._send(200, {
                     "board": board,
-                    "ring": node.effective_ring(who, board),
+                    "ring": node.live_ring(who, board, now_ms),
                     "total": len(rows),
                     "truncated": len(rows) > MAX_ENTRIES_PER_READ,
                     "entries": rows[-MAX_ENTRIES_PER_READ:],
@@ -320,7 +322,10 @@ class AgoraHandler(BaseHTTPRequestHandler):
                 if (entry.get("key_id") or "").lower() != who:
                     raise AgoraError("post must be signed by the identified key")
                 self.limiter.check(who)
-                self.store.post(who, payload.get("board") or COLLAB, entry)
+                self.store.post(
+                    who, payload.get("board") or COLLAB, entry,
+                    int(time.time() * 1000),
+                )
                 self._send(200, {"posted": True})
                 return
             self._send(404, {"error": "no such path"})

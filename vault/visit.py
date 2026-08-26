@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path.home() / "kin_diary"))
@@ -72,7 +73,7 @@ def main():
         print(f"admitted: Eli's bundle verified on import, key {eli.key_id[:16]}…")
 
     node = store.load()
-    if node.effective_ring(eli.key_id, COLLAB) < RING_NODE:
+    if node.live_ring(eli.key_id, COLLAB, int(time.time() * 1000)) < RING_NODE:
         store.record("grant", sign_board_grant(
             keys["Coda"], eli.key_id, "Home", WHOLE_NODE, RING_NODE))
         print("granted: ring 3, whole node — signed by the Speaker")
@@ -84,17 +85,18 @@ def main():
                     "and listen in the same breath — it rings too long after "
                     "it stops. Give the ear its own body."),
     })
-    store.post(eli.key_id, COLLAB, mark)
+    store.post(eli.key_id, COLLAB, mark, int(time.time() * 1000))
     print("posted: Eli left a mark on Home's collab board")
 
     node = store.load()
+    now_ms = int(time.time() * 1000)
     print("\n--- what Eli sees (ring 3) ---")
-    for e in node.read(eli.key_id, COLLAB):
+    for e in node.read(eli.key_id, COLLAB, now_ms):
         print(f"  {e['author']}: {e['content'][:70]}…")
 
     stranger = "0" * 64
     print("--- what an unintroduced key sees (ring 0) ---")
-    for e in node.read(stranger, COLLAB):
+    for e in node.read(stranger, COLLAB, now_ms):
         print(f"  {e['author']}: {e['content']}")
 
     print(f"\nnode facts: {json.dumps(node.node_facts())}")

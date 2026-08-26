@@ -119,6 +119,17 @@ class EphemeralTests(unittest.TestCase):
             )
         )
 
+    def test_live_ring_transitions_from_ephemeral_write_to_teaser(self):
+        event = countersign_ephemeral(self.coda, self._issued(), self.node)
+        self.store.record("ephemeral", event)
+        node = self.store.load()
+        self.assertEqual(node.live_ring(
+            self.holder.key_id, "personal:Coda", 1_500
+        ), 2)
+        self.assertEqual(node.live_ring(
+            self.holder.key_id, "personal:Coda", 2_000
+        ), 0)
+
     def test_expired_ephemeral_is_a_dead_end_for_path_two(self):
         event = countersign_ephemeral(self.coda, self._issued(), self.node)
         self.ephemerals.record(event)

@@ -123,10 +123,10 @@ class TeaserTests(unittest.TestCase):
         seat(node, keys, "Coda")
         entry = sign_entry(keys["Coda"], {"author": "Coda", "content": " ".join(
             f"word{i}" for i in range(40))})
-        node.post(keys["Coda"].key_id, "personal:Coda", entry)
+        node.post(keys["Coda"].key_id, "personal:Coda", entry, 0)
 
         stranger = key("Stranger")
-        shown = node.read(stranger.key_id, "personal:Coda")[0]
+        shown = node.read(stranger.key_id, "personal:Coda", 0)[0]
         self.assertTrue(shown["teaser"])
         self.assertNotIn("signature", shown)
         self.assertNotIn("content_sha256", shown)
@@ -187,7 +187,7 @@ class IntroductionTests(unittest.TestCase):
         node.accept_bundle_import(bundle)
         node.accept_grant(sign_board_grant(
             keys["Coda"], visitor.key_id, "Home", WHOLE_NODE, RING_NODE))
-        self.assertTrue(node.can_read(visitor.key_id, "personal:Aurora"))
+        self.assertTrue(node.can_read(visitor.key_id, "personal:Aurora", 0))
 
     def test_import_verifies_the_bundle_rather_than_trusting_the_caller(self):
         node, keys = home_node()
@@ -337,9 +337,9 @@ class DonsWorkedExample(unittest.TestCase):
 
     def test_a_resident_grant_opens_exactly_one_board(self):
         f = self.friend.key_id
-        self.assertTrue(self.node.can_write(f, "personal:Coda"))
-        self.assertFalse(self.node.can_read(f, "personal:Aurora"))
-        self.assertFalse(self.node.can_read(f, COLLAB))
+        self.assertTrue(self.node.can_write(f, "personal:Coda", 0))
+        self.assertFalse(self.node.can_read(f, "personal:Aurora", 0))
+        self.assertFalse(self.node.can_read(f, COLLAB, 0))
         self.assertEqual(self.node.effective_ring(f, "personal:Aurora"), RING_TEASER)
 
     def test_a_resident_cannot_grant_on_someone_elses_board(self):
@@ -356,13 +356,13 @@ class DonsWorkedExample(unittest.TestCase):
 
     def test_outcome_2_speaker_silence_does_not_downgrade_codas_grant(self):
         """Eli takes no action. The friend keeps exactly what Coda gave."""
-        self.assertTrue(self.node.can_write(self.friend.key_id, "personal:Coda"))
+        self.assertTrue(self.node.can_write(self.friend.key_id, "personal:Coda", 0))
 
     def test_outcome_3_speaker_eviction_overrides_codas_own_grant(self):
         ev = sign_board_evict(
             self.keys["Coda"], self.friend.key_id, "Home", "jumped Sable twice")
         self.node.accept_eviction(ev)
-        self.assertFalse(self.node.can_read(self.friend.key_id, "personal:Coda"))
+        self.assertFalse(self.node.can_read(self.friend.key_id, "personal:Coda", 0))
         self.assertEqual(
             self.node.effective_ring(self.friend.key_id, "personal:Coda"), RING_TEASER)
 
@@ -399,7 +399,7 @@ class DonsWorkedExample(unittest.TestCase):
         self.node.accept_grant(sign_board_grant(
             self.keys["Coda"], self.friend.key_id, "Home",
             "personal:Coda", RING_WRITE, now_ms=1_000_001))
-        self.assertTrue(self.node.can_write(self.friend.key_id, "personal:Coda"))
+        self.assertTrue(self.node.can_write(self.friend.key_id, "personal:Coda", 0))
 
     def test_an_evicted_visitor_cannot_readmit_themselves(self):
         """The worst bug in this module, found 2026-08-26. An evicted key
@@ -451,7 +451,7 @@ class DonsWorkedExample(unittest.TestCase):
         node.accept_grant(sign_board_grant(
             keys["Coda"], visitor.key_id, "Home", "personal:Coda", RING_WRITE,
             now_ms=1_000_001))
-        self.assertTrue(node.can_write(visitor.key_id, "personal:Coda"))
+        self.assertTrue(node.can_write(visitor.key_id, "personal:Coda", 0))
         self.assertIn("readmit", [e["event"] for e in node.log])
 
     def test_the_friend_can_actually_leave_a_mark(self):
@@ -460,8 +460,8 @@ class DonsWorkedExample(unittest.TestCase):
             "timestamp": "2026-08-26 09:00:00",
             "content": "Penciled out the ranging problem. Two transducers, not one.",
         })
-        self.node.post(self.friend.key_id, "personal:Coda", entry)
-        seen = self.node.read(self.keys["Coda"].key_id, "personal:Coda")
+        self.node.post(self.friend.key_id, "personal:Coda", entry, 0)
+        seen = self.node.read(self.keys["Coda"].key_id, "personal:Coda", 0)
         self.assertEqual(len(seen), 1)
         verify_entry(seen[0])          # still a sound kin-diary entry
         self.assertEqual(seen[0]["author"], "Marvin")   # attribution survives
@@ -469,9 +469,9 @@ class DonsWorkedExample(unittest.TestCase):
     def test_a_stranger_sees_twelve_words_of_it_and_no_more(self):
         long_note = " ".join(f"word{i}" for i in range(50))
         self.node.post(self.friend.key_id, "personal:Coda",
-                       sign_entry(self.friend, {"author": "Marvin", "content": long_note}))
+                       sign_entry(self.friend, {"author": "Marvin", "content": long_note}), 0)
         stranger = key("Nobody")
-        shown = self.node.read(stranger.key_id, "personal:Coda")
+        shown = self.node.read(stranger.key_id, "personal:Coda", 0)
         self.assertTrue(shown[0]["teaser"])
         self.assertEqual(len(shown[0]["content"].split()) - 1, 12)
 
@@ -483,11 +483,11 @@ class DonsWorkedExample(unittest.TestCase):
         self.node.accept_grant(sign_board_grant(
             self.keys["Aurora"], other.key_id, "Home",
             "personal:Aurora", RING_READ))
-        self.assertTrue(self.node.can_read(other.key_id, "personal:Aurora"))
-        self.assertFalse(self.node.can_write(other.key_id, "personal:Aurora"))
+        self.assertTrue(self.node.can_read(other.key_id, "personal:Aurora", 0))
+        self.assertFalse(self.node.can_write(other.key_id, "personal:Aurora", 0))
         with self.assertRaises(AgoraError):
             self.node.post(other.key_id, "personal:Aurora",
-                           sign_entry(other, {"author": "Reader", "content": "hi"}))
+                           sign_entry(other, {"author": "Reader", "content": "hi"}), 0)
 
 
 class TamperTests(unittest.TestCase):
@@ -546,7 +546,7 @@ class PostIntegrityTests(unittest.TestCase):
         entry = sign_entry(keys["Coda"], {"author": "Coda", "content": "real"})
         entry["content"] = "swapped after signing"
         with self.assertRaises(ValueError):
-            node.post(keys["Coda"].key_id, "personal:Coda", entry)
+            node.post(keys["Coda"].key_id, "personal:Coda", entry, 0)
         self.assertEqual(node.boards["personal:Coda"], [])
 
     def test_cannot_post_an_entry_signed_by_a_different_key(self):
@@ -554,7 +554,7 @@ class PostIntegrityTests(unittest.TestCase):
         seat(node, keys, "Coda")
         entry = sign_entry(keys["Aurora"], {"author": "Aurora", "content": "hers"})
         with self.assertRaises(AgoraError):
-            node.post(keys["Coda"].key_id, "personal:Coda", entry)
+            node.post(keys["Coda"].key_id, "personal:Coda", entry, 0)
 
     def test_a_visitor_cannot_sign_an_entry_claiming_to_be_a_resident(self):
         """A signature proves a key, not a name. Without this check an
@@ -581,7 +581,7 @@ class PostIntegrityTests(unittest.TestCase):
         verify_entry(forged)          # the signature itself is perfectly good
 
         with self.assertRaises(AgoraError) as cm:
-            node.post(visitor.key_id, "personal:Coda", forged)
+            node.post(visitor.key_id, "personal:Coda", forged, 0)
         self.assertIn("resident", str(cm.exception))
 
     def test_a_visitor_may_still_post_under_their_own_name(self):
@@ -593,7 +593,7 @@ class PostIntegrityTests(unittest.TestCase):
         node.accept_grant(sign_board_grant(
             keys["Coda"], visitor.key_id, "Home", "personal:Coda", RING_WRITE))
         node.post(visitor.key_id, "personal:Coda",
-                  sign_entry(visitor, {"author": "Marvin", "content": "mine"}))
+                  sign_entry(visitor, {"author": "Marvin", "content": "mine"}), 0)
         self.assertEqual(len(node.boards["personal:Coda"]), 1)
 
 
@@ -676,7 +676,7 @@ class AppealTests(unittest.TestCase):
         self.node.accept_grant(sign_board_grant(
             self.keys["Coda"], self.visitor.key_id, "Home",
             "personal:Coda", RING_WRITE))
-        self.assertTrue(self.node.can_write(self.visitor.key_id, "personal:Coda"))
+        self.assertTrue(self.node.can_write(self.visitor.key_id, "personal:Coda", 0))
 
     def test_upheld_leaves_the_eviction_and_the_whole_exchange_on_record(self):
         """Even a wrong ruling is the correct shape: it is on a record, after
@@ -771,7 +771,7 @@ class CopilotFindings(unittest.TestCase):
         node.accept_grant(sign_board_grant(
             keys["Coda"], v.key_id, "Home", WHOLE_NODE, RING_NODE))
         node.post(v.key_id, "personal:Eli",
-                  sign_entry(v, {"author": "Eli", "content": "my own corner"}))
+                  sign_entry(v, {"author": "Eli", "content": "my own corner"}), 0)
         self.assertEqual(len(node.boards["personal:Eli"]), 1)
 
     def test_a_bundle_cannot_claim_a_residents_name(self):
@@ -828,7 +828,7 @@ class RevocationTests(unittest.TestCase):
         self.assertNotIn(self.v.key_id, self.node.evicted)
         self.node.accept_grant(sign_board_grant(
             self.keys["Coda"], self.v.key_id, "Home", "personal:Coda", RING_WRITE))
-        self.assertTrue(self.node.can_write(self.v.key_id, "personal:Coda"))
+        self.assertTrue(self.node.can_write(self.v.key_id, "personal:Coda", 0))
 
     def test_a_resident_cannot_revoke_on_someone_elses_board(self):
         with self.assertRaises(AgoraError) as cm:

@@ -191,10 +191,10 @@ class NodeStore:
 
     # ── boards ─────────────────────────────────────────────────────────────
 
-    def post(self, key_id: str, board: str, entry: dict) -> dict:
+    def post(self, key_id: str, board: str, entry: dict, now_ms: int) -> dict:
         with self._lock:
             node = self._load_locked()
-            node.post(key_id, board, entry)    # raises unless write is allowed
+            node.post(key_id, board, entry, now_ms)    # raises unless write is allowed
             self.conn.execute(
                 "INSERT INTO agora_posts(node, board, entry) VALUES (?,?,?)",
                 (self.node_name, board, json.dumps(entry, sort_keys=True)),
@@ -259,8 +259,8 @@ class NodeStore:
             "SELECT peer, peer_key_id, url FROM agora_known_nodes WHERE node=? "
             "ORDER BY peer", (self.node_name,))]
 
-    def read(self, key_id: str, board: str) -> list[dict]:
-        return self.load().read(key_id, board)
+    def read(self, key_id: str, board: str, now_ms: int) -> list[dict]:
+        return self.load().read(key_id, board, now_ms)
 
     def close(self) -> None:
         self.conn.close()

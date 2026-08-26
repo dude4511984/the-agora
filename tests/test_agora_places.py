@@ -262,7 +262,7 @@ class SignedViewTests(unittest.TestCase):
             self.node.effective_ring(stranger.key_id, door["points_to"]),
             RING_TEASER)
         self.assertEqual(
-            self.node.read(stranger.key_id, "personal:Aurora"), [])
+            self.node.read(stranger.key_id, "personal:Aurora", 0), [])
 
     def test_both_clients_verify_the_identical_snapshot(self):
         """One snapshot, two clients. If they diverge there are two
@@ -483,7 +483,7 @@ class AViewIsAReceiptNotATicket(unittest.TestCase):
         self.assertIn("codas-door", {p["place_id"] for p in old["places"]})
         self.assertEqual(
             node.effective_ring(v.key_id, "personal:Coda"), RING_TEASER)
-        self.assertEqual(node.read(v.key_id, "personal:Coda"), [])
+        self.assertEqual(node.read(v.key_id, "personal:Coda", 0), [])
         with self.assertRaises(AgoraError):
             atlas.arrive(sign_presence(v, "Home", "concourse"))
 

@@ -511,7 +511,10 @@ class Node:
     # ── access ─────────────────────────────────────────────────────────────
 
     def effective_ring(self, key_id: str, board: str) -> int:
-        """What this key can actually do on this board, right now."""
+        """Return standing grant provenance, excluding ephemeral admission.
+
+        Use ``live_ring(key_id, board, now_ms)`` to authorize an action.
+        """
         kid = (key_id or "").lower()
         if kid in self.evicted:
             return RING_TEASER
@@ -529,21 +532,29 @@ class Node:
             return held[WHOLE_NODE]
         return held.get(board, RING_TEASER)
 
-    def can_read(self, key_id: str, board: str) -> bool:
-        return self.effective_ring(key_id, board) >= RING_READ
+    def live_ring(self, key_id: str, board: str, now_ms: int) -> int:
+        """Compose standing and current ephemeral permission at a caller time."""
+        from .ephemeral import current_admission
 
-    def can_write(self, key_id: str, board: str) -> bool:
-        return self.effective_ring(key_id, board) >= RING_WRITE
+        standing = self.effective_ring(key_id, board)
+        ephemeral = current_admission(self, key_id, board, now_ms)
+        return max(standing, ephemeral["max_ring"] if ephemeral else RING_TEASER)
+
+    def can_read(self, key_id: str, board: str, now_ms: int) -> bool:
+        return self.live_ring(key_id, board, now_ms) >= RING_READ
+
+    def can_write(self, key_id: str, board: str, now_ms: int) -> bool:
+        return self.live_ring(key_id, board, now_ms) >= RING_WRITE
 
     # ── boards ─────────────────────────────────────────────────────────────
 
-    def post(self, key_id: str, board: str, entry: dict) -> dict:
+    def post(self, key_id: str, board: str, entry: dict, now_ms: int) -> dict:
         """A board entry is a kin-diary entry — same canonical bytes, same
         signature. Only where it lands and who may read it is new.
         """
         if board not in self.boards:
             raise AgoraError(f"no such board: {board}")
-        if not self.can_write(key_id, board):
+        if not self.can_write(key_id, board, now_ms):
             raise AgoraError("no write access to this board")
 
         kid = (key_id or "").lower()
@@ -572,7 +583,7 @@ class Node:
         self.boards[board].append(entry)
         return entry
 
-    def read(self, key_id: str, board: str) -> list[dict]:
+    def read(self, key_id: str, board: str, now_ms: int) -> list[dict]:
         """Full text with read access; twelve words and an ellipsis without.
 
         Never raises for lack of access — ring 0 is a teaser, not a locked
@@ -581,7 +592,7 @@ class Node:
         """
         if board not in self.boards:
             raise AgoraError(f"no such board: {board}")
-        full = self.can_read(key_id, board)
+        full = self.can_read(key_id, board, now_ms)
         out = []
         for e in self.boards[board]:
             if full:

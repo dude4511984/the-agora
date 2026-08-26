@@ -88,7 +88,7 @@ class WireTests(unittest.TestCase):
             "personal:Coda", RING_WRITE))
         cls.store.post(cls.keys["Coda"].key_id, COLLAB, sign_entry(
             cls.keys["Coda"],
-            {"author": "Coda", "content": " ".join(f"w{i}" for i in range(40))}))
+            {"author": "Coda", "content": " ".join(f"w{i}" for i in range(40))}), 0)
 
         cls.httpd = serve(cls.store, host="127.0.0.1", port=0)
         cls.port = cls.httpd.server_address[1]
@@ -330,13 +330,13 @@ class CrossProcessCacheTests(unittest.TestCase):
             now_ms=1_000_000))
 
         other = NodeStore(path, "Home")
-        self.assertTrue(other.load().can_write(v.key_id, "personal:Coda"))
+        self.assertTrue(other.load().can_write(v.key_id, "personal:Coda", 0))
 
         store.record("evict", sign_board_evict(
             keys["Coda"], v.key_id, "Home", "malicious", now_ms=2_000_000))
 
         # `other` has a warm cache from before the eviction.
-        self.assertFalse(other.load().can_write(v.key_id, "personal:Coda"))
+        self.assertFalse(other.load().can_write(v.key_id, "personal:Coda", 0))
 
 
 class NodeIdentityTests(unittest.TestCase):

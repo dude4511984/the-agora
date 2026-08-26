@@ -132,6 +132,7 @@ class ArtifactStore:
         atlas: Atlas,
         *,
         access_board: str,
+        now_ms: int,
         required_ring: int = RING_READ,
     ) -> bytes:
         """Return a listed artifact after node policy and hash checks.
@@ -173,7 +174,7 @@ class ArtifactStore:
         if seller in node.evicted:
             allowed = False
         try:
-            ring = node.effective_ring(key_id, access_board)
+            ring = node.live_ring(key_id, access_board, now_ms)
             allowed = allowed and ring >= required_ring
         except (AgoraError, ValueError):
             allowed = False
@@ -198,12 +199,13 @@ def fetch_artifact(
     atlas: Atlas,
     *,
     access_board: str,
+    now_ms: int,
     required_ring: int = RING_READ,
 ) -> bytes:
     """Functional wrapper for callers that do not retain an ArtifactStore."""
     return store.fetch(
         node_store, key_id, listing, atlas,
-        access_board=access_board, required_ring=required_ring,
+        access_board=access_board, now_ms=now_ms, required_ring=required_ring,
     )
 
 
