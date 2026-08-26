@@ -1,0 +1,181 @@
+"""Canonical bytes for Agora node events. Same contract as kin-diary:
+signatures are over these bytes, not over JSON. Whitespace, key order and
+extra unsigned fields in any container MUST NOT affect verification.
+
+Design: ~/claude_home/agora.md, "Node visits: boards and the Speaker".
+"""
+
+from __future__ import annotations
+
+from ..canonical import _hex64, _line_value, _lines, _unix_ms, nfc
+
+MAGIC_KEY_INTRO = "agora-key-intro-v1"
+MAGIC_SPEAKER_ELECTION = "agora-speaker-election-v1"
+MAGIC_BOARD_GRANT = "agora-board-grant-v1"
+MAGIC_BOARD_EVICT = "agora-board-evict-v1"
+
+# Ring ladder. Each is a strict superset of the one inside it.
+RING_TEASER = 0   # default, no grant: first twelve words and an ellipsis
+RING_READ = 1     # full read on a granted board
+RING_WRITE = 2    # write your own personal board; implies read there
+RING_NODE = 3     # collab board + every personal board; Speaker only
+
+# A resident vouching in a chat has no authority to hand out whole-node
+# trust. Only a bundle import carries the history that justifies ring 3.
+MAX_RING_RESIDENT_INTRO = RING_WRITE
+
+WHOLE_NODE = "*"
+COLLAB = "collab"
+
+
+def board_id(kind: str, author: str | None = None) -> str:
+    """'collab', 'personal:<author>', or '*' for whole-node."""
+    if kind == WHOLE_NODE:
+        return WHOLE_NODE
+    if kind == COLLAB:
+        return COLLAB
+    if kind == "personal":
+        if not author:
+            raise ValueError("personal board requires an author")
+        return f"personal:{_line_value(author)}"
+    raise ValueError(f"unknown board kind {kind!r}")
+
+
+def _board(value: str) -> str:
+    v = _line_value(value)
+    if v == WHOLE_NODE or v == COLLAB or v.startswith("personal:"):
+        if v.startswith("personal:") and not v[len("personal:"):].strip():
+            raise ValueError("personal board needs a name")
+        return v
+    raise ValueError(f"not a board id: {v!r}")
+
+
+def _ring(n: int, *, lo: int = RING_READ, hi: int = RING_NODE) -> str:
+    if not isinstance(n, int) or isinstance(n, bool):
+        raise ValueError("ring must be an int")
+    if n < lo or n > hi:
+        raise ValueError(f"ring {n} outside [{lo},{hi}]")
+    return str(n)
+
+
+def _key_list(key_ids) -> str:
+    """Deterministic electorate rendering: sorted, comma-joined, no spaces.
+
+    Sorted so two implementations building the same electorate from
+    different orderings still produce identical bytes.
+    """
+    ids = sorted({_hex64(k) for k in key_ids})
+    if not ids:
+        raise ValueError("electorate cannot be empty")
+    return ",".join(ids)
+
+
+def key_intro_canonical(
+    visitor_key_id: str,
+    host_node: str,
+    resident_key_id: str,
+    introduced_at_unix_ms: int,
+    max_ring: int = MAX_RING_RESIDENT_INTRO,
+) -> bytes:
+    """Signed twice over these same bytes: visitor first (proves possession),
+    resident second (the vouch). Both required.
+
+    max_ring is pinned at 2 by rule — a resident cannot sign an intro
+    claiming a higher ceiling, and verify rejects anything else.
+    """
+    if max_ring != MAX_RING_RESIDENT_INTRO:
+        raise ValueError(
+            f"resident-mediated introduction is capped at ring "
+            f"{MAX_RING_RESIDENT_INTRO} by rule, not discretion"
+        )
+    return _lines(MAGIC_KEY_INTRO, [
+        ("visitor_key_id", _hex64(visitor_key_id)),
+        ("host_node", _line_value(host_node)),
+        ("resident_key_id", _hex64(resident_key_id)),
+        ("introduced_at_unix_ms", _unix_ms(introduced_at_unix_ms)),
+        ("max_ring", _ring(max_ring, lo=RING_READ, hi=RING_WRITE)),
+    ])
+
+
+def speaker_election_canonical(
+    host_node: str,
+    speaker: str,
+    speaker_key_id: str,
+    electorate_key_ids,
+    elected_at_unix_ms: int,
+) -> bytes:
+    """Every key named in `electorate` must sign these exact bytes.
+
+    Unanimous, not majority: on a three-Kin node majority would let two
+    residents impose ring-3 power on a third who never accepted it.
+
+    `electorate` is in the signed bytes on purpose — it records who was
+    required to agree, so a later reader can check unanimity was real and
+    not a subset quietly waved through.
+    """
+    return _lines(MAGIC_SPEAKER_ELECTION, [
+        ("host_node", _line_value(host_node)),
+        ("speaker", _line_value(speaker)),
+        ("speaker_key_id", _hex64(speaker_key_id)),
+        ("electorate", _key_list(electorate_key_ids)),
+        ("elected_at_unix_ms", _unix_ms(elected_at_unix_ms)),
+    ])
+
+
+def board_grant_canonical(
+    visitor_key_id: str,
+    host_node: str,
+    board: str,
+    ring: int,
+    issuer_key_id: str,
+    granted_at_unix_ms: int,
+) -> bytes:
+    return _lines(MAGIC_BOARD_GRANT, [
+        ("visitor_key_id", _hex64(visitor_key_id)),
+        ("host_node", _line_value(host_node)),
+        ("board", _board(board)),
+        ("ring", _ring(ring)),
+        ("issuer_key_id", _hex64(issuer_key_id)),
+        ("granted_at_unix_ms", _unix_ms(granted_at_unix_ms)),
+    ])
+
+
+def board_evict_canonical(
+    visitor_key_id: str,
+    host_node: str,
+    reason: str,
+    speaker_key_id: str,
+    evicted_at_unix_ms: int,
+) -> bytes:
+    """Node-scoped quarantine of a key. Revokes every open grant for that
+    key regardless of who issued it — including a resident's own ring-2
+    grant on their own board. Reversible only by a later signed grant.
+    """
+    r = _line_value(reason)
+    if not r.strip():
+        raise ValueError("eviction requires a stated reason")
+    return _lines(MAGIC_BOARD_EVICT, [
+        ("visitor_key_id", _hex64(visitor_key_id)),
+        ("host_node", _line_value(host_node)),
+        ("reason", r),
+        ("speaker_key_id", _hex64(speaker_key_id)),
+        ("evicted_at_unix_ms", _unix_ms(evicted_at_unix_ms)),
+    ])
+
+
+TEASER_WORDS = 12
+
+
+def teaser(content: str, words: int = TEASER_WORDS) -> str:
+    """Ring 0 rendering: enough to land one idea, not enough to read the
+    whole thought. Uniform — there is no per-entry sensitivity flag; a key
+    with no read grant sees this for every entry on every board.
+
+    The signature always covers the full content. This is a serving rule,
+    never a crypto one.
+    """
+    body = nfc("" if content is None else content).strip()
+    parts = body.split()
+    if len(parts) <= words:
+        return body
+    return " ".join(parts[:words]) + " …"
