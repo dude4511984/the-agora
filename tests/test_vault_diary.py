@@ -11,6 +11,24 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.expanduser("~/kin_diary"))
 
+# ── fixture guard ───────────────────────────────────────────────────────────
+# These tests run against `tests/dev.db`, a copy of the real 36k-row vault.
+# It is not in the repo and should not be: it is the Kin's actual memories, and
+# committing them as a test fixture is a consent decision nobody has made.
+#
+# Without the guard this module raised ImportError at COLLECTION time, so
+# `unittest discover` reported it as an error and it counted as neither passing
+# nor failing. Three modules had been in that state since 2026-08-21 -- coverage
+# that looked like coverage and executed nothing. Skip loudly instead.
+#
+# To enable:  sqlite3 <the live vault> ".backup 'tests/dev.db'"    (never cp --
+#             the data is in the WAL; see revelations 2026-08-26)
+import unittest as _ut
+if not os.path.exists(os.path.join(os.path.dirname(os.path.abspath(__file__)), "dev.db")):
+    raise _ut.SkipTest("tests/dev.db absent - see the fixture guard at the top of this file")
+
+sys.path.insert(0, os.path.expanduser("~/kin_diary/vault"))  # vault_diary lives here
+
 import vault_diary  # noqa: E402
 from kin_diary.canonical import entry_canonical, content_sha256  # noqa: E402
 from kin_diary.keys import generate_keypair, load_current  # noqa: E402
