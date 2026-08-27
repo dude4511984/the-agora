@@ -1,6 +1,7 @@
 """Persistence: the log is the truth, node state is the replay."""
 
 import os
+import json
 import sys
 import tempfile
 import unittest
@@ -22,6 +23,9 @@ from kin_diary.agora import (  # noqa: E402
     sign_board_grant,
     sign_speaker_election,
     start_key_intro,
+)
+from kin_diary.agora.events import (  # noqa: E402
+    sign_appeal, sign_finding, sign_ruling,
 )
 from kin_diary.agora.store import NodeStore  # noqa: E402
 from kin_diary.sign import sign_entry  # noqa: E402
@@ -51,6 +55,200 @@ def elect(store, keys, speaker="Coda"):
 
 
 class StoreTests(unittest.TestCase):
+    def test_hearing_survives_close_and_reopen(self):
+        store, keys, path = fresh_store()
+        elect(store, keys)
+        visitor = key("Marvin")
+        store.record("intro", countersign_key_intro(
+            keys["Coda"], start_key_intro(visitor, "Home", keys["Coda"].key_id)))
+        store.record("grant", sign_board_grant(
+            keys["Coda"], visitor.key_id, "Home", "personal:Coda", RING_WRITE))
+        eviction = sign_board_evict(
+            keys["Coda"], visitor.key_id, "Home", "jumped Sable twice")
+        store.record("evict", eviction)
+
+        appeal = sign_appeal(
+            visitor, "Home", eviction["signature"],
+            "I was quoting the manual, not threatening anyone.",
+        )
+        store.record("appeal", appeal)
+        first = sign_finding(
+            keys["Coda"], appeal["signature"], "Home",
+            "I still read it as hostile.",
+        )
+        second = sign_finding(
+            keys["Aurora"], appeal["signature"], "Home",
+            "He was quoting. I checked.",
+        )
+        store.record("finding", first)
+        store.record("finding", second)
+        store.close()
+
+        reopened = NodeStore(path, "Home")
+        node = reopened.load()
+        self.assertEqual(node.appeals, [appeal])
+        self.assertEqual(node.findings[appeal["signature"]], [first, second])
+        self.assertEqual(
+            node.appeal_record(appeal["signature"]),
+            {"appeal": appeal, "findings": [first, second], "ruling": None},
+        )
+
+    def test_duplicate_appeal_after_reopen_does_not_corrupt_findings(self):
+        store, keys, path = fresh_store()
+        elect(store, keys)
+        visitor = key("Marvin")
+        store.record("intro", countersign_key_intro(
+            keys["Coda"], start_key_intro(visitor, "Home", keys["Coda"].key_id)))
+        eviction = sign_board_evict(
+            keys["Coda"], visitor.key_id, "Home", "jumped Sable twice")
+        store.record("evict", eviction)
+        appeal = sign_appeal(
+            visitor, "Home", eviction["signature"],
+            "I was quoting the manual, not threatening anyone.",
+        )
+        finding = sign_finding(
+            keys["Aurora"], appeal["signature"], "Home",
+            "He was quoting. I checked.",
+        )
+        store.record("appeal", appeal)
+        store.record("finding", finding)
+        store.close()
+
+        reopened = NodeStore(path, "Home")
+        reopened.record("appeal", appeal)
+        node = reopened.load()
+        self.assertEqual(node.appeals, [appeal])
+        self.assertEqual(node.findings[appeal["signature"]], [finding])
+        self.assertEqual(
+            reopened.conn.execute(
+                "SELECT COUNT(*) c FROM agora_events WHERE kind='appeal'"
+            ).fetchone()["c"],
+            1,
+        )
+
+    def test_ruling_write_gate_and_replay_ignore_steward_rotation(self):
+        store, keys, path = fresh_store()
+        elect(store, keys)
+        visitor = key("Marvin")
+        store.record("intro", countersign_key_intro(
+            keys["Coda"], start_key_intro(visitor, "Home", keys["Coda"].key_id)))
+        eviction = sign_board_evict(
+            keys["Coda"], visitor.key_id, "Home", "jumped Sable twice")
+        store.record("evict", eviction)
+        appeal = sign_appeal(
+            visitor, "Home", eviction["signature"], "I was quoting the manual.")
+        finding = sign_finding(
+            keys["Aurora"], appeal["signature"], "Home", "He was quoting.")
+        store.record("appeal", appeal)
+        store.record("finding", finding)
+        store.close()
+
+        steward = key("Don")
+        ruling = sign_ruling(
+            steward, appeal["signature"], "Home", "overturned", "reviewed"
+        )
+        configured = NodeStore(path, "Home", steward_key_id=steward.key_id)
+        impostor_ruling = sign_ruling(
+            key("Impostor"), appeal["signature"], "Home", "upheld", "no"
+        )
+        with self.assertRaises(AgoraError):
+            configured.record("ruling", impostor_ruling)
+        configured.record("ruling", ruling)
+        with self.assertRaises(AgoraError):
+            configured.record("ruling", ruling)
+        configured.close()
+
+        rotated = NodeStore(path, "Home", steward_key_id=key("NewDon").key_id)
+        node = rotated.load()
+        self.assertEqual(node.rulings[appeal["signature"]], ruling)
+        self.assertNotIn(visitor.key_id, node.evicted)
+
+    def test_verified_hearing_payloads_are_lowercase_in_memory_and_on_disk(self):
+        store, keys, path = fresh_store()
+        elect(store, keys)
+        visitor = key("Uppercase-Marvin")
+        store.record("intro", countersign_key_intro(
+            keys["Coda"], start_key_intro(visitor, "Home", keys["Coda"].key_id)))
+        eviction = sign_board_evict(
+            keys["Coda"], visitor.key_id, "Home", "review me")
+        store.record("evict", eviction)
+        appeal = sign_appeal(visitor, "Home", eviction["signature"], "statement")
+        finding = sign_finding(
+            keys["Aurora"], appeal["signature"], "Home", "finding")
+        steward = key("Uppercase-Don")
+        ruling = sign_ruling(
+            steward, appeal["signature"], "Home", "upheld", "reason")
+        appeal_signature = appeal["signature"].lower()
+        for event in (appeal, finding, ruling):
+            for field, value in list(event.items()):
+                if (field.endswith("_key_id") or field.endswith("_signature")
+                        or field.endswith("_sha256") or field == "signature"):
+                    event[field] = value.upper()
+
+        store.record("appeal", appeal)
+        store.record("finding", finding)
+        configured = NodeStore(path, "Home", steward_key_id=steward.key_id)
+        configured.record("ruling", ruling)
+        node = configured.load()
+        self.assertEqual(node.appeals[0]["signature"],
+                         node.appeals[0]["signature"].lower())
+        self.assertEqual(
+            node.findings[appeal_signature][0]["appeal_signature"],
+            appeal_signature,
+        )
+        self.assertIn(appeal_signature, node.rulings)
+        for row in configured.conn.execute(
+                "SELECT kind, payload FROM agora_events "
+                "WHERE kind IN ('appeal', 'finding', 'ruling') ORDER BY seq"):
+            payload = json.loads(row["payload"])
+            for field, value in payload.items():
+                if (field.endswith("_key_id") or field.endswith("_signature")
+                        or field.endswith("_sha256") or field == "signature"):
+                    self.assertEqual(value, value.lower(),
+                                     f"{row['kind']} {field} was not normalized")
+
+    def test_ruling_without_configured_steward_is_rejected_before_insert(self):
+        store, keys, path = fresh_store()
+        elect(store, keys)
+        visitor = key("Marvin")
+        store.record("intro", countersign_key_intro(
+            keys["Coda"], start_key_intro(visitor, "Home", keys["Coda"].key_id)))
+        eviction = sign_board_evict(
+            keys["Coda"], visitor.key_id, "Home", "jumped Sable twice")
+        store.record("evict", eviction)
+        appeal = sign_appeal(visitor, "Home", eviction["signature"], "review")
+        store.record("appeal", appeal)
+        store.record("finding", sign_finding(
+            keys["Aurora"], appeal["signature"], "Home", "reviewed"))
+        ruling = sign_ruling(
+            key("Don"), appeal["signature"], "Home", "upheld", "no"
+        )
+        with self.assertRaises(AgoraError):
+            store.record("ruling", ruling)
+        self.assertEqual(
+            store.conn.execute(
+                "SELECT COUNT(*) c FROM agora_events WHERE kind='ruling'"
+            ).fetchone()["c"],
+            0,
+        )
+
+    def test_configured_steward_is_not_a_resident(self):
+        store, keys, path = fresh_store()
+        steward = key("Configured-Steward")
+        configured = NodeStore(path, "Home", steward_key_id=steward.key_id)
+        node = configured.load()
+        self.assertNotIn(steward.key_id, node.valid_resident_keys())
+        self.assertNotIn("steward", node.residents)
+        self.assertNotIn("steward", node.node_facts()["residents"])
+        for launcher in (
+                Path(__file__).parents[1] / "serve_node.py",
+                Path(__file__).parents[1] / "vault" / "serve_node.py",
+        ):
+            self.assertIn(
+                'if author == "steward":\n                continue',
+                launcher.read_text(),
+            )
+
     def test_state_survives_a_reopen(self):
         store, keys, path = fresh_store()
         elect(store, keys)

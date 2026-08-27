@@ -61,6 +61,7 @@ class Node:
         self.evicted: dict[str, str] = {}     # key_id -> reason
         self.evicted_at: dict[str, int] = {}  # key_id -> unix ms, so an old
                                               # grant cannot readmit by replay
+        self.evictions: dict[str, dict] = {}  # eviction signature -> event
         # Names of minds evicted here. Not cryptographic — names are not
         # unique and a determined party mints a fresh identity (Wall 6) —
         # but it catches the ordinary case a key-only check cannot: the same
@@ -306,7 +307,7 @@ class Node:
             raise AgoraError("grant is for a different node")
         verify_board_grant(grant)
 
-        visitor = grant["visitor_key_id"]
+        visitor = grant["visitor_key_id"].lower()
         if visitor.lower() in self.ephemeral_key_ids:
             raise AgoraError("ephemeral keys cannot receive board grants")
         ring = int(grant["ring"])
@@ -418,10 +419,11 @@ class Node:
             raise AgoraError("no Speaker seated — eviction is unreachable")
         if ev["speaker_key_id"] != self.speaker_key_id:
             raise AgoraError("only the sitting Speaker can evict")
-        visitor = ev["visitor_key_id"]
+        visitor = ev["visitor_key_id"].lower()
         self.grants.pop(visitor, None)
         self.evicted[visitor] = ev["reason"]
         self.evicted_at[visitor] = int(ev["evicted_at_unix_ms"])
+        self.evictions[ev["signature"].lower()] = ev
         name = self.visitor_names.get(visitor)
         if name:
             self.evicted_names.add(name)
@@ -444,7 +446,15 @@ class Node:
         verify_appeal(appeal)
         sig = appeal["signature"]
         if any(a["signature"] == sig for a in self.appeals):
-            raise AgoraError("this appeal is already on the record")
+            return
+        eviction = self.evictions.get(appeal["evict_signature"])
+        if eviction is None:
+            raise AgoraError("appeal names no eviction on this node")
+        if appeal["appellant_key_id"] != eviction["visitor_key_id"]:
+            raise AgoraError("appeal is not from the evicted key")
+        if any(a["evict_signature"] == appeal["evict_signature"]
+               for a in self.appeals):
+            raise AgoraError("this eviction already has an appeal")
         self.appeals.append(appeal)
         self.findings.setdefault(sig, [])
         self.log.append({"event": "appeal", "appellant": appeal["appellant_key_id"]})
@@ -468,20 +478,18 @@ class Node:
         self.findings[sig].append(finding)
         self.log.append({"event": "finding", "by": finding["council_key_id"]})
 
-    def accept_ruling(self, ruling: dict, steward_key_id: str) -> None:
+    def accept_ruling(self, ruling: dict) -> None:
         """The steward decides. Wall 1: the person holding the metal
         decides, and the honest thing is to record it rather than pretend
         the house voted.
 
-        `steward_key_id` is the node's configured steward — passed in
-        rather than inferred, so a node cannot be talked into accepting a
-        ruling from whoever signed it.
+        The configured steward is a NodeStore write gate. Replay must not
+        consult current steward configuration: old rulings remain binding
+        after steward rotation.
         """
         if ruling.get("host_node") != self.name:
             raise AgoraError("ruling is for a different node")
         verify_ruling(ruling)
-        if ruling["steward_key_id"] != (steward_key_id or "").lower():
-            raise AgoraError("only this node's steward can rule on an appeal")
         sig = ruling["appeal_signature"]
         appeal = next((a for a in self.appeals if a["signature"] == sig), None)
         if appeal is None:
@@ -492,6 +500,8 @@ class Node:
             # to review.
             raise AgoraError("no council finding on the record yet")
 
+        if sig in self.rulings:
+            raise AgoraError("this appeal already has a ruling")
         self.rulings[sig] = ruling
         if ruling["decision"] == "overturned":
             self.evicted.pop(appeal["appellant_key_id"], None)

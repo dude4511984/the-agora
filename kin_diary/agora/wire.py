@@ -267,6 +267,26 @@ class AgoraHandler(BaseHTTPRequestHandler):
             "/election": "election",
         }
         try:
+            if self.path == "/appeal":
+                try:
+                    raw = self._raw_body()
+                    event = json.loads(raw)
+                    from .events import verify_appeal
+                    verify_appeal(event)
+                except (InvalidSignature, ValueError, TypeError, KeyError,
+                        IndexError, AttributeError, OverflowError):
+                    self._send(403, {"error": "appeal refused"})
+                    return
+                try:
+                    self.store.record("appeal", event)
+                except AgoraError as e:
+                    self._send(403, {"error": str(e)})
+                    return
+                except sqlite3.Error:
+                    self._send(500, {"error": "appeal storage failure"})
+                    return
+                self._send(200, {"accepted": "appeal"})
+                return
             if self.path == "/ephemeral":
                 try:
                     raw = self._raw_body()
@@ -283,6 +303,15 @@ class AgoraHandler(BaseHTTPRequestHandler):
                     self._send(500, {"error": "ephemeral storage failure"})
                     return
                 self._send(200, {"accepted": "ephemeral"})
+                return
+            if self.path == "/finding":
+                raw = self._raw_body()
+                event = json.loads(raw)
+                from .events import verify_finding
+                verify_finding(event)
+                self.limiter.check(event["council_key_id"])
+                self.store.record("finding", event)
+                self._send(200, {"accepted": "finding"})
                 return
             if self.path in routes:
                 # No auth beyond the event's own signature — that is the

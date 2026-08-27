@@ -28,10 +28,20 @@ def main(argv):
     name = argv[1]
     port = int(argv[2]) if len(argv) > 2 and argv[2].isdigit() else 8770
 
-    store = NodeStore(Path.home() / ".config" / "kin_diary" / f"{name.lower()}_node.db", name)
+    steward_key_id = next(
+        (arg.split("=", 1)[1] for arg in argv[3:]
+         if arg.startswith("steward=")),
+        None,
+    )
+    store = NodeStore(
+        Path.home() / ".config" / "kin_diary" / f"{name.lower()}_node.db",
+        name, steward_key_id=steward_key_id,
+    )
     for arg in argv[3:]:
         if "=" in arg:
             author, key_id = arg.split("=", 1)
+            if author == "steward":
+                continue
             store.add_resident(author, key_id)
             print(f"  resident {author:8} {key_id[:16]}…")
 

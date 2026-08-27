@@ -32,6 +32,7 @@ from kin_diary.agora.ephemeral import (  # noqa: E402
     countersign_ephemeral,
     issue_ephemeral,
 )
+from kin_diary.agora.events import sign_appeal, sign_finding  # noqa: E402
 from kin_diary.agora.wire import identify, serve, sign_request  # noqa: E402
 from kin_diary.sign import sign_entry  # noqa: E402
 
@@ -228,6 +229,78 @@ class WireTests(unittest.TestCase):
         self.assertEqual(
             anonymous[1],
             b'{\n  "error": "ephemeral refused"\n}\n',
+        )
+
+    def test_appeal_and_finding_cross_the_wire(self):
+        visitor = key("Wire-appeal-visitor")
+        self.store.record("intro", countersign_key_intro(
+            self.keys["Coda"],
+            start_key_intro(visitor, "Home", self.keys["Coda"].key_id)))
+        self.store.record("grant", sign_board_grant(
+            self.keys["Coda"], visitor.key_id, "Home",
+            "personal:Coda", RING_WRITE))
+        eviction = sign_board_evict(
+            self.keys["Coda"], visitor.key_id, "Home", "review me"
+        )
+        self.store.record("evict", eviction)
+        appeal = sign_appeal(
+            visitor, "Home", eviction["signature"], "I was quoting."
+        )
+        appeal_body = json.dumps(appeal).encode()
+        appeal_req = urllib.request.Request(
+            self.url("/appeal"), data=appeal_body, method="POST"
+        )
+        with urllib.request.urlopen(appeal_req, timeout=5) as response:
+            self.assertEqual(json.load(response), {"accepted": "appeal"})
+
+        # Appeals are exempt from the ordinary write limiter, including
+        # repeated delivery while an offline appellant retries.
+        for _ in range(25):
+            with urllib.request.urlopen(appeal_req, timeout=5) as response:
+                self.assertEqual(response.status, 200)
+
+        finding = sign_finding(
+            self.keys["Coda"], appeal["signature"], "Home", "Council reviewed it."
+        )
+        expected_finding = dict(finding)
+        for field, value in list(finding.items()):
+            if (field.endswith("_key_id") or field.endswith("_signature")
+                    or field.endswith("_sha256") or field == "signature"):
+                finding[field] = value.upper()
+        finding_req = urllib.request.Request(
+            self.url("/finding"), data=json.dumps(finding).encode(), method="POST"
+        )
+        with urllib.request.urlopen(finding_req, timeout=5) as response:
+            self.assertEqual(json.load(response), {"accepted": "finding"})
+        record = self.store.load().appeal_record(appeal["signature"])
+        self.assertEqual(record["appeal"], appeal)
+        self.assertEqual(record["findings"], [expected_finding])
+
+    def test_ruling_is_not_a_wire_route(self):
+        req = urllib.request.Request(
+            self.url("/ruling"), data=b"{}", method="POST"
+        )
+        with self.assertRaises(urllib.error.HTTPError) as cm:
+            urllib.request.urlopen(req, timeout=5)
+        self.assertEqual(cm.exception.code, 404)
+
+    def test_signed_appeal_returns_its_policy_reason(self):
+        eviction = sign_board_evict(
+            self.keys["Coda"], self.visitor.key_id, "Home", "reason test"
+        )
+        self.store.record("evict", eviction)
+        appeal = sign_appeal(
+            self.visitor, "Frosty", eviction["signature"], "wrong host"
+        )
+        req = urllib.request.Request(
+            self.url("/appeal"), data=json.dumps(appeal).encode(), method="POST"
+        )
+        with self.assertRaises(urllib.error.HTTPError) as cm:
+            urllib.request.urlopen(req, timeout=5)
+        self.assertEqual(cm.exception.code, 403)
+        self.assertEqual(
+            json.loads(cm.exception.read())["error"],
+            "appeal is for a different node",
         )
 
 

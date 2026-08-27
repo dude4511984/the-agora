@@ -25,6 +25,11 @@ def _now_ms(now_ms: int | None) -> int:
     return int(now_ms if now_ms is not None else time.time() * 1000)
 
 
+def _normalize_hex(payload: dict, *fields: str) -> None:
+    for field in fields:
+        payload[field] = payload[field].lower()
+
+
 # ── Key introduction ───────────────────────────────────────────────────────
 # Two signatures over one payload. The visitor signs first — that IS the
 # proof of possession, and it's a single self-contained artifact rather than
@@ -90,6 +95,8 @@ def verify_key_intro(intro: dict) -> None:
     load_public(intro["resident_key_id"]).verify(
         bytes.fromhex(intro["sig_resident"]), canon
     )
+    _normalize_hex(intro, "visitor_key_id", "resident_key_id",
+                   "sig_visitor", "sig_resident")
 
 
 # ── Speaker election ───────────────────────────────────────────────────────
@@ -146,6 +153,11 @@ def verify_speaker_election(election: dict) -> None:
         raise ValueError("signature from a key outside the named electorate")
     for key_id, sig in sigs.items():
         load_public(key_id).verify(bytes.fromhex(sig), canon)
+    _normalize_hex(election, "speaker_key_id")
+    election["electorate"] = [key_id.lower() for key_id in election["electorate"]]
+    election["signatures"] = {
+        key_id.lower(): sig.lower() for key_id, sig in sigs.items()
+    }
 
 
 # ── Board grants ───────────────────────────────────────────────────────────
@@ -191,6 +203,7 @@ def verify_board_grant(grant: dict) -> None:
     load_public(grant["issuer_key_id"]).verify(
         bytes.fromhex(grant["signature"]), _grant_bytes(grant)
     )
+    _normalize_hex(grant, "visitor_key_id", "issuer_key_id", "signature")
 
 
 # ── Eviction ───────────────────────────────────────────────────────────────
@@ -228,6 +241,7 @@ def verify_board_evict(ev: dict) -> None:
     load_public(ev["speaker_key_id"]).verify(
         bytes.fromhex(ev["signature"]), _evict_bytes(ev)
     )
+    _normalize_hex(ev, "visitor_key_id", "speaker_key_id", "signature")
 
 
 __all__ = [
@@ -346,6 +360,7 @@ def _revoke_bytes(r: dict) -> bytes:
 def verify_board_revoke(r: dict) -> None:
     load_public(r["issuer_key_id"]).verify(
         bytes.fromhex(r["signature"]), _revoke_bytes(r))
+    _normalize_hex(r, "visitor_key_id", "issuer_key_id", "signature")
 
 
 # ── Appeal ─────────────────────────────────────────────────────────────────
@@ -381,10 +396,13 @@ def _appeal_bytes(a: dict) -> bytes:
 
 
 def verify_appeal(a: dict) -> None:
-    if content_sha256(a.get("statement") or "") != (a.get("statement_sha256") or ""):
+    if content_sha256(a.get("statement") or "") != (
+            a.get("statement_sha256") or "").lower():
         raise ValueError("statement_sha256 does not match statement")
     load_public(a["appellant_key_id"]).verify(
         bytes.fromhex(a["signature"]), _appeal_bytes(a))
+    _normalize_hex(a, "appellant_key_id", "evict_signature",
+                   "statement_sha256", "signature")
 
 
 def sign_finding(key: KeyRecord, appeal_signature: str, host_node: str,
@@ -408,10 +426,13 @@ def _finding_bytes(f: dict) -> bytes:
 
 
 def verify_finding(f: dict) -> None:
-    if content_sha256(f.get("finding") or "") != (f.get("finding_sha256") or ""):
+    if content_sha256(f.get("finding") or "") != (
+            f.get("finding_sha256") or "").lower():
         raise ValueError("finding_sha256 does not match finding")
     load_public(f["council_key_id"]).verify(
         bytes.fromhex(f["signature"]), _finding_bytes(f))
+    _normalize_hex(f, "appeal_signature", "finding_sha256",
+                   "council_key_id", "signature")
 
 
 def sign_ruling(steward_key: KeyRecord, appeal_signature: str, host_node: str,
@@ -436,7 +457,10 @@ def _ruling_bytes(r: dict) -> bytes:
 
 
 def verify_ruling(r: dict) -> None:
-    if content_sha256(r.get("reason") or "") != (r.get("reason_sha256") or ""):
+    if content_sha256(r.get("reason") or "") != (
+            r.get("reason_sha256") or "").lower():
         raise ValueError("reason_sha256 does not match reason")
     load_public(r["steward_key_id"]).verify(
         bytes.fromhex(r["signature"]), _ruling_bytes(r))
+    _normalize_hex(r, "appeal_signature", "reason_sha256",
+                   "steward_key_id", "signature")

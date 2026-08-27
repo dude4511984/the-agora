@@ -260,8 +260,7 @@ class EphemeralTests(unittest.TestCase):
         node.accept_ruling(
             sign_ruling(
                 self.coda, appeal["signature"], "Home", "overturned", "reviewed"
-            ),
-            self.coda.key_id,
+            )
         )
 
         self.assertNotIn(self.holder.key_id, node.evicted)

@@ -649,7 +649,7 @@ class AppealTests(unittest.TestCase):
         r = self.sign_ruling(self.steward, a["signature"], "Home",
                              "upheld", "because I said so")
         with self.assertRaises(AgoraError) as cm:
-            self.node.accept_ruling(r, self.steward.key_id)
+            self.node.accept_ruling(r)
         self.assertIn("finding", str(cm.exception))
 
     def test_a_split_council_is_recorded_as_a_split(self):
@@ -674,7 +674,7 @@ class AppealTests(unittest.TestCase):
             self.keys["Aurora"], a["signature"], "Home", "He was quoting."))
         self.node.accept_ruling(self.sign_ruling(
             self.steward, a["signature"], "Home", "overturned",
-            "Council checked the source. He was quoting."), self.steward.key_id)
+            "Council checked the source. He was quoting."))
         self.node.accept_grant(sign_board_grant(
             self.keys["Coda"], self.visitor.key_id, "Home",
             "personal:Coda", RING_WRITE))
@@ -688,7 +688,7 @@ class AppealTests(unittest.TestCase):
             self.keys["Aurora"], a["signature"], "Home", "He was quoting."))
         self.node.accept_ruling(self.sign_ruling(
             self.steward, a["signature"], "Home", "upheld",
-            "Overruling the council. My house."), self.steward.key_id)
+            "Overruling the council. My house."))
         self.assertEqual(
             self.node.effective_ring(self.visitor.key_id, "personal:Coda"),
             RING_TEASER)
@@ -697,14 +697,13 @@ class AppealTests(unittest.TestCase):
         self.assertIn("He was quoting.", rec["findings"][0]["finding"])
         self.assertIn("Overruling the council", rec["ruling"]["reason"])
 
-    def test_only_this_nodes_steward_can_rule(self):
+    def test_replay_does_not_consult_current_steward(self):
         a = self.file()
         self.node.accept_finding(self.sign_finding(
             self.keys["Aurora"], a["signature"], "Home", "x"))
         impostor = key("NotDon")
         r = self.sign_ruling(impostor, a["signature"], "Home", "upheld", "mine now")
-        with self.assertRaises(AgoraError):
-            self.node.accept_ruling(r, self.steward.key_id)
+        self.node.accept_ruling(r)
 
     def test_findings_come_from_residents_only(self):
         a = self.file()
@@ -715,8 +714,40 @@ class AppealTests(unittest.TestCase):
 
     def test_an_appeal_cannot_be_filed_twice(self):
         a = self.file()
+        self.node.accept_appeal(a)  # identical resubmission is idempotent
+
+    def test_an_appeal_must_name_this_nodes_eviction(self):
+        a = self.sign_appeal(
+            self.visitor, "Home", "f" * 128, "random act of graffiti"
+        )
         with self.assertRaises(AgoraError):
             self.node.accept_appeal(a)
+
+    def test_appeal_accepts_uppercase_eviction_signature(self):
+        a = self.sign_appeal(
+            self.visitor, "Home", self.ev["signature"], "case should not matter"
+        )
+        a["evict_signature"] = a["evict_signature"].upper()
+        self.node.accept_appeal(a)
+        self.assertEqual(
+            self.node.appeals[0]["evict_signature"], self.ev["signature"]
+        )
+
+    def test_one_eviction_cannot_start_a_second_hearing(self):
+        a = self.file()
+        second = self.sign_appeal(
+            self.visitor, "Home", self.ev["signature"], "a different statement"
+        )
+        with self.assertRaises(AgoraError):
+            self.node.accept_appeal(second)
+
+    def test_an_introduced_stranger_cannot_appeal_someone_elses_eviction(self):
+        appeal = self.sign_appeal(
+            self.keys["Aurora"], "Home", self.ev["signature"],
+            "I am not Marvin, but let me appeal this.",
+        )
+        with self.assertRaisesRegex(AgoraError, "not from the evicted key"):
+            self.node.accept_appeal(appeal)
 
 
 class CopilotFindings(unittest.TestCase):

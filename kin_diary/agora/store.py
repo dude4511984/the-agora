@@ -72,13 +72,18 @@ REPLAY = {
     "grant": "accept_grant",
     "evict": "accept_eviction",
     "revoke": "accept_revocation",
+    "appeal": "accept_appeal",
+    "finding": "accept_finding",
+    "ruling": "accept_ruling",
 }
 
 
 class NodeStore:
-    def __init__(self, path: str | Path, node_name: str):
+    def __init__(self, path: str | Path, node_name: str,
+                 steward_key_id: str | None = None):
         self.path = str(path)
         self.node_name = node_name
+        self.steward_key_id = (steward_key_id or "").lower() or None
         # check_same_thread=False because the wire serves requests on other
         # threads; the lock below is what actually makes that safe. Without
         # both, a GET from an HTTP handler raises and the node answers 400
@@ -119,8 +124,19 @@ class NodeStore:
             self._record_locked(kind, payload)
 
     def _record_locked(self, kind: str, payload: dict) -> None:
+        if kind == "ruling":
+            if self.steward_key_id is None:
+                raise AgoraError("no steward configured")
+            if ((payload.get("steward_key_id") or "").lower()
+                    != self.steward_key_id):
+                raise AgoraError("only this node's steward can rule on an appeal")
         node = self._load_locked()   # fresh replay, never the cache
+        existing_appeals = {
+            a["signature"] for a in node.appeals
+        } if kind == "appeal" else set()
         getattr(node, REPLAY[kind])(payload)   # raises if the rule says no
+        if kind == "appeal" and payload.get("signature") in existing_appeals:
+            return
         self.conn.execute(
             "INSERT INTO agora_events(node, kind, payload, recorded_at_unix_ms) "
             "VALUES (?,?,?,?)",
