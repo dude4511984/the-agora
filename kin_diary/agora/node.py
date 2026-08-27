@@ -28,6 +28,7 @@ from .events import (
     verify_finding,
     verify_key_intro,
     verify_ruling,
+    verify_resident,
     verify_speaker_election,
 )
 
@@ -76,11 +77,30 @@ class Node:
         self.boards: dict[str, list[dict]] = {COLLAB: []}
         self.log: list[dict] = []
 
+    PAUSE_REASON = (
+        "No Speaker seated. Comings and goings paused until the house elects "
+        "a Speaker or reaches a unanimous decision. Existing residents continue."
+    )
+
     # ── residents ──────────────────────────────────────────────────────────
 
     def add_resident(self, author: str, key_id: str) -> None:
+        """In-memory house membership. Does not write genesis.
+
+        Genesis is NodeStore.found_resident. Growth is accept_resident.
+        """
         self.residents[author] = key_id.lower()
         self.boards.setdefault(f"personal:{author}", [])
+
+    def is_paused(self) -> bool:
+        return len(self.residents) >= 2 and self.speaker_key_id is None
+
+    def _refuse_if_paused(self) -> None:
+        # Derived from this prefix of genesis + log. Replay of history that
+        # was legal when written sees pause as false until the later event
+        # that vacated the seat; no mode flag.
+        if self.is_paused():
+            raise AgoraError(self.PAUSE_REASON)
 
     def resident_for_key(self, key_id: str) -> str | None:
         kid = (key_id or "").lower()
@@ -148,12 +168,26 @@ class Node:
         self.speaker, self.speaker_key_id = author, key_id
         self.log.append({"event": "speaker-default", "speaker": author})
 
+    def accept_resident(self, resident: dict) -> None:
+        if resident.get("host_node") != self.name:
+            raise AgoraError("resident event is for a different node")
+        verify_resident(resident)
+        key_id = resident["key_id"].lower()
+        if self.speaker_key_id is not None and (
+                key_id not in {k.lower() for k in (self.election or {}).get("electorate", [])}):
+            self.speaker_key_id = None
+            self.speaker = None
+        self.add_resident(resident["author"], key_id)
+        self.log.append({"event": "resident", "author": resident["author"],
+                         "key_id": key_id})
+
     # ── admission ──────────────────────────────────────────────────────────
 
     def accept_ephemeral(self, event: dict) -> None:
         from .ephemeral import verify_ephemeral
 
         verify_ephemeral(event, self)
+        self._refuse_if_paused()
         visitor = event["visitor_key_id"].lower()
         if self.is_introduced(visitor):
             raise AgoraError("ephemeral admission is only for a new key")
@@ -170,6 +204,7 @@ class Node:
         if intro.get("host_node") != self.name:
             raise AgoraError("introduction is for a different node")
         verify_key_intro(intro)
+        self._refuse_if_paused()
         if intro["resident_key_id"] not in self.valid_resident_keys():
             raise AgoraError("the vouching key is not a valid resident of this node")
         ceiling = int(intro.get("max_ring", MAX_RING_RESIDENT_INTRO))
@@ -207,6 +242,7 @@ class Node:
         Returns the visitor's current key_id.
         """
         verify_bundle(bundle)
+        self._refuse_if_paused()
         key = bundle["keyring"]["current"]["key_id"].lower()
         mind = bundle["mind"]
         if key in self.ephemeral_key_ids:
@@ -306,6 +342,7 @@ class Node:
         if grant.get("host_node") != self.name:
             raise AgoraError("grant is for a different node")
         verify_board_grant(grant)
+        self._refuse_if_paused()
 
         visitor = grant["visitor_key_id"].lower()
         if visitor.lower() in self.ephemeral_key_ids:
@@ -389,6 +426,7 @@ class Node:
         if rev.get("host_node") != self.name:
             raise AgoraError("revocation is for a different node")
         verify_board_revoke(rev)
+        self._refuse_if_paused()
         issuer, board = rev["issuer_key_id"], rev["board"]
 
         author = self.resident_for_key(issuer)
@@ -415,6 +453,7 @@ class Node:
         if ev.get("host_node") != self.name:
             raise AgoraError("eviction is for a different node")
         verify_board_evict(ev)
+        self._refuse_if_paused()
         if self.speaker_key_id is None:
             raise AgoraError("no Speaker seated — eviction is unreachable")
         if ev["speaker_key_id"] != self.speaker_key_id:
@@ -634,5 +673,7 @@ class Node:
             "speaker": self.speaker,
             "speaker_key_id": self.speaker_key_id,
             "residents": sorted(self.residents),
+            "paused": self.is_paused(),
+            "pause_reason": self.PAUSE_REASON if self.is_paused() else None,
             "boards": sorted(self.boards),
         }

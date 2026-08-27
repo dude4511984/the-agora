@@ -13,6 +13,7 @@ from ..canonical import _hex64, _hex128, _line_value, _lines, _unix_ms, nfc
 
 MAGIC_KEY_INTRO = "agora-key-intro-v1"
 MAGIC_SPEAKER_ELECTION = "agora-speaker-election-v1"
+MAGIC_RESIDENT = "agora-resident-v1"
 MAGIC_BOARD_GRANT = "agora-board-grant-v1"
 MAGIC_BOARD_EVICT = "agora-board-evict-v1"
 MAGIC_BOARD_REVOKE = "agora-board-revoke-v1"
@@ -129,6 +130,20 @@ def speaker_election_canonical(
         ("speaker_key_id", _hex64(speaker_key_id)),
         ("electorate", _key_list(electorate_key_ids)),
         ("elected_at_unix_ms", _unix_ms(elected_at_unix_ms)),
+    ])
+
+
+def resident_canonical(
+    host_node: str,
+    author: str,
+    key_id: str,
+    issued_at_unix_ms: int,
+) -> bytes:
+    return _lines(MAGIC_RESIDENT, [
+        ("host_node", _line_value(host_node)),
+        ("author", _line_value(author)),
+        ("key_id", _hex64(key_id)),
+        ("issued_at_unix_ms", _unix_ms(issued_at_unix_ms)),
     ])
 
 

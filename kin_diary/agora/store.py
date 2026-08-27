@@ -37,6 +37,16 @@ CREATE TABLE IF NOT EXISTS agora_residents (
     PRIMARY KEY (node, author)
 );
 
+-- Founding house at seq 0. Never gains a growth row. Replay loads this,
+-- then the log. agora_residents is the pre-genesis table; copied once
+-- into here if this is empty, then never used as load input.
+CREATE TABLE IF NOT EXISTS agora_genesis (
+    node   TEXT NOT NULL,
+    author TEXT NOT NULL,
+    key_id TEXT NOT NULL,
+    PRIMARY KEY (node, author)
+);
+
 -- Board posts are kin-diary entries. Stored with their signature intact;
 -- the teaser is applied at read time, never at rest.
 CREATE TABLE IF NOT EXISTS agora_posts (
@@ -75,6 +85,7 @@ REPLAY = {
     "appeal": "accept_appeal",
     "finding": "accept_finding",
     "ruling": "accept_ruling",
+    "resident": "accept_resident",
 }
 
 
@@ -97,17 +108,66 @@ class NodeStore:
         self._cache: Node | None = None
         self._cache_rev: tuple | None = None
 
-    # ── residents ──────────────────────────────────────────────────────────
+    # ── genesis (founding house, seq 0) ────────────────────────────────────
 
-    def add_resident(self, author: str, key_id: str) -> None:
+    def found_resident(self, author: str, key_id: str) -> None:
+        """Write the founding house. Refuses once the log has started.
+
+        Growth is record('resident'), never this method. A future caller
+        cannot brick the next boot by putting Eli in genesis: this raises
+        now, and load also refuses a genesis set that overlaps growth.
+        """
+        kid = (key_id or "").lower()
         with self._lock:
+            self._ensure_genesis_locked()
+            if self._log_started_locked():
+                row = self.conn.execute(
+                    "SELECT key_id FROM agora_genesis WHERE node=? AND author=?",
+                    (self.node_name, author),
+                ).fetchone()
+                if row and row["key_id"] == kid:
+                    return
+                raise AgoraError(
+                    "genesis is frozen; growth is agora-resident-v1"
+                )
             self.conn.execute(
-                "INSERT OR REPLACE INTO agora_residents(node, author, key_id) "
+                "INSERT OR REPLACE INTO agora_genesis(node, author, key_id) "
                 "VALUES (?,?,?)",
-                (self.node_name, author, key_id.lower()),
+                (self.node_name, author, kid),
             )
             self.conn.commit()
             self._invalidate()
+
+    def add_resident(self, author: str, key_id: str) -> None:
+        """Founding only. Same as found_resident; the name tests already call."""
+        self.found_resident(author, key_id)
+
+    def _log_started_locked(self) -> bool:
+        row = self.conn.execute(
+            "SELECT COUNT(*) c FROM agora_events WHERE node=?",
+            (self.node_name,),
+        ).fetchone()
+        return row["c"] > 0
+
+    def _ensure_genesis_locked(self) -> None:
+        n = self.conn.execute(
+            "SELECT COUNT(*) c FROM agora_genesis WHERE node=?",
+            (self.node_name,),
+        ).fetchone()["c"]
+        if n:
+            return
+        rows = self.conn.execute(
+            "SELECT author, key_id FROM agora_residents WHERE node=?",
+            (self.node_name,),
+        ).fetchall()
+        if not rows:
+            return
+        self.conn.executemany(
+            "INSERT OR IGNORE INTO agora_genesis(node, author, key_id) "
+            "VALUES (?,?,?)",
+            [(self.node_name, r["author"], r["key_id"]) for r in rows],
+        )
+        self.conn.commit()
 
     # ── events ─────────────────────────────────────────────────────────────
 
@@ -130,6 +190,12 @@ class NodeStore:
             if ((payload.get("steward_key_id") or "").lower()
                     != self.steward_key_id):
                 raise AgoraError("only this node's steward can rule on an appeal")
+        if kind == "resident":
+            if self.steward_key_id is None:
+                raise AgoraError("no steward configured")
+            if ((payload.get("steward_key_id") or "").lower()
+                    != self.steward_key_id):
+                raise AgoraError("only this node's steward can add residents")
         node = self._load_locked()   # fresh replay, never the cache
         existing_appeals = {
             a["signature"] for a in node.appeals
@@ -172,30 +238,52 @@ class NodeStore:
         the database what it holds costs one cheap query and makes the
         cache correct across processes rather than only within one.
         """
+        self._ensure_genesis_locked()
         row = self.conn.execute(
             "SELECT (SELECT COALESCE(MAX(seq),0) FROM agora_events WHERE node=?) e, "
             "       (SELECT COALESCE(MAX(seq),0) FROM agora_posts  WHERE node=?) p, "
-            "       (SELECT COUNT(*) FROM agora_residents WHERE node=?) r",
+            "       (SELECT COUNT(*) FROM agora_genesis WHERE node=?) g",
             (self.node_name, self.node_name, self.node_name),
         ).fetchone()
-        return (row["e"], row["p"], row["r"])
+        return (row["e"], row["p"], row["g"])
 
     def _invalidate(self) -> None:
         self._cache = None
         self._cache_rev = None
 
     def _load_locked(self) -> Node:
+        self._ensure_genesis_locked()
         node = Node(self.node_name)
+        genesis_keys = set()
         for row in self.conn.execute(
-            "SELECT author, key_id FROM agora_residents WHERE node=? ORDER BY author",
+            "SELECT author, key_id FROM agora_genesis WHERE node=? ORDER BY author",
             (self.node_name,),
         ):
             node.add_resident(row["author"], row["key_id"])
+            genesis_keys.add(row["key_id"].lower())
 
-        for row in self.conn.execute(
+        growth_keys = set()
+        event_rows = list(self.conn.execute(
             "SELECT kind, payload FROM agora_events WHERE node=? ORDER BY seq",
             (self.node_name,),
-        ):
+        ))
+        for row in event_rows:
+            if row["kind"] != "resident":
+                continue
+            kid = (json.loads(row["payload"]).get("key_id") or "").lower()
+            if kid:
+                growth_keys.add(kid)
+        overlap = genesis_keys & growth_keys
+        if overlap:
+            raise AgoraError(
+                "genesis was mutated with growth; founding table contains "
+                f"keys that arrived as agora-resident-v1 ({sorted(overlap)[0][:16]}…)"
+            )
+
+        if len(node.residents) == 1:
+            node.sole_resident_is_speaker()
+
+        for row in event_rows:
             getattr(node, REPLAY[row["kind"]])(json.loads(row["payload"]))
 
         for row in self.conn.execute(

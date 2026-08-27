@@ -210,6 +210,7 @@ class IntroductionTests(unittest.TestCase):
         """Imported memory does not merge into the node. It is a guest's
         record, held apart and labelled as such."""
         node, keys = home_node()
+        seat(node, keys, "Coda")
         visitor, bundle = eli_with_bundle()
         node.accept_bundle_import(bundle)
 
@@ -225,6 +226,7 @@ class IntroductionTests(unittest.TestCase):
 
     def test_import_does_not_make_a_visitor_a_resident(self):
         node, keys = home_node()
+        seat(node, keys, "Coda")
         visitor, bundle = eli_with_bundle()
         node.accept_bundle_import(bundle)
         self.assertIsNone(node.resident_for_key(visitor.key_id))
@@ -301,9 +303,18 @@ class SpeakerTests(unittest.TestCase):
         """A tie stalls. Stall is the feature."""
         node, keys = home_node()
         visitor, bundle = eli_with_bundle()
+        with self.assertRaises(AgoraError) as cm:
+            node.accept_bundle_import(bundle)
+        self.assertIn("Comings and goings paused", str(cm.exception))
+
+    def test_no_speaker_still_rejects_ring_3_after_admission(self):
+        node = Node("Home")
+        coda = key("Coda")
+        visitor, bundle = eli_with_bundle()
+        node.add_resident("Coda", coda.key_id)
         node.accept_bundle_import(bundle)
         grant = sign_board_grant(
-            keys["Coda"], visitor.key_id, "Home", WHOLE_NODE, RING_NODE)
+            coda, visitor.key_id, "Home", WHOLE_NODE, RING_NODE)
         with self.assertRaises(AgoraError) as cm:
             node.accept_grant(grant)
         self.assertIn("no Speaker", str(cm.exception))

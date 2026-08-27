@@ -18,6 +18,7 @@ from .canonical import (
     board_grant_canonical,
     key_intro_canonical,
     speaker_election_canonical,
+    resident_canonical,
 )
 
 
@@ -160,6 +161,34 @@ def verify_speaker_election(election: dict) -> None:
     }
 
 
+# ── Residents ──────────────────────────────────────────────────────────────
+
+
+def sign_resident(steward_key: KeyRecord, host_node: str, author: str,
+                  key_id: str, now_ms: int | None = None) -> dict:
+    payload = {
+        "host_node": host_node,
+        "author": author,
+        "key_id": key_id.lower(),
+        "issued_at_unix_ms": _now_ms(now_ms),
+        "steward_key_id": steward_key.key_id,
+    }
+    payload["signature"] = steward_key.sign(_resident_bytes(payload))
+    return payload
+
+
+def _resident_bytes(resident: dict) -> bytes:
+    return resident_canonical(
+        resident["host_node"], resident["author"], resident["key_id"],
+        int(resident["issued_at_unix_ms"]))
+
+
+def verify_resident(resident: dict) -> None:
+    load_public(resident["steward_key_id"]).verify(
+        bytes.fromhex(resident["signature"]), _resident_bytes(resident))
+    _normalize_hex(resident, "key_id", "steward_key_id", "signature")
+
+
 # ── Board grants ───────────────────────────────────────────────────────────
 
 
@@ -251,6 +280,8 @@ __all__ = [
     "open_speaker_election",
     "sign_speaker_election",
     "verify_speaker_election",
+    "sign_resident",
+    "verify_resident",
     "sign_board_grant",
     "verify_board_grant",
     "sign_board_evict",

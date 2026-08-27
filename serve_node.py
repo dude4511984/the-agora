@@ -42,7 +42,7 @@ def main(argv):
             author, key_id = arg.split("=", 1)
             if author == "steward":
                 continue
-            store.add_resident(author, key_id)
+            store.found_resident(author, key_id)
             print(f"  resident {author:8} {key_id[:16]}…")
 
     # The node's own key. Not a mind's key — it attests only "this is what
