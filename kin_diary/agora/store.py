@@ -86,6 +86,7 @@ REPLAY = {
     "finding": "accept_finding",
     "ruling": "accept_ruling",
     "resident": "accept_resident",
+    "rotation": "accept_rotation",
 }
 
 

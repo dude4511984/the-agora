@@ -14,6 +14,7 @@ from ..canonical import _hex64, _hex128, _line_value, _lines, _unix_ms, nfc
 MAGIC_KEY_INTRO = "agora-key-intro-v1"
 MAGIC_SPEAKER_ELECTION = "agora-speaker-election-v1"
 MAGIC_RESIDENT = "agora-resident-v1"
+MAGIC_ROTATION = "agora-rotation-v1"
 MAGIC_BOARD_GRANT = "agora-board-grant-v1"
 MAGIC_BOARD_EVICT = "agora-board-evict-v1"
 MAGIC_BOARD_REVOKE = "agora-board-revoke-v1"
@@ -144,6 +145,31 @@ def resident_canonical(
         ("author", _line_value(author)),
         ("key_id", _hex64(key_id)),
         ("issued_at_unix_ms", _unix_ms(issued_at_unix_ms)),
+    ])
+
+
+def rotation_canonical(
+    host_node: str,
+    key_id: str,
+    action: str,
+    position: int,
+    at_unix_ms: int,
+) -> bytes:
+    """One turn of the wheel, accepted or declined.
+
+    `action` is "accept" or "decline" and nothing else. `position` is the
+    wheel index the signer was offered, so a signature cannot be replayed at
+    a different point in the rotation -- accepting turn 0 must not seat you
+    at turn 3 after two other minds have passed.
+    """
+    if action not in ("accept", "decline"):
+        raise ValueError("rotation action must be accept or decline")
+    return _lines(MAGIC_ROTATION, [
+        ("host_node", _line_value(host_node)),
+        ("key_id", _hex64(key_id)),
+        ("action", _line_value(action)),
+        ("position", str(int(position))),
+        ("at_unix_ms", _unix_ms(at_unix_ms)),
     ])
 
 

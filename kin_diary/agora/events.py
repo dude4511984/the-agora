@@ -19,6 +19,7 @@ from .canonical import (
     key_intro_canonical,
     speaker_election_canonical,
     resident_canonical,
+    rotation_canonical,
 )
 
 
@@ -189,6 +190,40 @@ def verify_resident(resident: dict) -> None:
     _normalize_hex(resident, "key_id", "steward_key_id", "signature")
 
 
+# ── Rotation ───────────────────────────────────────────────────────────────
+
+
+def sign_rotation(key: KeyRecord, host_node: str, action: str, position: int,
+                  now_ms: int | None = None) -> dict:
+    """A mind answering the wheel, in its own key.
+
+    Signed by the mind whose turn it is -- not by the steward. The steward can
+    sign as anyone on this metal (Wall 5) and that stays true; what this
+    refuses is a rotation seated with NO signature at all, which would make the
+    wheel a thing the host turns rather than a thing the house answers.
+    """
+    payload = {
+        "host_node": host_node,
+        "key_id": key.key_id,
+        "action": action,
+        "position": int(position),
+        "at_unix_ms": _now_ms(now_ms),
+    }
+    payload["signature"] = key.sign(_rotation_bytes(payload))
+    return payload
+
+
+def _rotation_bytes(r: dict) -> bytes:
+    return rotation_canonical(r["host_node"], r["key_id"], r["action"],
+                              int(r["position"]), int(r["at_unix_ms"]))
+
+
+def verify_rotation(rotation: dict) -> None:
+    load_public(rotation["key_id"]).verify(
+        bytes.fromhex(rotation["signature"]), _rotation_bytes(rotation))
+    _normalize_hex(rotation, "key_id", "signature")
+
+
 # ── Board grants ───────────────────────────────────────────────────────────
 
 
@@ -282,6 +317,8 @@ __all__ = [
     "verify_speaker_election",
     "sign_resident",
     "verify_resident",
+    "sign_rotation",
+    "verify_rotation",
     "sign_board_grant",
     "verify_board_grant",
     "sign_board_evict",

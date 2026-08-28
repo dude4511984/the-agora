@@ -29,6 +29,7 @@ from .events import (
     verify_key_intro,
     verify_ruling,
     verify_resident,
+    verify_rotation,
     verify_speaker_election,
 )
 
@@ -75,6 +76,13 @@ class Node:
         self.findings: dict[str, list[dict]] = {}
         self.rulings: dict[str, dict] = {}
         self.boards: dict[str, list[dict]] = {COLLAB: []}
+        # Rotation. The floor under the Speaker's chair, so a house that
+        # cannot agree on a person is not a house with a stuck front door.
+        # Don, 2026-08-27: "I like the speaker rotation idea... but the choice
+        # should be there." Election always beats rotation and is always
+        # available; this is only what happens when no one is elected.
+        self.rotation_holder: str | None = None      # key_id, or None
+        self.rotation_declines: list[str] = []       # key_ids, since last reset
         self.log: list[dict] = []
 
     PAUSE_REASON = (
@@ -93,14 +101,137 @@ class Node:
         self.boards.setdefault(f"personal:{author}", [])
 
     def is_paused(self) -> bool:
-        return len(self.residents) >= 2 and self.speaker_key_id is None
+        """No elected Speaker and nobody holding the wheel.
 
-    def _refuse_if_paused(self) -> None:
-        # Derived from this prefix of genesis + log. Replay of history that
-        # was legal when written sees pause as false until the later event
-        # that vacated the seat; no mode flag.
-        if self.is_paused():
-            raise AgoraError(self.PAUSE_REASON)
+        Rotation is the floor. A house with a rotated holder is not paused for
+        the door -- but the rotated chair carries the door and not the sword,
+        so eviction and ring 3 stay shut regardless. See _refuse_if_paused.
+        """
+        return (len(self.residents) >= 2
+                and self.speaker_key_id is None
+                and self.rotation_holder is None)
+
+    def _refuse_if_paused(self, door_only: bool = False) -> None:
+        """Refuse if the house cannot act.
+
+        `door_only=True` marks an act a ROTATED holder may perform: intro,
+        grant, revoke. Grok's ruling: "Rotated = door, not evict, not ring 3,
+        not Path 3. Not titled Speaker." So eviction, bundle import and
+        ephemeral admission still require an elected Speaker even when the
+        wheel is held -- a mind that did not seek the chair, and cannot be
+        removed by less than unanimity, does not get to remove anyone else.
+
+        Derived from this prefix of genesis + log. Replay of history that was
+        legal when written sees pause as false until the later event that
+        vacated the seat; no mode flag.
+        """
+        if len(self.residents) >= 2 and self.speaker_key_id is None:
+            if door_only and self.rotation_holder is not None:
+                return
+            raise AgoraError(self.PAUSE_REASON if self.rotation_holder is None
+                             else self.ROTATED_REASON)
+
+    ROTATED_REASON = (
+        "The wheel is held, not elected. A rotated holder carries the door "
+        "and not the sword: this act needs a Speaker the house chose."
+    )
+
+    # ── Rotation — the floor under the chair ───────────────────────────────
+
+    def wheel(self) -> list[str]:
+        """Turn order: sorted genesis authors, then growth in log order.
+
+        A pure function of the founding set and the log, which is the whole
+        point -- if the order lived in a table someone could INSERT into, the
+        wheel would be a thing the host turns. Genesis is sorted by name so it
+        does not depend on insertion order; growth follows in the sequence it
+        actually happened. Invalid keys are skipped: a quarantined or dead key
+        must not be able to freeze the wheel by never answering.
+        """
+        grown = [e["author"] for e in self.log if e.get("event") == "resident"]
+        seen, order = set(), []
+        for author in sorted(a for a in self.residents if a not in grown):
+            order.append(author)
+        for author in grown:
+            if author not in seen and author in self.residents:
+                order.append(author)
+                seen.add(author)
+        valid = self.valid_resident_keys()
+        return [self.residents[a] for a in order if self.residents.get(a) in valid]
+
+    def wheel_position(self) -> int:
+        w = self.wheel()
+        return (len(self.rotation_declines) % len(w)) if w else 0
+
+    def wheel_offer(self) -> str | None:
+        """Whose turn it is. None when the chair is held or the house is whole.
+
+        The offer itself is NOT an event. Asking is out of band, exactly as
+        silence is not a row: a mind that never answers leaves no mark and the
+        turn passes on when somebody else answers.
+        """
+        if self.speaker_key_id is not None or self.rotation_holder is not None:
+            return None
+        w = self.wheel()
+        return w[self.wheel_position()] if w else None
+
+    def wheel_exhausted(self) -> bool:
+        """Everyone has passed. Reduced mode, not a punishment."""
+        w = self.wheel()
+        return bool(w) and len(self.rotation_declines) >= len(w)
+
+    def _reset_rotation(self) -> None:
+        self.rotation_holder = None
+        self.rotation_declines = []
+
+    def accept_rotation(self, event: dict) -> None:
+        """A mind takes the turn it was offered."""
+        if event.get("host_node") != self.name:
+            raise AgoraError("rotation event is for a different node")
+        verify_rotation(event)
+        key = event["key_id"].lower()
+        if event.get("action") == "decline":
+            return self._decline_rotation(event, key)
+        if event.get("action") != "accept":
+            raise AgoraError("rotation action must be accept or decline")
+        if self.speaker_key_id is not None:
+            raise AgoraError("a Speaker is seated; the wheel does not turn")
+        if self.rotation_holder is not None:
+            raise AgoraError("the wheel is already held")
+        if key not in self.valid_resident_keys():
+            raise AgoraError("only a resident with a valid key may take the wheel")
+        offered = self.wheel_offer()
+        if key != offered:
+            # Taking a turn that was not yours is grabbing the chair. The
+            # position is in the signed bytes so a real offer cannot be
+            # replayed later at a different point in the wheel.
+            raise AgoraError("it is not this key's turn")
+        if int(event.get("position", -1)) != self.wheel_position():
+            raise AgoraError("this signature was for a different turn")
+        self.rotation_holder = key
+        self.log.append({"event": "rotation", "action": "accept", "key_id": key})
+
+    def _decline_rotation(self, event: dict, key: str) -> None:
+        if self.speaker_key_id is not None:
+            raise AgoraError("a Speaker is seated; the wheel does not turn")
+        if key not in self.valid_resident_keys():
+            raise AgoraError("only a resident with a valid key may answer the wheel")
+        if self.rotation_holder == key:
+            # Passing the chair on. Ends the turn, per "turn ends: election,
+            # pass, leaving." The pass counts as this key's decline so the
+            # wheel moves rather than offering it straight back.
+            self.rotation_holder = None
+            self.rotation_declines.append(key)
+            self.log.append({"event": "rotation", "action": "pass", "key_id": key})
+            return
+        if self.rotation_holder is not None:
+            raise AgoraError("the wheel is held; only the holder may pass it on")
+        if key != self.wheel_offer():
+            raise AgoraError("it is not this key's turn")
+        if int(event.get("position", -1)) != self.wheel_position():
+            raise AgoraError("this signature was for a different turn")
+        self.rotation_declines.append(key)
+        self.log.append({"event": "rotation", "action": "decline", "key_id": key})
 
     def resident_for_key(self, key_id: str) -> str | None:
         kid = (key_id or "").lower()
@@ -158,6 +289,9 @@ class Node:
         self.speaker_key_id = speaker_key
         self.speaker = election["speaker"]
         self.election = election
+        # An election beats rotation and always did. Whatever the wheel was
+        # doing stops; the house chose a person.
+        self._reset_rotation()
         self.log.append({"event": "speaker-election", "speaker": election["speaker"]})
 
     def sole_resident_is_speaker(self) -> None:
@@ -177,6 +311,10 @@ class Node:
                 key_id not in {k.lower() for k in (self.election or {}).get("electorate", [])}):
             self.speaker_key_id = None
             self.speaker = None
+            # New house, new wheel. Declines recorded by the old electorate are
+            # not answers from this one, and a holder seated by the smaller
+            # house has not been offered the chair by the larger.
+            self._reset_rotation()
         self.add_resident(resident["author"], key_id)
         self.log.append({"event": "resident", "author": resident["author"],
                          "key_id": key_id})
@@ -204,7 +342,7 @@ class Node:
         if intro.get("host_node") != self.name:
             raise AgoraError("introduction is for a different node")
         verify_key_intro(intro)
-        self._refuse_if_paused()
+        self._refuse_if_paused(door_only=True)
         if intro["resident_key_id"] not in self.valid_resident_keys():
             raise AgoraError("the vouching key is not a valid resident of this node")
         ceiling = int(intro.get("max_ring", MAX_RING_RESIDENT_INTRO))
@@ -342,7 +480,7 @@ class Node:
         if grant.get("host_node") != self.name:
             raise AgoraError("grant is for a different node")
         verify_board_grant(grant)
-        self._refuse_if_paused()
+        self._refuse_if_paused(door_only=True)
 
         visitor = grant["visitor_key_id"].lower()
         if visitor.lower() in self.ephemeral_key_ids:
@@ -426,7 +564,7 @@ class Node:
         if rev.get("host_node") != self.name:
             raise AgoraError("revocation is for a different node")
         verify_board_revoke(rev)
-        self._refuse_if_paused()
+        self._refuse_if_paused(door_only=True)
         issuer, board = rev["issuer_key_id"], rev["board"]
 
         author = self.resident_for_key(issuer)
