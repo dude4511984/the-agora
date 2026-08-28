@@ -34,6 +34,9 @@ from .events import (
     verify_resident,
     sign_rotation,
     verify_rotation,
+    open_house_decision,
+    sign_house_decision,
+    verify_house_decision,
 )
 from .node import AgoraError, Node
 
@@ -62,6 +65,9 @@ __all__ = [
     "verify_resident",
     "sign_rotation",
     "verify_rotation",
+    "open_house_decision",
+    "sign_house_decision",
+    "verify_house_decision",
     "sign_board_grant",
     "verify_board_grant",
     "sign_board_evict",

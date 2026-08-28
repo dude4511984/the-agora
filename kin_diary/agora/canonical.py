@@ -15,6 +15,7 @@ MAGIC_KEY_INTRO = "agora-key-intro-v1"
 MAGIC_SPEAKER_ELECTION = "agora-speaker-election-v1"
 MAGIC_RESIDENT = "agora-resident-v1"
 MAGIC_ROTATION = "agora-rotation-v1"
+MAGIC_HOUSE_DECISION = "agora-house-decision-v1"
 MAGIC_BOARD_GRANT = "agora-board-grant-v1"
 MAGIC_BOARD_EVICT = "agora-board-evict-v1"
 MAGIC_BOARD_REVOKE = "agora-board-revoke-v1"
@@ -170,6 +171,29 @@ def rotation_canonical(
         ("action", _line_value(action)),
         ("position", str(int(position))),
         ("at_unix_ms", _unix_ms(at_unix_ms)),
+    ])
+
+
+def house_decision_canonical(
+    host_node: str,
+    act_kind: str,
+    act_signature: str,
+    decided_at_unix_ms: int,
+) -> bytes:
+    """The house deciding one act, in lieu of a Speaker.
+
+    `act_signature` binds the decision to exactly the act it permits. Don's
+    ruling is that a decision permits THAT act -- unanimity on one intro does
+    not unpause the next -- so the permission cannot be a mode. Binding to the
+    act's own signature makes that structural rather than a promise: there is
+    no way to spend this decision on a different intro, because a different
+    intro has a different signature.
+    """
+    return _lines(MAGIC_HOUSE_DECISION, [
+        ("host_node", _line_value(host_node)),
+        ("act_kind", _line_value(act_kind)),
+        ("act_signature", _line_value(act_signature)),
+        ("decided_at_unix_ms", _unix_ms(decided_at_unix_ms)),
     ])
 
 

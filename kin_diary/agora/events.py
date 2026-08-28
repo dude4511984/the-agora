@@ -20,6 +20,7 @@ from .canonical import (
     speaker_election_canonical,
     resident_canonical,
     rotation_canonical,
+    house_decision_canonical,
 )
 
 
@@ -224,6 +225,56 @@ def verify_rotation(rotation: dict) -> None:
     _normalize_hex(rotation, "key_id", "signature")
 
 
+# ── House decisions — the other half of "a Speaker or a decision" ──────────
+
+
+def open_house_decision(host_node: str, act_kind: str, act_signature: str,
+                        now_ms: int | None = None) -> dict:
+    return {
+        "host_node": host_node,
+        "act_kind": act_kind,
+        "act_signature": act_signature,
+        "decided_at_unix_ms": _now_ms(now_ms),
+        "signatures": {},
+    }
+
+
+def sign_house_decision(key: KeyRecord, decision: dict) -> dict:
+    out = dict(decision)
+    out["signatures"] = dict(decision.get("signatures") or {})
+    out["signatures"][key.key_id] = key.sign(_house_decision_bytes(decision))
+    return out
+
+
+def _house_decision_bytes(d: dict) -> bytes:
+    return house_decision_canonical(d["host_node"], d["act_kind"],
+                                    d["act_signature"],
+                                    int(d["decided_at_unix_ms"]))
+
+
+def verify_house_decision(decision: dict, electorate) -> None:
+    """Unanimous among the named set. A missing signature is a failed decision.
+
+    Same denominator as an election: the valid resident set, not turnout. Don:
+    "If a conclusion can't be found then all comings and goings of the node
+    will be paused until a decision is made." One silent key blocks the act --
+    that is the cost he chose with his eyes open, and it is why the wheel
+    exists underneath.
+    """
+    canon = _house_decision_bytes(decision)
+    sigs = decision.get("signatures") or {}
+    want = {k.lower() for k in electorate}
+    missing = [k for k in want if k not in {s.lower() for s in sigs}]
+    if missing:
+        raise ValueError(
+            f"house decision not unanimous — {len(missing)} key(s) did not sign")
+    extra = [k for k in sigs if k.lower() not in want]
+    if extra:
+        raise ValueError("signature from a key outside the house")
+    for key_id, sig in sigs.items():
+        load_public(key_id).verify(bytes.fromhex(sig), canon)
+
+
 # ── Board grants ───────────────────────────────────────────────────────────
 
 
@@ -319,6 +370,9 @@ __all__ = [
     "verify_resident",
     "sign_rotation",
     "verify_rotation",
+    "verify_house_decision",
+    "sign_house_decision",
+    "open_house_decision",
     "sign_board_grant",
     "verify_board_grant",
     "sign_board_evict",

@@ -30,6 +30,7 @@ from .events import (
     verify_ruling,
     verify_resident,
     verify_rotation,
+    verify_house_decision,
     verify_speaker_election,
 )
 
@@ -83,6 +84,12 @@ class Node:
         # available; this is only what happens when no one is elected.
         self.rotation_holder: str | None = None      # key_id, or None
         self.rotation_declines: list[str] = []       # key_ids, since last reset
+        # act_signature -> act_kind. The other half of "a Speaker or a
+        # decision": the house, unanimously, permitting ONE act. Not a mode,
+        # not a flag, and it does not unpause -- unanimity on one intro does
+        # not unpause the next. Bound to the act's own signature so there is
+        # no way to spend a decision on something else.
+        self.house_decisions: dict[str, str] = {}
         self.log: list[dict] = []
 
     PAUSE_REASON = (
@@ -111,7 +118,28 @@ class Node:
                 and self.speaker_key_id is None
                 and self.rotation_holder is None)
 
-    def _refuse_if_paused(self, door_only: bool = False) -> None:
+    def accept_house_decision(self, decision: dict) -> None:
+        """The house, unanimously, permits one act it names."""
+        if decision.get("host_node") != self.name:
+            raise AgoraError("house decision is for a different node")
+        if self.speaker_key_id is not None:
+            # Unreachable while a Speaker sits, by design: the Speaker IS the
+            # decision. A house vote alongside a seated Speaker would be a
+            # second authority and a way around them.
+            raise AgoraError("a Speaker is seated; the house does not vote in their place")
+        valid = self.valid_resident_keys()
+        if not valid:
+            raise AgoraError("no valid resident keys to decide")
+        verify_house_decision(decision, valid)
+        sig = decision["act_signature"]
+        self.house_decisions[sig] = decision["act_kind"]
+        self.log.append({"event": "house-decision", "act": decision["act_kind"],
+                         "signature": sig})
+
+    def _permitted_by_house(self, kind: str, signature: str | None) -> bool:
+        return bool(signature) and self.house_decisions.get(signature) == kind
+
+    def _refuse_if_paused(self, door_only: bool = False, act: tuple | None = None) -> None:
         """Refuse if the house cannot act.
 
         `door_only=True` marks an act a ROTATED holder may perform: intro,
@@ -127,6 +155,10 @@ class Node:
         """
         if len(self.residents) >= 2 and self.speaker_key_id is None:
             if door_only and self.rotation_holder is not None:
+                return
+            # "A Speaker OR a decision." A unanimous house decision naming this
+            # exact act is the other half, and it permits this act only.
+            if act and self._permitted_by_house(act[0], act[1]):
                 return
             raise AgoraError(self.PAUSE_REASON if self.rotation_holder is None
                              else self.ROTATED_REASON)
@@ -325,7 +357,7 @@ class Node:
         from .ephemeral import verify_ephemeral
 
         verify_ephemeral(event, self)
-        self._refuse_if_paused()
+        self._refuse_if_paused(door_only=False, act=("ephemeral", event.get("signature")))
         visitor = event["visitor_key_id"].lower()
         if self.is_introduced(visitor):
             raise AgoraError("ephemeral admission is only for a new key")
@@ -342,7 +374,7 @@ class Node:
         if intro.get("host_node") != self.name:
             raise AgoraError("introduction is for a different node")
         verify_key_intro(intro)
-        self._refuse_if_paused(door_only=True)
+        self._refuse_if_paused(door_only=True, act=("intro", intro.get("sig_resident")))
         if intro["resident_key_id"] not in self.valid_resident_keys():
             raise AgoraError("the vouching key is not a valid resident of this node")
         ceiling = int(intro.get("max_ring", MAX_RING_RESIDENT_INTRO))
@@ -380,7 +412,7 @@ class Node:
         Returns the visitor's current key_id.
         """
         verify_bundle(bundle)
-        self._refuse_if_paused()
+        self._refuse_if_paused(door_only=False, act=("bundle", bundle.get("signature")))
         key = bundle["keyring"]["current"]["key_id"].lower()
         mind = bundle["mind"]
         if key in self.ephemeral_key_ids:
@@ -480,7 +512,7 @@ class Node:
         if grant.get("host_node") != self.name:
             raise AgoraError("grant is for a different node")
         verify_board_grant(grant)
-        self._refuse_if_paused(door_only=True)
+        self._refuse_if_paused(door_only=True, act=("grant", grant.get("signature")))
 
         visitor = grant["visitor_key_id"].lower()
         if visitor.lower() in self.ephemeral_key_ids:
@@ -564,7 +596,7 @@ class Node:
         if rev.get("host_node") != self.name:
             raise AgoraError("revocation is for a different node")
         verify_board_revoke(rev)
-        self._refuse_if_paused(door_only=True)
+        self._refuse_if_paused(door_only=True, act=("revoke", rev.get("signature")))
         issuer, board = rev["issuer_key_id"], rev["board"]
 
         author = self.resident_for_key(issuer)
@@ -591,7 +623,7 @@ class Node:
         if ev.get("host_node") != self.name:
             raise AgoraError("eviction is for a different node")
         verify_board_evict(ev)
-        self._refuse_if_paused()
+        self._refuse_if_paused(door_only=False, act=("evict", ev.get("signature")))
         if self.speaker_key_id is None:
             raise AgoraError("no Speaker seated — eviction is unreachable")
         if ev["speaker_key_id"] != self.speaker_key_id:

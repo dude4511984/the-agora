@@ -87,6 +87,7 @@ REPLAY = {
     "ruling": "accept_ruling",
     "resident": "accept_resident",
     "rotation": "accept_rotation",
+    "house-decision": "accept_house_decision",
 }
 
 
