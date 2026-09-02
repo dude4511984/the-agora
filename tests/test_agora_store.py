@@ -4,6 +4,7 @@ import os
 import json
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -423,6 +424,61 @@ class GenesisIsFrozen(unittest.TestCase):
         store.found_resident("Aurora", keys["Aurora"].key_id)   # must not raise
 
         self.assertEqual(before, self._genesis(store))
+
+
+class GenesisNotMutatedByGrowthOnLoad(unittest.TestCase):
+    """The load-time backstop behind the write-time freeze.
+
+    `found_resident` refuses to write genesis after the log starts
+    (GenesisIsFrozen). This is the second door: even if a founding key ends
+    up in the growth log some other way — a direct DB write, a bug, tampering
+    — `_load_locked` refuses to OPEN the store while any genesis key also
+    appears as an `agora-resident-v1` event. Without it, replaying growth
+    could redefine a founder, and founding is a table again by a different
+    hinge.
+
+    Measured 2026-09-02: no test named the raise, none wrote genesis
+    directly, none put a founder key in the growth log. Deleting the refusal
+    left the suite 296/296 green while a corrupted store — a founder's own
+    key sitting in a resident event — opened without complaint.
+
+    Assert the reason, and pair it with the positive control: a legitimate
+    store where genesis and growth are DISJOINT must still open. Otherwise
+    "fix" the mutant by making load always raise and this test stays green
+    while every real node refuses to boot.
+    """
+
+    def _founded_with_growth(self):
+        store, keys, path = fresh_store()
+        steward = key("Marvin")
+        store.steward_key_id = steward.key_id
+        # a normal growth resident — disjoint from genesis — starts the log
+        eli = key("Eli")
+        store.record("resident", sign_resident(steward, "Home", "Eli", eli.key_id))
+        return store, keys, path, steward, eli
+
+    def test_a_disjoint_genesis_and_growth_store_opens(self):
+        # positive control: the legitimate shape must load
+        store, keys, path, steward, eli = self._founded_with_growth()
+        node = NodeStore(path, "Home", steward_key_id=steward.key_id).load()
+        self.assertIn("Aurora", node.residents)
+        self.assertIn("Eli", node.residents)
+
+    def test_a_founder_key_in_the_growth_log_refuses_to_open(self):
+        store, keys, path, steward, _eli = self._founded_with_growth()
+
+        # tamper: a resident event carrying Aurora's OWN founding key
+        payload = sign_resident(steward, "Home", "Aurora", keys["Aurora"].key_id)
+        store.conn.execute(
+            "INSERT INTO agora_events(node, kind, payload, recorded_at_unix_ms) "
+            "VALUES (?,?,?,?)",
+            ("Home", "resident", json.dumps(payload, sort_keys=True),
+             int(time.time() * 1000)))
+        store.conn.commit()
+
+        with self.assertRaises(AgoraError) as caught:
+            NodeStore(path, "Home", steward_key_id=steward.key_id).load()
+        self.assertIn("genesis was mutated with growth", str(caught.exception))
 
 
 if __name__ == "__main__":
