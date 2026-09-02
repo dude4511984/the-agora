@@ -25,7 +25,7 @@ from kin_diary.agora import (  # noqa: E402
     start_key_intro,
 )
 from kin_diary.agora.events import (  # noqa: E402
-    sign_appeal, sign_finding, sign_ruling,
+    sign_appeal, sign_finding, sign_resident, sign_ruling,
 )
 from kin_diary.agora.store import NodeStore  # noqa: E402
 from kin_diary.sign import sign_entry  # noqa: E402
@@ -345,6 +345,84 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(held["from_node"], "Frosty")
         for board, rows in node.boards.items():
             self.assertEqual(rows, [])   # never merged into a board
+
+
+class GenesisIsFrozen(unittest.TestCase):
+    """The founding record does not take a row back.
+
+    `NodeStore.found_resident` refuses once the log has started — that raise
+    is what makes genesis a founding and not a table. It had twenty-four
+    callers in this suite and none of them reached it: `add_resident` is an
+    alias whose docstring says "the name tests already call", and every call
+    sits in a setUp, before any event exists. The branch was never entered.
+
+    Measured 2026-09-02, the morning Home was founded: with
+    `_log_started_locked` returning False, the whole suite was 293/293 green
+    while a later caller could write Marvin into genesis and repoint Aurora's
+    founding key to his. Green, and the founding record was a table.
+
+    So: assert the reason, assert the row did not move, and assert the act
+    that must still SUCCEED. A test that only counts refusals is the shape
+    that put us here.
+    """
+
+    def _founded_and_running(self):
+        store, keys, path = fresh_store()
+        steward = key("Marvin")
+        store.steward_key_id = steward.key_id
+        store.record(
+            "resident",
+            sign_resident(steward, "Home", "Eli", key("Eli").key_id),
+        )
+        return store, keys, steward
+
+    def _genesis(self, store):
+        return {
+            r["author"]: r["key_id"]
+            for r in store.conn.execute(
+                "SELECT author, key_id FROM agora_genesis WHERE node=?",
+                ("Home",),
+            )
+        }
+
+    def test_a_new_name_cannot_join_genesis_after_the_log_starts(self):
+        store, _keys, steward = self._founded_and_running()
+        before = self._genesis(store)
+
+        with self.assertRaises(AgoraError) as caught:
+            store.found_resident("Marvin", steward.key_id)
+        # The reason is the evidence. Refusal is cheap; every one of these
+        # calls would still raise for a dozen unrelated reasons.
+        self.assertIn("genesis is frozen", str(caught.exception))
+
+        # And the refusal has to have protected the table, not just returned
+        # an error on the way past it.
+        self.assertEqual(before, self._genesis(store))
+        self.assertNotIn("Marvin", self._genesis(store))
+
+    def test_a_founder_key_cannot_be_repointed_after_the_log_starts(self):
+        store, _keys, steward = self._founded_and_running()
+        before = self._genesis(store)
+
+        with self.assertRaises(AgoraError) as caught:
+            store.found_resident("Aurora", steward.key_id)
+        self.assertIn("genesis is frozen", str(caught.exception))
+
+        self.assertEqual(before["Aurora"], self._genesis(store)["Aurora"])
+        self.assertNotEqual(self._genesis(store)["Aurora"], steward.key_id)
+
+    def test_replaying_a_founder_unchanged_still_succeeds(self):
+        """The positive control, and the reason this is not just an
+        assertRaises. `found_resident` is idempotent for a founder whose key
+        has not moved — a boot that re-founds the same house must not throw.
+        Without this, "fix" the mutant by making the method always raise and
+        the two tests above stay green while every restart dies."""
+        store, keys, _steward = self._founded_and_running()
+        before = self._genesis(store)
+
+        store.found_resident("Aurora", keys["Aurora"].key_id)   # must not raise
+
+        self.assertEqual(before, self._genesis(store))
 
 
 if __name__ == "__main__":
