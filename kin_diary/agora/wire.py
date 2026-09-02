@@ -265,6 +265,8 @@ class AgoraHandler(BaseHTTPRequestHandler):
             "/revoke": "revoke",
             "/bundle": "bundle",
             "/election": "election",
+            "/rotation": "rotation",
+            "/house-decision": "house-decision",
         }
         try:
             if self.path == "/appeal":
@@ -321,8 +323,19 @@ class AgoraHandler(BaseHTTPRequestHandler):
                 raw = self._raw_body()
                 # Event submissions carry no request signature (the event's
                 # own signature is the authority), so limit them per issuing
-                # key where one is provable, else per route.
-                self.limiter.check(self.headers.get("X-Agora-Key") or self.path)
+                # key where one is PROVABLE, else per route.
+                #
+                # 2026-09-01: this read the X-Agora-Key header directly, which
+                # is a string the caller types. A fresh value each request is a
+                # fresh bucket, so the limit was not a limit: demonstrated at
+                # 200/200 writes accepted while an honest caller sending one
+                # real key got 20/200. It punished the only party it could see.
+                # Same shape as `unknown` outranking `wandered` on 08-28 —
+                # unlabelled traffic escaping a ceiling that honest traffic
+                # obeys. _who proves the key or refuses the claim outright;
+                # a caller with nothing to prove shares the route's bucket.
+                who = self._who(raw)
+                self.limiter.check(self.path if who == ANONYMOUS else who)
                 self.store.record(routes[self.path], json.loads(raw))
                 self._send(200, {"accepted": routes[self.path]})
                 return

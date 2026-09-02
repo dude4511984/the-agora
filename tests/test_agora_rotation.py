@@ -151,6 +151,19 @@ class TakingTheTurn(unittest.TestCase):
         # its mind later without a new instrument.
         self.assertEqual(nd.wheel_offer(), k["Bong"].key_id)
 
+    def test_the_last_candidate_is_warned_before_the_wheel_exhausts(self):
+        nd, k = house("Eli", "Crungus", "Bong")
+        self.assertFalse(nd.wheel_last_before_reduced())
+        nd.accept_rotation(sign_rotation(k["Bong"], "Frosty", "decline", 0, 1))
+        self.assertFalse(nd.wheel_last_before_reduced())
+        nd.accept_rotation(sign_rotation(k["Crungus"], "Frosty", "decline", 1, 1))
+        self.assertTrue(nd.wheel_last_before_reduced())
+        self.assertIn("last to be asked", nd.WHEEL_LAST_WARNING)
+        self.assertIn("reduced participation", nd.WHEEL_LAST_WARNING)
+        nd.accept_rotation(sign_rotation(k["Eli"], "Frosty", "decline", 2, 1))
+        self.assertTrue(nd.wheel_exhausted())
+        self.assertFalse(nd.wheel_last_before_reduced())
+
 
 class ElectionBeatsRotation(unittest.TestCase):
     def test_election_clears_the_wheel(self):

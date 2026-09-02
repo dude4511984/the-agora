@@ -6,9 +6,17 @@ import json
 import os
 import tempfile
 import threading
+import sys
 import unittest
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
+
+# Every other module in this directory carries these two lines. This one did
+# not, so `python3 tests/test_agora_federation.py` — the way the rest of the
+# suite is run — died on ModuleNotFoundError before collecting a single test.
+# It only ever passed for someone who happened to set PYTHONPATH.
+sys.path.insert(0, os.path.expanduser("~/kin_diary"))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from kin_diary.agora.events import sign_node_fact, sign_notice
 from kin_diary.agora.federation import (

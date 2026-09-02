@@ -212,6 +212,25 @@ class Node:
         w = self.wheel()
         return bool(w) and len(self.rotation_declines) >= len(w)
 
+    WHEEL_LAST_WARNING = (
+        "You are the last to be asked. Declining this turn exhausts the wheel. "
+        "The house then has no officer. The door opens only by a unanimous "
+        "decision of the house, or by a later election, or not at all. "
+        "That is reduced participation, and you may choose it. "
+        "It is not leaving the shop."
+    )
+
+    def wheel_last_before_reduced(self) -> bool:
+        """The current offer is the last decline that would exhaust the wheel.
+
+        The warning is owed before that ask, not after, and not once reduced
+        mode has already begun. After the wheel wraps, this is false again.
+        """
+        if self.speaker_key_id is not None or self.rotation_holder is not None:
+            return False
+        w = self.wheel()
+        return bool(w) and len(self.rotation_declines) == len(w) - 1
+
     def _reset_rotation(self) -> None:
         self.rotation_holder = None
         self.rotation_declines = []

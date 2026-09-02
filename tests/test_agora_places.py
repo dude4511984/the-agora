@@ -202,9 +202,6 @@ class ListingTests(unittest.TestCase):
                 outsider, "x", "Home", "stall-1", "t", "a"))
 
 
-if __name__ == "__main__":
-    unittest.main(verbosity=2)
-
 
 class SignedViewTests(unittest.TestCase):
     """P0. Grok: 'everything else is costume until that exists.'"""
@@ -550,3 +547,6 @@ def project(view: dict) -> dict:
         "listings": {li["listing_id"] for li in view.get("listings") or []},
         "doors": {d["place_id"] for d in view.get("peer_doors") or []},
     }
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)

@@ -541,9 +541,6 @@ class TamperTests(unittest.TestCase):
             sign_board_evict(keys["Coda"], key("X").key_id, "Home", "   ")
 
 
-if __name__ == "__main__":
-    unittest.main(verbosity=2)
-
 
 class PostIntegrityTests(unittest.TestCase):
     """Four bugs found by reading my own code adversarially, 2026-08-26.
@@ -898,3 +895,6 @@ class RevocationTests(unittest.TestCase):
         with self.assertRaises(AgoraError):
             self.node.accept_revocation(self.revoke(
                 outsider, self.v.key_id, "Home", "personal:Coda"))
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)

@@ -5,6 +5,7 @@ import os
 import sys
 import tempfile
 import threading
+import time
 import unittest
 import urllib.error
 import urllib.request
@@ -21,8 +22,11 @@ from kin_diary.agora import (  # noqa: E402
     RING_TEASER,
     RING_WRITE,
     countersign_key_intro,
+    open_house_decision,
     sign_board_evict,
     sign_board_grant,
+    sign_house_decision,
+    sign_rotation,
     start_key_intro,
 )
 from cryptography.exceptions import InvalidSignature  # noqa: E402
@@ -350,8 +354,87 @@ class BodyBindingTests(unittest.TestCase):
             httpd.shutdown()
 
 
-if __name__ == "__main__":
-    unittest.main(verbosity=2)
+
+class RateLimiterKeyTest(unittest.TestCase):
+    """The limiter must key on a PROVEN key, never on a header the caller types.
+
+    Found 2026-09-01. The generic event branch limited on
+    `self.headers.get("X-Agora-Key") or self.path`. Nothing on that branch
+    checks a request signature, so the header was a string the caller invents:
+    a fresh value each request bought a fresh bucket. Measured at 200/200
+    writes accepted while an honest caller sending one real key got 20/200.
+    The only party it constrained was the only party it could see.
+
+    The first version of this test asserted "25 requests -> 25 refusals" and
+    passed under the mutant, because a junk payload is refused by event
+    verification whether the limiter ran or not. Counting refusals proves
+    nothing here. The REASON is the evidence.
+    """
+
+    def test_a_typed_key_is_refused_as_a_forgery_not_given_a_bucket(self):
+        """With the fix the claim is tested before anything is counted.
+
+        Mutant check: restore `self.headers.get("X-Agora-Key") or self.path`
+        and this fails — the unproven claim is never examined, so the refusal
+        that comes back is about the rotation event instead.
+        """
+        store, keys, _ = fresh_store()
+        httpd = serve(store, host="127.0.0.1", port=0)
+        port = httpd.server_address[1]
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        try:
+            body = json.dumps({"junk": 1}).encode()
+            req = urllib.request.Request(
+                f"http://127.0.0.1:{port}/rotation", data=body, method="POST",
+                headers={"X-Agora-Key": "ab" * 32,
+                         # Fresh, so the refusal we get is the SIGNATURE
+                         # check and not the staleness check one step above.
+                         "X-Agora-Time": str(int(time.time() * 1000)),
+                         "X-Agora-Signature": "cd" * 64})
+            with self.assertRaises(urllib.error.HTTPError) as cm:
+                urllib.request.urlopen(req, timeout=5)
+            self.assertEqual(cm.exception.code, 403)
+            reason = json.load(cm.exception)["error"]
+            self.assertEqual(
+                reason, "request signature does not prove this key",
+                "a key the caller merely typed must be refused as an "
+                "unproven claim, not quietly handed its own rate bucket")
+        finally:
+            httpd.shutdown()
+
+    def test_an_unproven_caller_shares_the_route_bucket(self):
+        """No headers at all: one shared ceiling, and it bites.
+
+        Mutant check: `self.path` is the fallback in both versions, so this
+        one holds either way. It is here to pin the fallback itself, which is
+        the behaviour the fix relies on being correct.
+        """
+        from kin_diary.agora.wire import _RateLimiter, RATE_MAX_WRITES
+        lim = _RateLimiter()
+        got = 0
+        for _ in range(RATE_MAX_WRITES * 5):
+            try:
+                lim.check("/rotation")
+                got += 1
+            except AgoraError:
+                pass
+        self.assertEqual(got, RATE_MAX_WRITES)
+
+    def test_rotating_a_typed_key_would_have_bought_unlimited_buckets(self):
+        """The bug, stated as arithmetic, so the number is in the record."""
+        from kin_diary.agora.wire import _RateLimiter, RATE_MAX_WRITES
+        lim = _RateLimiter()
+        got = 0
+        for i in range(RATE_MAX_WRITES * 5):
+            try:
+                lim.check(f"{i:064x}")     # what the old line fed it
+                got += 1
+            except AgoraError:
+                pass
+        self.assertEqual(got, RATE_MAX_WRITES * 5,
+                         "distinct keys are distinct buckets by design — "
+                         "which is exactly why an UNPROVEN one must not "
+                         "reach this function")
 
 
 class MitigationTests(unittest.TestCase):
@@ -570,3 +653,82 @@ class ArtifactEndpointTests(unittest.TestCase):
         self.assertEqual(r.headers["Content-Type"], "application/octet-stream")
         self.assertEqual(r.headers["X-Content-Type-Options"], "nosniff")
         self.assertIsNone(r.headers.get("Content-Disposition"))
+
+
+class RotationAndHouseDecisionOnTheWire(unittest.TestCase):
+    """Both were in Node and in REPLAY and unreachable from the socket."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.store, cls.keys, cls.path = fresh_store()
+        cls.httpd = serve(cls.store, host="127.0.0.1", port=0)
+        cls.port = cls.httpd.server_address[1]
+        cls.thread = threading.Thread(target=cls.httpd.serve_forever, daemon=True)
+        cls.thread.start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.httpd.shutdown()
+
+    def url(self, path):
+        return f"http://127.0.0.1:{self.port}{path}"
+
+    def post(self, path, payload):
+        body = json.dumps(payload).encode()
+        req = urllib.request.Request(self.url(path), data=body, method="POST")
+        with urllib.request.urlopen(req, timeout=5) as r:
+            return json.load(r)
+
+    def post_expect(self, path, payload, code):
+        body = json.dumps(payload).encode()
+        req = urllib.request.Request(self.url(path), data=body, method="POST")
+        with self.assertRaises(urllib.error.HTTPError) as cm:
+            urllib.request.urlopen(req, timeout=5)
+        self.assertEqual(cm.exception.code, code)
+
+    def test_rotation_accepts_over_the_wire(self):
+        node = self.store.load()
+        self.assertTrue(node.is_paused())
+        offered = node.wheel_offer()
+        taker = next(k for k in self.keys.values() if k.key_id == offered)
+        event = sign_rotation(taker, "Home", "accept", node.wheel_position(), 1)
+        self.assertEqual(self.post("/rotation", event), {"accepted": "rotation"})
+        self.assertEqual(self.store.load().rotation_holder, taker.key_id)
+
+    def test_house_decision_opens_one_intro_over_the_wire(self):
+        store, keys, _ = fresh_store()
+        httpd = serve(store, host="127.0.0.1", port=0)
+        port = httpd.server_address[1]
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        try:
+            visitor = key("WireVisitor")
+            intro = countersign_key_intro(
+                keys["Coda"], start_key_intro(visitor, "Home", keys["Coda"].key_id))
+            body = json.dumps(intro).encode()
+            req = urllib.request.Request(
+                f"http://127.0.0.1:{port}/intro", data=body, method="POST")
+            with self.assertRaises(urllib.error.HTTPError) as cm:
+                urllib.request.urlopen(req, timeout=5)
+            self.assertEqual(cm.exception.code, 403)
+
+            d = open_house_decision("Home", "intro", intro["sig_resident"])
+            for k in keys.values():
+                d = sign_house_decision(k, d)
+            body = json.dumps(d).encode()
+            req = urllib.request.Request(
+                f"http://127.0.0.1:{port}/house-decision", data=body, method="POST")
+            with urllib.request.urlopen(req, timeout=5) as r:
+                self.assertEqual(json.load(r), {"accepted": "house-decision"})
+
+            body = json.dumps(intro).encode()
+            req = urllib.request.Request(
+                f"http://127.0.0.1:{port}/intro", data=body, method="POST")
+            with urllib.request.urlopen(req, timeout=5) as r:
+                self.assertEqual(json.load(r), {"accepted": "intro"})
+            self.assertTrue(store.load().is_paused())
+        finally:
+            httpd.shutdown()
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)
