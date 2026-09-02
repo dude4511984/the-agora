@@ -183,3 +183,7 @@ class PauseTests(unittest.TestCase):
             "upheld", "reason")
         node.accept_ruling(ruling)
         self.assertIn(appeal["signature"], node.rulings)
+
+
+if __name__ == "__main__":
+    unittest.main()
