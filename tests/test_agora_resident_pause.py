@@ -145,27 +145,45 @@ class PauseTests(unittest.TestCase):
         self.assertIsNone(node.node_facts()["pause_reason"])
 
     def test_each_frozen_mutation_is_refused(self):
+        """The DOOR acts a pause freezes. Each must be refused *by the pause*,
+        so assert PAUSE_REASON, not merely AgoraError: a bare assertRaises here
+        is a receipt, because most of these acts can raise for their own
+        reasons too.
+
+        Verified by mutant on _refuse_if_paused (no-op): every subtest below
+        goes red, i.e. the act succeeds and only the pause was stopping it.
+        Eviction and ring-3 grant were REMOVED from this test on 2026-09-03:
+        they survived that mutant. Both are SWORD acts that additionally need
+        a Speaker ("no Speaker seated — ... unreachable"), so in a paused
+        house they are refused whether or not the pause guard runs, and this
+        test never measured the pause for them. Their real guards live in
+        test_the_sword_stays_sheathed (eviction, rotated reason) and
+        test_no_speaker_means_ring_3_is_unreachable_not_auto_granted.
+        """
         node, a, _ = self.paused()
         visitor = key("Visitor")
+        pause = node.PAUSE_REASON
         intro = countersign_key_intro(a, start_key_intro(
             visitor, "Home", a.key_id))
-        with self.subTest("intro"), self.assertRaises(AgoraError):
+        with self.subTest("intro"), self.assertRaises(AgoraError) as cm:
             node.accept_intro(intro)
+        self.assertIn(pause, str(cm.exception))
         from test_agora import eli_with_bundle
-        with self.subTest("bundle"), self.assertRaises(AgoraError):
+        with self.subTest("bundle"), self.assertRaises(AgoraError) as cm:
             node.accept_bundle_import(eli_with_bundle()[1])
+        self.assertIn(pause, str(cm.exception))
         node.visitor_ceiling[visitor.key_id] = 2
-        for ring, board in ((1, "personal:A"), (2, "personal:A"), (3, "*")):
-            with self.subTest("grant", ring=ring), self.assertRaises(AgoraError):
+        for ring, board in ((1, "personal:A"), (2, "personal:A")):
+            with self.subTest("grant", ring=ring), \
+                    self.assertRaises(AgoraError) as cm:
                 node.accept_grant(sign_board_grant(
                     a, visitor.key_id, "Home", board, ring))
+            self.assertIn(pause, str(cm.exception))
         node.grants[visitor.key_id] = {"personal:A": 1}
-        with self.subTest("revoke"), self.assertRaises(AgoraError):
+        with self.subTest("revoke"), self.assertRaises(AgoraError) as cm:
             node.accept_revocation(sign_board_revoke(
                 a, visitor.key_id, "Home", "personal:A"))
-        with self.subTest("eviction"), self.assertRaises(AgoraError):
-            node.accept_eviction(sign_board_evict(
-                a, visitor.key_id, "Home", "reason"))
+        self.assertIn(pause, str(cm.exception))
 
     def test_election_is_not_frozen(self):
         node, a, b = self.paused()
