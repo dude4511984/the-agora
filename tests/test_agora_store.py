@@ -481,5 +481,151 @@ class GenesisNotMutatedByGrowthOnLoad(unittest.TestCase):
         self.assertIn("genesis was mutated with growth", str(caught.exception))
 
 
+class RejectionLedger(unittest.TestCase):
+    """A refusal must leave a trace. You cannot learn from a mistake that was
+    never written down. Don's rule, 2026-09-02.
+
+    The ledger is local diagnostics: `_record_locked` catches every AgoraError
+    on the record path, writes why to `agora_rejections`, and re-raises the
+    original error unchanged. It is never replayed, never federated, and its
+    stored excerpt is inert forensics — never instruction (Value 2).
+    """
+
+    def _running(self):
+        store, keys, path = fresh_store()
+        steward = key("Marvin")
+        store.steward_key_id = steward.key_id
+        store.record("resident", sign_resident(steward, "Home", "Eli", key("Eli").key_id))
+        return store, keys, steward
+
+    def test_a_refused_event_is_recorded_with_its_reason(self):
+        store, _keys, _steward = self._running()
+        impostor = key("Impostor")
+        before = len(store.rejections())
+        with self.assertRaises(AgoraError) as caught:
+            # steward-signed by the wrong key -> refused at the gate
+            store.record("resident",
+                         sign_resident(impostor, "Home", "Mallory", impostor.key_id))
+        after = store.rejections()
+        self.assertEqual(len(after), before + 1)
+        row = after[0]
+        self.assertEqual(row["kind"], "resident")
+        # the reason is the lesson; it must match what the caller saw
+        self.assertEqual(row["reason"], str(caught.exception))
+        self.assertIn("steward", row["reason"])
+        self.assertIsNotNone(row["payload_sha256"])
+
+    def test_the_original_error_is_never_masked_by_logging(self):
+        store, _keys, _steward = self._running()
+        impostor = key("Impostor")
+        with self.assertRaises(AgoraError) as caught:
+            store.record("resident",
+                         sign_resident(impostor, "Home", "X", impostor.key_id))
+        # the caller must get the real refusal, not a logging error
+        self.assertIn("steward", str(caught.exception))
+
+    def test_a_broken_ledger_does_not_break_the_refusal(self):
+        # positive control on the best-effort promise: if the ledger write
+        # itself fails, the node must still refuse (and still raise the real
+        # error), not crash on the way to logging.
+        store, _keys, _steward = self._running()
+        store.conn.execute("DROP TABLE agora_rejections")
+        store.conn.commit()
+        impostor = key("Impostor")
+        with self.assertRaises(AgoraError) as caught:
+            store.record("resident",
+                         sign_resident(impostor, "Home", "X", impostor.key_id))
+        self.assertIn("steward", str(caught.exception))
+
+    def test_a_successful_event_is_not_logged_as_a_rejection(self):
+        store, _keys, steward = self._running()
+        before = len(store.rejections())
+        store.record("resident", sign_resident(steward, "Home", "Nova", key("Nova").key_id))
+        self.assertEqual(len(store.rejections()), before)  # nothing new
+
+
+class RejectionLedgerGenesisAndLoad(unittest.TestCase):
+    """The founding misses are the ones Don asked to remember. genesis-write
+    and load-time refusals now leave a row, deduped where the hot path needs
+    it, and genesis rows are pinned against a record-path flood.
+    Scope ruling: agora_rejection_ledger_decision.md, 2026-09-02.
+    """
+
+    def _running(self):
+        store, keys, path = fresh_store()
+        steward = key("Marvin")
+        store.steward_key_id = steward.key_id
+        store.record("resident", sign_resident(steward, "Home", "Eli", key("Eli").key_id))
+        return store, keys, steward, path
+
+    # ── genesis ──────────────────────────────────────────────────────────
+    def test_a_frozen_regenesis_is_logged_as_kind_genesis(self):
+        store, _keys, steward, _ = self._running()
+        before = len(store.rejections())
+        with self.assertRaises(AgoraError):
+            store.found_resident("Marvin", steward.key_id)
+        rows = store.rejections()
+        self.assertEqual(len(rows), before + 1)
+        self.assertEqual(rows[0]["kind"], "genesis")
+        self.assertIn("genesis is frozen", rows[0]["reason"])
+
+    def test_idempotent_refound_of_an_unchanged_founder_does_not_log(self):
+        store, keys, _steward, _ = self._running()
+        before = len(store.rejections())
+        store.found_resident("Aurora", keys["Aurora"].key_id)   # success, no raise
+        self.assertEqual(len(store.rejections()), before)
+
+    # ── load ─────────────────────────────────────────────────────────────
+    def _corrupt_with_founder_key_in_growth(self, store, keys, steward):
+        payload = sign_resident(steward, "Home", "Aurora", keys["Aurora"].key_id)
+        store.conn.execute(
+            "INSERT INTO agora_events(node, kind, payload, recorded_at_unix_ms) "
+            "VALUES (?,?,?,?)",
+            ("Home", "resident", json.dumps(payload, sort_keys=True),
+             int(time.time() * 1000)))
+        store.conn.commit()
+
+    def test_a_refused_open_is_logged_as_kind_load_and_readable_without_load(self):
+        store, keys, steward, path = self._running()
+        self._corrupt_with_founder_key_in_growth(store, keys, steward)
+        reopened = NodeStore(path, "Home", steward_key_id=steward.key_id)
+        with self.assertRaises(AgoraError):
+            reopened.load()
+        # the point: you can read WHY without a successful load()
+        rows = reopened.rejections()
+        self.assertTrue(rows)
+        self.assertEqual(rows[0]["kind"], "load")
+        self.assertIn("genesis was mutated with growth", rows[0]["reason"])
+
+    def test_load_is_deduped_on_the_hot_path(self):
+        store, keys, steward, path = self._running()
+        self._corrupt_with_founder_key_in_growth(store, keys, steward)
+        reopened = NodeStore(path, "Home", steward_key_id=steward.key_id)
+        for _ in range(5):                      # five GETs against a broken founding
+            with self.assertRaises(AgoraError):
+                reopened.load()
+        loads = [r for r in reopened.rejections() if r["kind"] == "load"]
+        self.assertEqual(len(loads), 1)          # first failure is the lesson
+
+    # ── trim / pin ───────────────────────────────────────────────────────
+    def test_trim_caps_the_unpinned_and_never_deletes_genesis(self):
+        store, _keys, steward, _ = self._running()
+        # one pinned genesis miss
+        with self.assertRaises(AgoraError):
+            store.found_resident("Marvin", steward.key_id)
+        # now flood the record path well past the cap
+        store._REJECTION_KEEP = 20
+        impostor = key("Impostor")
+        for i in range(60):
+            with self.assertRaises(AgoraError):
+                store.record("resident",
+                             sign_resident(impostor, "Home", f"M{i}", impostor.key_id))
+        rows = store.rejections(limit=10000)
+        genesis = [r for r in rows if r["kind"] == "genesis"]
+        resident = [r for r in rows if r["kind"] == "resident"]
+        self.assertEqual(len(genesis), 1)        # the founding miss survived the flood
+        self.assertLessEqual(len(resident), 20)  # the flood was capped
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

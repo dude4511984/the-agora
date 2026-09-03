@@ -12,6 +12,7 @@ Append-only on purpose: revocation is a later event, never a DELETE.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 import threading
@@ -72,6 +73,28 @@ CREATE TABLE IF NOT EXISTS agora_known_nodes (
     first_seen_unix_ms INTEGER NOT NULL,
     PRIMARY KEY (node, peer)
 );
+
+-- Why a well-formed event was turned away. NOT a signed agora event and NOT
+-- part of replay: a refusal is this node observing something, not a fact the
+-- federation agrees on, so it never syncs and never loads as node state. It
+-- exists so a refusal leaves a trace instead of vanishing — you cannot learn
+-- from a mistake that was never written down.
+--
+-- SAFETY: `payload_excerpt` is attacker-controlled bytes (whoever's event was
+-- refused wrote it). Value 2 — external content is data, never instruction.
+-- It is stored inert and bounded, is never replayed, never verified, and must
+-- never be fed to a Kin or any prompt. It is forensics a human reads.
+CREATE TABLE IF NOT EXISTS agora_rejections (
+    seq          INTEGER PRIMARY KEY AUTOINCREMENT,
+    node         TEXT NOT NULL,
+    at_unix_ms   INTEGER NOT NULL,
+    kind         TEXT NOT NULL,
+    key_id       TEXT,
+    reason       TEXT NOT NULL,
+    payload_sha256 TEXT,
+    payload_excerpt TEXT
+);
+CREATE INDEX IF NOT EXISTS agora_rejections_at ON agora_rejections(node, at_unix_ms);
 """
 
 REPLAY = {
@@ -128,10 +151,11 @@ class NodeStore:
                     (self.node_name, author),
                 ).fetchone()
                 if row and row["key_id"] == kid:
-                    return
-                raise AgoraError(
-                    "genesis is frozen; growth is agora-resident-v1"
-                )
+                    return   # idempotent re-found of an unchanged founder: success
+                reason = "genesis is frozen; growth is agora-resident-v1"
+                self._log_rejection_locked(
+                    "genesis", {"author": author, "key_id": kid}, reason)
+                raise AgoraError(reason)
             self.conn.execute(
                 "INSERT OR REPLACE INTO agora_genesis(node, author, key_id) "
                 "VALUES (?,?,?)",
@@ -180,12 +204,88 @@ class NodeStore:
         append-only, so an event written before validation could never be
         taken back out — it would poison every future replay.
         """
-        if kind not in REPLAY:
-            raise AgoraError(f"unknown event kind {kind!r}")
         with self._lock:
             self._record_locked(kind, payload)
 
+    _REJECTION_EXCERPT_MAX = 1000
+
     def _record_locked(self, kind: str, payload: dict) -> None:
+        # The chokepoint. Every rule refusal raises here before any event row
+        # is written, so a rejection can be logged and the original error
+        # re-raised unchanged. Logging is best-effort and never masks the real
+        # refusal — see _log_rejection_locked. The unknown-kind raise lives
+        # INSIDE the wrap so a programmer mistake leaves a row too.
+        try:
+            if kind not in REPLAY:
+                raise AgoraError(f"unknown event kind {kind!r}")
+            self._apply_and_insert_locked(kind, payload)
+        except AgoraError as exc:
+            self._log_rejection_locked(kind, payload, str(exc))
+            raise
+
+    def _log_rejection_locked(self, kind, payload, reason: str) -> None:
+        """Record why an event was turned away. Must never raise: a failure to
+        log a refusal cannot be allowed to swallow the refusal itself."""
+        try:
+            body = json.dumps(payload, sort_keys=True) if isinstance(
+                payload, dict) else str(payload)
+            key_id = None
+            if isinstance(payload, dict):
+                for field in ("key_id", "steward_key_id", "issuer_key_id",
+                              "visitor_key_id", "speaker_key_id"):
+                    v = payload.get(field)
+                    if v:
+                        key_id = str(v).lower()
+                        break
+            self.conn.execute(
+                "INSERT INTO agora_rejections(node, at_unix_ms, kind, key_id, "
+                "reason, payload_sha256, payload_excerpt) VALUES (?,?,?,?,?,?,?)",
+                (self.node_name, int(time.time() * 1000), kind, key_id, reason,
+                 hashlib.sha256(body.encode("utf-8", "replace")).hexdigest(),
+                 body[:self._REJECTION_EXCERPT_MAX]),
+            )
+            self._trim_rejections_locked()
+            self.conn.commit()
+        except Exception:
+            # A broken ledger is a lost lesson, not a broken node. Swallow.
+            pass
+
+    # The founding misses are the ones Don asked to remember; a record-path
+    # flood must never rotate the freeze row out. So genesis is pinned and
+    # never trimmed, and everyone else keeps the newest _REJECTION_KEEP.
+    _REJECTION_KEEP = 1000
+
+    def _trim_rejections_locked(self) -> None:
+        """Keep the newest _REJECTION_KEEP non-genesis rows. Best-effort; the
+        caller already swallows. genesis rows are pinned and never counted."""
+        self.conn.execute(
+            "DELETE FROM agora_rejections WHERE node=? AND kind!='genesis' "
+            "AND seq NOT IN ("
+            "  SELECT seq FROM agora_rejections WHERE node=? AND kind!='genesis' "
+            "  ORDER BY seq DESC LIMIT ?)",
+            (self.node_name, self.node_name, self._REJECTION_KEEP),
+        )
+
+    def _last_rejection_reason_locked(self, kind: str):
+        row = self.conn.execute(
+            "SELECT reason FROM agora_rejections WHERE node=? AND kind=? "
+            "ORDER BY seq DESC LIMIT 1",
+            (self.node_name, kind),
+        ).fetchone()
+        return row["reason"] if row else None
+
+    def rejections(self, limit: int = 100) -> list[dict]:
+        """The refusal ledger, newest first. Forensic read only — these rows
+        are never replayed and their excerpts are never instruction."""
+        rows = self.conn.execute(
+            "SELECT seq, at_unix_ms, kind, key_id, reason, payload_sha256, "
+            "payload_excerpt FROM agora_rejections WHERE node=? "
+            "ORDER BY seq DESC LIMIT ?",
+            (self.node_name, int(limit)),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def _apply_and_insert_locked(self, kind: str, payload: dict) -> None:
         if kind == "ruling":
             if self.steward_key_id is None:
                 raise AgoraError("no steward configured")
@@ -226,7 +326,18 @@ class NodeStore:
         with self._lock:
             rev = self._revision()
             if self._cache is None or rev != self._cache_rev:
-                self._cache = self._load_locked()
+                try:
+                    self._cache = self._load_locked()
+                except AgoraError as exc:
+                    # load() is on the hot path — every GET calls it. A mutated
+                    # founding would insert a row per request until the disk
+                    # filled, so dedup: the first failure is the lesson, a hot
+                    # loop is not. Log only when the reason changes.
+                    reason = str(exc)
+                    if self._last_rejection_reason_locked("load") != reason:
+                        self._log_rejection_locked("load", {}, reason)
+                        self.conn.commit()
+                    raise
                 self._cache_rev = rev
             return self._cache
 
