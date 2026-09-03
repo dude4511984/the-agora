@@ -224,8 +224,10 @@ class StoreTests(unittest.TestCase):
         ruling = sign_ruling(
             key("Don"), appeal["signature"], "Home", "upheld", "no"
         )
-        with self.assertRaises(AgoraError):
+        with self.assertRaises(AgoraError) as caught:
             store.record("ruling", ruling)
+        # reason or nothing: the gate, not some incidental later check
+        self.assertIn("steward", str(caught.exception))
         self.assertEqual(
             store.conn.execute(
                 "SELECT COUNT(*) c FROM agora_events WHERE kind='ruling'"

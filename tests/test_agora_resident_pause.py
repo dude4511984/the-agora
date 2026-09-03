@@ -43,9 +43,17 @@ class ResidentEventTests(unittest.TestCase):
         path = Path(tempfile.mkdtemp()) / "node.db"
         steward, second = key("Steward"), key("Second")
         store = NodeStore(path, "Home", steward_key_id=steward.key_id)
-        with self.assertRaises(AgoraError):
+        # The impostor signs their own steward_key_id, so verify_resident
+        # accepts the signature — the gate is the ONLY thing refusing this.
+        # Assert the reason, not just the raise: otherwise the day a verify
+        # check starts refusing the impostor for some other reason, deleting
+        # the gate keeps this green and the gate rots untested (Grok: reason
+        # or nothing).
+        with self.assertRaises(AgoraError) as caught:
             store.record("resident", sign_resident(
                 key("Impostor"), "Home", "Second", second.key_id, 1))
+        self.assertIn("only this node's steward can add residents",
+                      str(caught.exception))
 
     def test_frosty_growth_sequence_reopens_with_old_election_and_pause(self):
         path = Path(tempfile.mkdtemp()) / "frosty.db"
