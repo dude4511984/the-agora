@@ -139,10 +139,18 @@ class LiveFederationTest(unittest.TestCase):
     def test_live_home_discovery_and_notice_exchange(self):
         root = Path(tempfile.mkdtemp())
         store = NodeStore(root / "live.db", "Probe")
+        url = os.environ.get("AGORA_LIVE_URL", "http://192.168.1.120:8770")
         try:
-            facts, notices = exchange(
-                store, os.environ.get("AGORA_LIVE_URL", "http://192.168.1.120:8770")
-            )
+            try:
+                facts, notices = exchange(store, url)
+            except PeerUnreachable as unreachable:
+                # A live smoke test against a real cluster node must DEGRADE to
+                # a skip when that node is asleep, not redden the whole suite.
+                # Home being down is cluster weather, not a regression in this
+                # code. The library's unreachable-raises contract is covered by
+                # the 127.0.0.1:1 test above; this one only has something to say
+                # when Home is actually up. 2026-09-04, punch-list P10.
+                self.skipTest(f"live peer unreachable at {url}: {unreachable}")
             self.assertEqual(facts["node"], "Home")
             self.assertEqual(facts["node_key_id"], store.known_peers()[0]["peer_key_id"])
             for envelope in notices:
