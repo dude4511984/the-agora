@@ -9,6 +9,7 @@ import time
 import unittest
 import urllib.error
 import urllib.request
+from unittest.mock import patch
 from pathlib import Path
 
 sys.path.insert(0, os.path.expanduser("~/kin_diary"))
@@ -184,6 +185,46 @@ class WireTests(unittest.TestCase):
         with self.assertRaises(urllib.error.HTTPError) as cm:
             urllib.request.urlopen(req, timeout=5)
         self.assertEqual(cm.exception.code, 403)
+
+    def test_malformed_generic_event_is_a_stable_refusal(self):
+        for body in (b"{", b"null", b"[]"):
+            req = urllib.request.Request(
+                self.url("/rotation"), data=body, method="POST")
+            with self.assertRaises(urllib.error.HTTPError) as cm:
+                urllib.request.urlopen(req, timeout=5)
+            self.assertEqual(cm.exception.code, 403)
+            response = cm.exception.read()
+            self.assertEqual(response, b'{\n  "error": "event refused"\n}\n')
+            self.assertNotIn(b"JSONDecodeError", response)
+            self.assertNotIn(b"AttributeError", response)
+
+    def test_signed_event_with_invalid_action_is_a_stable_refusal(self):
+        event = sign_rotation(
+            self.keys["Coda"], "Home", "accept", 0, now_ms=NOW_MS)
+        event["action"] = "foo"
+        body = json.dumps(event).encode()
+        req = urllib.request.Request(
+            self.url("/rotation"), data=body, method="POST")
+        with self.assertRaises(urllib.error.HTTPError) as cm:
+            urllib.request.urlopen(req, timeout=5)
+        self.assertEqual(cm.exception.code, 403)
+        self.assertEqual(
+            cm.exception.read(), b'{\n  "error": "event refused"\n}\n')
+
+    def test_record_programming_fault_is_a_visible_server_error(self):
+        event = sign_board_grant(
+            self.keys["Coda"], self.visitor.key_id, "Home",
+            "personal:Coda", RING_WRITE, now_ms=NOW_MS)
+        body = json.dumps(event).encode()
+        req = urllib.request.Request(
+            self.url("/grant"), data=body, method="POST")
+        with patch.object(self.store, "record",
+                          side_effect=RuntimeError("injected")):
+            with self.assertRaises(urllib.error.HTTPError) as cm:
+                urllib.request.urlopen(req, timeout=5)
+        self.assertEqual(cm.exception.code, 500)
+        self.assertEqual(
+            cm.exception.read(), b'{\n  "error": "internal server error"\n}\n')
 
     def test_ephemeral_post_accepts_already_countersigned_event(self):
         holder = key("Wire-ephemeral-holder")

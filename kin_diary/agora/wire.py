@@ -321,6 +321,13 @@ class AgoraHandler(BaseHTTPRequestHandler):
                 # signed one needs no further permission to be *offered*;
                 # whether it is *accepted* is the node's policy call.
                 raw = self._raw_body()
+                try:
+                    event = json.loads(raw)
+                    if not isinstance(event, dict):
+                        raise ValueError("event body must be a JSON object")
+                except (UnicodeDecodeError, ValueError, TypeError):
+                    self._send(403, {"error": "event refused"})
+                    return
                 # Event submissions carry no request signature (the event's
                 # own signature is the authority), so limit them per issuing
                 # key where one is PROVABLE, else per route.
@@ -334,9 +341,18 @@ class AgoraHandler(BaseHTTPRequestHandler):
                 # unlabelled traffic escaping a ceiling that honest traffic
                 # obeys. _who proves the key or refuses the claim outright;
                 # a caller with nothing to prove shares the route's bucket.
-                who = self._who(raw)
-                self.limiter.check(self.path if who == ANONYMOUS else who)
-                self.store.record(routes[self.path], json.loads(raw))
+                try:
+                    who = self._who(raw)
+                    self.limiter.check(self.path if who == ANONYMOUS else who)
+                except (InvalidSignature, ValueError, TypeError, KeyError,
+                        IndexError, AttributeError, OverflowError):
+                    self._send(403, {"error": "event refused"})
+                    return
+                try:
+                    self.store.record(routes[self.path], event)
+                except ValueError:
+                    self._send(403, {"error": "event refused"})
+                    return
                 self._send(200, {"accepted": routes[self.path]})
                 return
             if self.path == "/presence":
@@ -377,7 +393,7 @@ class AgoraHandler(BaseHTTPRequestHandler):
         except InvalidSignature:
             self._send(403, {"error": "invalid signature"})
         except Exception as e:
-            self._send(400, {"error": f"{type(e).__name__}: {e}"})
+            self._send(500, {"error": "internal server error"})
 
 
 def serve(store: NodeStore, host: str = "0.0.0.0", port: int = 8770,
