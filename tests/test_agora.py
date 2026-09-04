@@ -400,6 +400,38 @@ class DonsWorkedExample(unittest.TestCase):
             self.node.effective_ring(self.friend.key_id, "personal:Coda"),
             RING_TEASER)
 
+    def test_an_evicted_key_cannot_re_enter_under_a_different_case(self):
+        """Wall 6 says you can prove a key, not a person: an evicted mind that
+        rotates and is vouched again arrives looking new, and that is accepted
+        by design. But the SAME key must not walk back in just by changing the
+        case of its hex. self.evicted is keyed lowercase; accept_intro must
+        compare lowercase, not rest the whole ban on verify_* normalizing the
+        field first.
+
+        Proven reachable 2026-09-04: the evicted holder controls their key, so
+        they can sign a fresh intro whose visitor_key_id is uppercased — a
+        valid signature over uppercase canonical bytes. With accept_intro
+        comparing the raw field, `key in self.evicted` missed and the ban was
+        defeated. Mutant: revert the .lower() on that membership check.
+        """
+        import kin_diary.agora.events as _ev
+        self.node.accept_eviction(sign_board_evict(
+            self.keys["Coda"], self.friend.key_id, "Home", "malicious"))
+
+        # the evicted mind re-introduces itself under UPPERCASE, re-signing so
+        # the signature is valid over the altered canonical bytes
+        intro = start_key_intro(self.friend, "Home", self.keys["Coda"].key_id)
+        intro["visitor_key_id"] = intro["visitor_key_id"].upper()
+        intro["sig_visitor"] = self.friend.sign(_ev._intro_bytes(intro))
+        intro = countersign_key_intro(self.keys["Coda"], intro)
+
+        with self.assertRaises(AgoraError) as cm:
+            self.node.accept_intro(intro)
+        self.assertIn("evicted", str(cm.exception))
+        # the uppercased key must not have slipped a fresh ceiling past the ban
+        # (the lowercase ceiling from the legitimate pre-eviction intro remains)
+        self.assertNotIn(self.friend.key_id.upper(), self.node.visitor_ceiling)
+
     def test_readmission_is_a_later_signed_act_not_a_timer(self):
         """Reversible by design — quarantine, never ban. Coda is Speaker in
         this fixture, so her grant is the Speaker's grant."""
