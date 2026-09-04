@@ -16,6 +16,14 @@ this guards, and the habit is fine — `run_tests.py` uses discovery and is
 immune to both bugs, but nobody reaches for it when they are iterating on one
 file, and a stranded class is invisible exactly then.
 
+A third instance of the same family lives one layer out, in the mutation
+harness, and this file cannot see it: `.mut/run.sh` built its scratch tree
+from tracked files only, so an untracked killing test — the normal state of a
+test written just before its own commit — was absent, and the mutant "survived"
+against a killer that was never in the room (P3 verify, 2026-09-04). Same shape:
+a test absent without going red. The harness now includes untracked files and
+aborts on a real-tree/scratch count mismatch. See `.mut/README.md`.
+
 So the invariant is: a test file, run as a script, executes every test it
 defines. Structurally that means one `if __name__ == "__main__"` block, and it
 is the LAST top-level statement in the file. Anything after it is dead on a
