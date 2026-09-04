@@ -325,6 +325,20 @@ class NodeStore:
         existing_appeals = {
             a["signature"] for a in node.appeals
         } if kind == "appeal" else set()
+        # VALIDATION MUST PRECEDE THE INSERT. The log is append-only; a row
+        # written before this raise could never be taken back out, and every
+        # future replay would carry the poison. This ordering is the whole
+        # guarantee that a rejected event never lands (test:
+        # test_a_rejected_event_never_lands_in_the_log).
+        #
+        # Do NOT "fix" a future bug by INSERTing first and cleaning up in an
+        # except. That leaves the same-connection count at 0 while the row is
+        # committed in the file — a fresh open replays it. It is currently
+        # masked ONLY by accident: _record_locked's rejection-ledger commit
+        # (on the AgoraError path) flushes the stray transaction. Proven
+        # 2026-09-04 (butter P14 / mutation item 3): no-op the ledger and the
+        # poison survives a reopen. The guarantee lives HERE, in the ordering,
+        # not in the ledger's commit.
         getattr(node, REPLAY[kind])(payload)   # raises if the rule says no
         if kind == "appeal" and payload.get("signature") in existing_appeals:
             return
