@@ -557,8 +557,8 @@ class Node:
                 raise AgoraError(
                     "this grant predates the eviction; readmission needs a new one"
                 )
-            self.evicted.pop(visitor, None)
-            self.evicted_at.pop(visitor, None)
+            self._lift_eviction(visitor)
+            self.evicted_at.pop(visitor, None)   # readmit reactivates fully
             self.log.append({"event": "readmit", "visitor": visitor})
 
         if visitor not in self.visitor_ceiling:
@@ -657,6 +657,29 @@ class Node:
             self.evicted_names.add(name)
         self.log.append({"event": "evict", "visitor": visitor, "reason": ev["reason"]})
 
+    def _lift_eviction(self, visitor_key: str) -> None:
+        """Clear the two layers a lift MUST clear: the key ban (evicted) and the
+        mind-name ban (evicted_names). A lift that clears only the key leaves a
+        name souvenir that impersonates a Speaker veto — Path 1 (bundle) then
+        refuses "a mind named X is evicted; only the Speaker can readmit" after
+        the Speaker already readmitted, or the steward already overturned.
+        Butter P4.
+
+        NOT evicted_at. That timestamp keeps suppressing ephemeral admissions
+        that predate the eviction (current_admission: issued_at <= evicted_at is
+        dead), and an overturn must not revive them
+        (test_overturned_eviction_does_not_revive_old_ephemeral). Each lift path
+        decides evicted_at for itself — the Speaker readmit pops it, the overturn
+        keeps it.
+
+        Path 2 (bare key) never set visitor_names, so the name layer simply
+        isn't there for it — that split is Wall 6, not a bug."""
+        visitor = visitor_key.lower()
+        self.evicted.pop(visitor, None)
+        name = self.visitor_names.get(visitor)
+        if name:
+            self.evicted_names.discard(name)
+
     # ── appeal ─────────────────────────────────────────────────────────────
 
     def accept_appeal(self, appeal: dict) -> None:
@@ -732,7 +755,7 @@ class Node:
             raise AgoraError("this appeal already has a ruling")
         self.rulings[sig] = ruling
         if ruling["decision"] == "overturned":
-            self.evicted.pop(appeal["appellant_key_id"].lower(), None)
+            self._lift_eviction(appeal["appellant_key_id"])
             self.log.append({"event": "appeal-overturned",
                              "appellant": appeal["appellant_key_id"]})
         else:

@@ -462,6 +462,46 @@ class DonsWorkedExample(unittest.TestCase):
         self.assertIn("Speaker", str(cm.exception))
         self.assertEqual(node.effective_ring(visitor.key_id, COLLAB), RING_TEASER)
 
+    def test_a_speaker_readmit_clears_the_name_ban_so_the_bundle_imports(self):
+        """Butter P4. Eviction bans the mind's NAME (evicted_names), not only
+        the key. A Speaker readmit must clear every layer eviction wrote, or
+        Path 1 stays dead forever — the same bundle refuses "a mind named Eli
+        is evicted; only the Speaker can readmit" AFTER the Speaker readmitted.
+        """
+        node, keys = home_node()
+        seat(node, keys, "Coda")
+        visitor, bundle = eli_with_bundle()
+        node.accept_bundle_import(bundle)
+        node.accept_eviction(sign_board_evict(
+            keys["Coda"], visitor.key_id, "Home", "malicious", now_ms=1_000_000))
+        # Speaker readmits with a fresh grant that postdates the eviction
+        node.accept_grant(sign_board_grant(
+            keys["Coda"], visitor.key_id, "Home", "personal:Coda",
+            RING_WRITE, now_ms=1_000_001))
+        # the same bundle must now import — the name souvenir is gone
+        node.accept_bundle_import(bundle)   # must not raise
+
+    def test_an_overturn_clears_the_name_ban_so_the_bundle_imports(self):
+        """Butter P4, the steward's half. An overturned eviction readmits the
+        mind; the name ban must lift with it. (evicted_at is deliberately kept
+        — an overturn does not revive old ephemerals — see _lift_eviction.)"""
+        from kin_diary.agora.events import sign_appeal, sign_finding, sign_ruling
+        node, keys = home_node()
+        seat(node, keys, "Coda")
+        visitor, bundle = eli_with_bundle()
+        node.accept_bundle_import(bundle)
+        eviction = sign_board_evict(keys["Coda"], visitor.key_id, "Home", "malicious")
+        node.accept_eviction(eviction)
+        appeal = sign_appeal(visitor, "Home", eviction["signature"], "appeal")
+        node.accept_appeal(appeal)
+        node.accept_finding(
+            sign_finding(keys["Coda"], appeal["signature"], "Home", "not hostile"))
+        node.accept_ruling(
+            sign_ruling(keys["Coda"], appeal["signature"], "Home",
+                        "overturned", "reviewed"))
+        # the same bundle must now import — the name souvenir is gone
+        node.accept_bundle_import(bundle)   # must not raise
+
     def test_a_resident_cannot_undo_the_speakers_eviction(self):
         """Not by vouching again, and not by granting on their own board.
         Otherwise the Speaker's override is handed straight back."""
