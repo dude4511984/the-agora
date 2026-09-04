@@ -702,6 +702,13 @@ class Node:
         if ev["speaker_key_id"] != self.speaker_key_id:
             raise AgoraError("only the sitting Speaker can evict")
         visitor = ev["visitor_key_id"].lower()
+        # The grant goes with the eviction, and it does not come back on its
+        # own. Overturn (accept_ruling) lifts the bans but restores no grant:
+        # standing returns, the board access starts at default, and a re-grant
+        # is a fresh Speaker act. Popping here is what makes that true -- keep
+        # the grant through eviction and an overturn would silently hand board
+        # access back. Don ruled it, butter P12. Frozen by
+        # test_an_overturn_restores_standing_but_not_the_grant.
         self.grants.pop(visitor, None)
         self.evicted[visitor] = ev["reason"]
         self.evicted_at[visitor] = int(ev["evicted_at_unix_ms"])

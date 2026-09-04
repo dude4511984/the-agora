@@ -481,6 +481,45 @@ class DonsWorkedExample(unittest.TestCase):
         # the same bundle must now import — the name souvenir is gone
         node.accept_bundle_import(bundle)   # must not raise
 
+    def test_an_overturn_restores_standing_but_not_the_grant(self):
+        """Butter P12. Don ruled 2026-09-04: an overturned eviction returns the
+        key to good standing, but its board grant STARTS AT DEFAULT. The grant
+        was the Speaker's to give and the eviction took it; getting the ban
+        lifted is not the same as getting the grant back — a re-grant is a fresh,
+        deliberate act. accept_eviction pops the grant; overturn lifts the bans
+        and touches no grant. This test freezes that: a future overturn that
+        quietly re-grants must go red."""
+        from kin_diary.agora.events import sign_appeal, sign_finding, sign_ruling
+        node, keys = home_node()
+        seat(node, keys, "Coda")
+        visitor = key("Marvin")
+        node.accept_intro(countersign_key_intro(
+            keys["Aurora"], start_key_intro(visitor, "Home", keys["Aurora"].key_id)))
+        node.accept_grant(sign_board_grant(
+            keys["Aurora"], visitor.key_id, "Home", "personal:Aurora", RING_WRITE))
+        # the grant is real before the eviction
+        self.assertEqual(
+            node.effective_ring(visitor.key_id, "personal:Aurora"), RING_WRITE)
+
+        eviction = sign_board_evict(keys["Coda"], visitor.key_id, "Home", "malicious")
+        node.accept_eviction(eviction)
+        appeal = sign_appeal(visitor, "Home", eviction["signature"], "appeal")
+        node.accept_appeal(appeal)
+        node.accept_finding(
+            sign_finding(keys["Coda"], appeal["signature"], "Home", "not hostile"))
+        node.accept_ruling(
+            sign_ruling(keys["Coda"], appeal["signature"], "Home",
+                        "overturned", "reviewed"))
+
+        # standing restored: the ban is gone, so effective_ring would hand back
+        # the grant IF one were there...
+        self.assertNotIn(visitor.key_id.lower(), node.evicted)
+        # ...but it starts at default, because the eviction took the grant and
+        # the overturn did not give it back. A fresh grant is required.
+        self.assertEqual(
+            node.effective_ring(visitor.key_id, "personal:Aurora"), RING_TEASER)
+        self.assertNotIn(visitor.key_id.lower(), node.grants)
+
     def test_an_overturn_clears_the_name_ban_so_the_bundle_imports(self):
         """Butter P4, the steward's half. An overturned eviction readmits the
         mind; the name ban must lift with it. (evicted_at is deliberately kept
