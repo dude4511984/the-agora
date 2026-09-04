@@ -211,5 +211,99 @@ class PauseTests(unittest.TestCase):
         self.assertIn(appeal["signature"], node.rulings)
 
 
+class PauseIsOnePredicate(unittest.TestCase):
+    """is_paused() and _refuse_if_paused() must not each hardcode the base
+    pause condition. Butter P6: they used to reimplement
+    `len(residents) >= 2 and speaker_key_id is None` separately, so a fix to
+    one left the other on the old shape and the facts could lie. Now both
+    route through _house_has_no_elected_speaker(); this freezes that so a
+    re-inline is caught.
+
+    Mutant: inline the base condition back into either function. This goes red.
+    """
+
+    def _node_ast(self):
+        import ast as _ast
+        import os
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                            "..", "kin_diary", "agora", "node.py")
+        with open(os.path.normpath(path)) as fh:
+            return _ast.parse(fh.read())
+
+    def _func(self, tree, name):
+        import ast as _ast
+        for n in _ast.walk(tree):
+            if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef)) and n.name == name:
+                return n
+        self.fail(f"{name} not found in node.py")
+
+    def _calls_base_predicate(self, func):
+        import ast as _ast
+        for n in _ast.walk(func):
+            if (isinstance(n, _ast.Call)
+                    and isinstance(n.func, _ast.Attribute)
+                    and n.func.attr == "_house_has_no_elected_speaker"):
+                return True
+        return False
+
+    def _has_inlined_base(self, func):
+        """The re-inline tell is the CONJUNCTION that IS the base predicate:
+        `len(self.residents) >= 2 and self.speaker_key_id is None` in one BoolOp.
+        A bare `speaker_key_id is None` on its own is legitimate ("no Speaker
+        seated — ring 3 unreachable" and kin), so only the conjunction counts."""
+        import ast as _ast
+
+        def is_speaker_none(node):
+            return (isinstance(node, _ast.Compare)
+                    and isinstance(node.ops[0], _ast.Is)
+                    and isinstance(node.left, _ast.Attribute)
+                    and node.left.attr == "speaker_key_id"
+                    and isinstance(node.comparators[0], _ast.Constant)
+                    and node.comparators[0].value is None)
+
+        def is_resident_count(node):
+            # len(self.residents) >= 2  (any comparator/threshold — the shape)
+            return (isinstance(node, _ast.Compare)
+                    and isinstance(node.left, _ast.Call)
+                    and isinstance(node.left.func, _ast.Name)
+                    and node.left.func.id == "len"
+                    and node.left.args
+                    and isinstance(node.left.args[0], _ast.Attribute)
+                    and node.left.args[0].attr == "residents")
+
+        for n in _ast.walk(func):
+            if isinstance(n, _ast.BoolOp) and isinstance(n.op, _ast.And):
+                vals = list(n.values)
+                if any(is_speaker_none(v) for v in vals) and \
+                        any(is_resident_count(v) for v in vals):
+                    return True
+        return False
+
+    def test_both_route_through_the_shared_predicate(self):
+        tree = self._node_ast()
+        for name in ("is_paused", "_refuse_if_paused"):
+            func = self._func(tree, name)
+            self.assertTrue(
+                self._calls_base_predicate(func),
+                f"{name} does not call _house_has_no_elected_speaker — the base "
+                f"pause condition has been re-inlined and can now drift")
+
+    def test_the_base_condition_lives_in_exactly_one_place(self):
+        tree = self._node_ast()
+        # only _house_has_no_elected_speaker may test speaker_key_id is None
+        offenders = []
+        import ast as _ast
+        for n in _ast.walk(tree):
+            if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef)) \
+                    and n.name != "_house_has_no_elected_speaker" \
+                    and self._has_inlined_base(n):
+                offenders.append(n.name)
+        self.assertEqual(
+            offenders, [],
+            "these functions test `self.speaker_key_id is None` directly "
+            "instead of asking _house_has_no_elected_speaker(): "
+            + ", ".join(offenders))
+
+
 if __name__ == "__main__":
     unittest.main()

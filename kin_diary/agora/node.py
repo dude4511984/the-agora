@@ -107,6 +107,15 @@ class Node:
         self.residents[author] = key_id.lower()
         self.boards.setdefault(f"personal:{author}", [])
 
+    def _house_has_no_elected_speaker(self) -> bool:
+        """The base pause condition: two or more residents and no elected
+        Speaker. is_paused() is THIS and no wheel-holder; _refuse_if_paused is
+        THIS plus the door/sword/house-decision policy. Named once so the two
+        cannot drift — the bug this replaced (butter P6) was each hardcoding
+        `len >= 2 and speaker is None` separately, so a fix to one silently
+        left the other on the old shape and the facts could lie."""
+        return len(self.residents) >= 2 and self.speaker_key_id is None
+
     def is_paused(self) -> bool:
         """No elected Speaker and nobody holding the wheel.
 
@@ -114,9 +123,7 @@ class Node:
         the door -- but the rotated chair carries the door and not the sword,
         so eviction and ring 3 stay shut regardless. See _refuse_if_paused.
         """
-        return (len(self.residents) >= 2
-                and self.speaker_key_id is None
-                and self.rotation_holder is None)
+        return self._house_has_no_elected_speaker() and self.rotation_holder is None
 
     def accept_house_decision(self, decision: dict) -> None:
         """The house, unanimously, permits one act it names."""
@@ -153,7 +160,7 @@ class Node:
         legal when written sees pause as false until the later event that
         vacated the seat; no mode flag.
         """
-        if len(self.residents) >= 2 and self.speaker_key_id is None:
+        if self._house_has_no_elected_speaker():
             if door_only and self.rotation_holder is not None:
                 return
             # "A Speaker OR a decision." A unanimous house decision naming this
