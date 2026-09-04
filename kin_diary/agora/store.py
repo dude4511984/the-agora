@@ -19,7 +19,10 @@ import threading
 import time
 from pathlib import Path
 
+from cryptography.exceptions import InvalidSignature
+
 from .node import AgoraError, Node
+from ..sign import verify_entry
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS agora_events (
@@ -266,6 +269,26 @@ class NodeStore:
             (self.node_name, self.node_name, self._REJECTION_KEEP),
         )
 
+    def _log_post_drop_locked(self, entry, reason: str) -> None:
+        """Log a dropped unsigned/invalid board post — once per distinct entry,
+        so a static bad row is not re-logged on every reload (posts persist and
+        _load_locked reruns on any revision change). Best-effort: a broken
+        ledger, or a read-only store, never breaks load — the drop already
+        happened in the caller regardless of this."""
+        try:
+            body = json.dumps(entry, sort_keys=True)
+            sha = hashlib.sha256(body.encode("utf-8", "replace")).hexdigest()
+            seen = self.conn.execute(
+                "SELECT 1 FROM agora_rejections WHERE node=? AND kind='post' "
+                "AND payload_sha256=? LIMIT 1",
+                (self.node_name, sha),
+            ).fetchone()
+            if seen:
+                return
+            self._log_rejection_locked("post", entry, reason)
+        except Exception:
+            pass
+
     def _last_rejection_reason_locked(self, kind: str):
         row = self.conn.execute(
             "SELECT reason FROM agora_rejections WHERE node=? AND kind=? "
@@ -403,7 +426,19 @@ class NodeStore:
             "SELECT board, entry FROM agora_posts WHERE node=? ORDER BY seq",
             (self.node_name,),
         ):
-            node.boards.setdefault(row["board"], []).append(json.loads(row["entry"]))
+            entry = json.loads(row["entry"])
+            try:
+                verify_entry(entry)
+            except (InvalidSignature, ValueError, KeyError) as exc:
+                # Fail closed. A board row that cannot verify is not an entry.
+                # store.post verifies on write, but a hand INSERT bypasses it,
+                # so replay must re-check — the same dual standard the genesis
+                # overlap guard closed, still open for posts until now (P1).
+                # Authenticity is checked here; permission is NOT re-checked as
+                # of now (a post legal when written stays on the board).
+                self._log_post_drop_locked(entry, str(exc))
+                continue
+            node.boards.setdefault(row["board"], []).append(entry)
         return node
 
     # ── boards ─────────────────────────────────────────────────────────────

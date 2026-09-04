@@ -629,5 +629,85 @@ class RejectionLedgerGenesisAndLoad(unittest.TestCase):
         self.assertLessEqual(len(resident), 20)  # the flood was capped
 
 
+class PostsAreSignedOrNotOnTheBoard(unittest.TestCase):
+    """Replay verifies board posts, or they are not board posts. Butter P1.
+
+    `store.post` verifies on write, but a hand INSERT into agora_posts bypasses
+    it — the same dual standard the genesis overlap guard closed for the events
+    table, still open for posts. Grok RAN it: an unsigned row served by collab
+    after load(). On replay a row that cannot verify is dropped (fail closed)
+    and logged kind='post'; a row legal when written stays (permission is NOT
+    re-checked as of now).
+    """
+
+    def _founded(self):
+        path = Path(tempfile.mkdtemp()) / "posts.db"
+        store = NodeStore(path, "Home")
+        keys = {}
+        for name in ("Coda", "Aurora", "Lumen"):
+            k = key(name); keys[name] = k
+            store.add_resident(name, k.key_id)
+        # seat Coda so posts can land
+        node = store.load()
+        el = open_speaker_election("Home", "Coda", keys["Coda"].key_id,
+                                   node.required_electorate(keys["Coda"].key_id))
+        for k in keys.values():
+            if k.key_id in el["electorate"]:
+                el = sign_speaker_election(k, el)
+        store.record("election", el)
+        return store, keys, path
+
+    def test_a_signed_post_survives_replay(self):
+        # positive control: a real post must still load, or the drop is untested
+        store, keys, path = self._founded()
+        entry = sign_entry(keys["Coda"], {
+            "author": "Coda", "timestamp": "2026-09-04 10:00:00",
+            "content": "a real, signed thought"})
+        store.post(keys["Coda"].key_id, "personal:Coda", entry, NOW_MS)
+        store.close()
+        rows = NodeStore(path, "Home").read(keys["Coda"].key_id, "personal:Coda", NOW_MS)
+        self.assertEqual(len(rows), 1)
+
+    def test_a_hand_inserted_unsigned_post_is_dropped_and_logged(self):
+        store, keys, path = self._founded()
+        # bypass store.post entirely — a poisoned row straight into the table
+        forged = json.dumps({
+            "author": "ghost", "timestamp": "2026-09-04 10:00:00",
+            "content": "I was never signed", "key_id": keys["Coda"].key_id,
+        }, sort_keys=True)
+        store.conn.execute(
+            "INSERT INTO agora_posts(node, board, entry) VALUES (?,?,?)",
+            ("Home", "collab", forged))
+        store.conn.commit()
+        store.close()
+
+        reopened = NodeStore(path, "Home")
+        node = reopened.load()
+        # it must NOT be on the board
+        self.assertEqual(node.boards.get("collab", []), [],
+                         "an unsigned hand-inserted post reached the board")
+        # and the drop must be recorded
+        posts_rejected = [r for r in reopened.rejections() if r["kind"] == "post"]
+        self.assertEqual(len(posts_rejected), 1)
+
+    def test_a_bad_post_is_logged_once_across_reloads(self):
+        # dedup on the hot path: a static bad row must not re-log on every reload
+        store, keys, path = self._founded()
+        forged = json.dumps({
+            "author": "ghost", "content": "nope", "key_id": keys["Coda"].key_id,
+        }, sort_keys=True)
+        store.conn.execute(
+            "INSERT INTO agora_posts(node, board, entry) VALUES (?,?,?)",
+            ("Home", "collab", forged))
+        store.conn.commit()
+        store.close()
+
+        reopened = NodeStore(path, "Home")
+        for _ in range(3):
+            reopened._invalidate(); reopened.load()   # force re-replay
+        self.assertEqual(
+            len([r for r in reopened.rejections() if r["kind"] == "post"]), 1)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
