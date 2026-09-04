@@ -91,6 +91,13 @@ class Node:
         # not unpause the next. Bound to the act's own signature so there is
         # no way to spend a decision on something else.
         self.house_decisions: dict[str, str] = {}
+        # NOT the log. This is a RAM-only trail rebuilt from scratch every
+        # replay by the accept_* methods; the durable history is the
+        # agora_events table in store.py. Its ONE consumer is the wheel's
+        # growth-order derivation (`wheel()`, keyed on event=="resident"), so
+        # it is really a derived index, not a record. Append here only what
+        # that derivation needs, keyed by an event name it filters on --
+        # entries nobody reads are noise in a structure that looks like truth.
         self.log: list[dict] = []
 
     PAUSE_REASON = (
@@ -359,7 +366,9 @@ class Node:
             raise AgoraError("this shortcut is only for a single-resident node")
         author, key_id = next(iter(self.residents.items()))
         self.speaker, self.speaker_key_id = author, key_id
-        self.log.append({"event": "speaker-default", "speaker": author})
+        # No self.log append: a "speaker-default" entry was dead (nobody reads
+        # it, and the wheel filters event=="resident"). Verified by mutation,
+        # P13, 2026-09-04. The sole-Speaker state is derived, not logged.
 
     def accept_resident(self, resident: dict) -> None:
         if resident.get("host_node") != self.name:
