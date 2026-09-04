@@ -32,6 +32,10 @@ class PeerVerificationError(FederationError):
     """The peer returned data that failed cryptographic or pin validation."""
 
 
+class PeerUrlChanged(FederationError):
+    """A pinned peer answered at an endpoint that is not yet authorized."""
+
+
 class PeerResponseTooLarge(FederationError):
     """The peer response exceeded the bounded federation envelope."""
 
@@ -126,6 +130,49 @@ def discover_peer(
     try:
         store.pin_peer(peer, peer_key_id, url.rstrip("/"))
     except AgoraError as exc:
+        if (
+            known is not None
+            and known["peer_key_id"].lower() == peer_key_id.lower()
+            and (known.get("url") or "").rstrip("/") != url.rstrip("/")
+        ):
+            raise PeerUrlChanged(str(exc)) from exc
+        raise PeerVerificationError(str(exc)) from exc
+    return fact
+
+
+def reauthorize_peer_url(
+    store: NodeStore,
+    peer: str,
+    url: str,
+    *,
+    timeout: float = 10,
+) -> dict:
+    """Prove a pinned peer's key at a new URL, then move its endpoint pin."""
+    pinned = _known_peer(store, peer)
+    if pinned is None:
+        raise PeerVerificationError(f"peer {peer!r} is not pinned")
+    payload = _get_json(_endpoint(url, "/"), timeout)
+    if not isinstance(payload, dict):
+        raise PeerVerificationError("peer facts response is not an object")
+    fact = payload.get("signed")
+    if not isinstance(fact, dict):
+        raise PeerVerificationError("peer returned unsigned node facts")
+    if fact.get("node") != peer:
+        raise PeerVerificationError("peer facts name a different node")
+    peer_key_id = fact.get("node_key_id")
+    if not isinstance(peer_key_id, str) or (
+        peer_key_id.lower() != pinned["peer_key_id"].lower()
+    ):
+        raise PeerVerificationError("peer facts name a different node key")
+    try:
+        verify_node_fact(fact, expected_node_key_id=pinned["peer_key_id"])
+    except Exception as exc:
+        raise PeerVerificationError(
+            f"node facts from {peer!r} failed verification: {exc}"
+        ) from exc
+    try:
+        store.reauthorize_peer_url(peer, url)
+    except AgoraError as exc:
         raise PeerVerificationError(str(exc)) from exc
     return fact
 
@@ -148,7 +195,15 @@ def fetch_peer_notices(
     pinned = _known_peer(store, peer)
     if pinned is None:
         raise PeerVerificationError(f"peer {peer!r} is not pinned")
-    target = url or pinned.get("url")
+    pinned_url = pinned.get("url")
+    if url is not None and (
+        url.rstrip("/") != (pinned_url or "").rstrip("/")
+    ):
+        raise PeerUrlChanged(
+            f"{peer} is pinned at {pinned_url}; URL moves require "
+            "reauthorize_peer_url"
+        )
+    target = pinned_url if url is None else url
     if not target:
         raise PeerVerificationError(f"peer {peer!r} has no URL")
 
@@ -195,11 +250,13 @@ __all__ = [
     "FederationError",
     "PeerUnreachable",
     "PeerVerificationError",
+    "PeerUrlChanged",
     "PeerResponseTooLarge",
     "MAX_PEER_RESPONSE_BYTES",
     "MAX_NOTICES_PER_FETCH",
     "NoticeEnvelope",
     "discover_peer",
     "fetch_peer_notices",
+    "reauthorize_peer_url",
     "exchange",
 ]

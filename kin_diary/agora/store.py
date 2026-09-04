@@ -507,7 +507,7 @@ class NodeStore:
         """
         with self._lock:
             existing = self.conn.execute(
-                "SELECT peer_key_id, first_seen_unix_ms FROM agora_known_nodes "
+                "SELECT peer_key_id, url, first_seen_unix_ms FROM agora_known_nodes "
                 "WHERE node=? AND peer=?",
                 (self.node_name, peer),
             ).fetchone()
@@ -516,6 +516,17 @@ class NodeStore:
                     f"{peer} previously presented a different node key; "
                     f"refusing to silently re-pin"
                 )
+            if existing:
+                old_url = (existing["url"] or "").rstrip("/")
+                if url is None:
+                    return
+                new_url = url.rstrip("/")
+                if old_url != new_url:
+                    raise AgoraError(
+                        f"{peer} is pinned at {existing['url']}; URL moves "
+                        "require reauthorize_peer_url"
+                    )
+                return
             self.conn.execute(
                 "INSERT OR REPLACE INTO agora_known_nodes"
                 "(node, peer, peer_key_id, url, first_seen_unix_ms) VALUES (?,?,?,?,?)",
@@ -525,6 +536,22 @@ class NodeStore:
                 (self.node_name, peer, peer_key_id.lower(), url,
                  int(existing["first_seen_unix_ms"]) if existing
                  else int(time.time() * 1000)),
+            )
+            self.conn.commit()
+
+    def reauthorize_peer_url(self, peer: str, url: str) -> None:
+        """Move a pinned peer endpoint after an external proof of continuity."""
+        with self._lock:
+            existing = self.conn.execute(
+                "SELECT peer_key_id FROM agora_known_nodes "
+                "WHERE node=? AND peer=?",
+                (self.node_name, peer),
+            ).fetchone()
+            if existing is None:
+                raise AgoraError(f"peer {peer!r} is not pinned")
+            self.conn.execute(
+                "UPDATE agora_known_nodes SET url=? WHERE node=? AND peer=?",
+                (url.rstrip("/"), self.node_name, peer),
             )
             self.conn.commit()
 

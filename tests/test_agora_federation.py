@@ -24,12 +24,15 @@ from kin_diary.agora.federation import (
     MAX_NOTICES_PER_FETCH,
     PeerResponseTooLarge,
     PeerUnreachable,
+    PeerUrlChanged,
     PeerVerificationError,
     discover_peer,
     exchange,
     fetch_peer_notices,
+    reauthorize_peer_url,
 )
 from kin_diary.agora.store import NodeStore
+from kin_diary.agora.node import AgoraError
 from kin_diary.keys import generate_keypair
 
 
@@ -154,6 +157,91 @@ class FederationTests(unittest.TestCase):
         ]
         with self.assertRaises(PeerResponseTooLarge):
             fetch_peer_notices(self.store, "Peer")
+
+
+    def _second_url(self, root=None, notices=None):
+        """A second endpoint serving the SAME shared handler state -- i.e. the
+        same signed facts at a different URL. The relay/redirect shape (P8)."""
+        if root is not None:
+            _ResponseHandler.response = root
+        if notices is not None:
+            _ResponseHandler.routes = {
+                "/notices": {"node": "Peer", "notices": notices}
+            }
+        srv = HTTPServer(("127.0.0.1", 0), _ResponseHandler)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(srv.shutdown)
+        self.addCleanup(srv.server_close)
+        return f"http://127.0.0.1:{srv.server_port}"
+
+    def test_a_second_discover_at_the_same_url_is_a_refresh_not_a_move(self):
+        """P8: TOFU pins name+key+URL; discovering the same URL again is a
+        no-op refresh and must not disturb the pin (first_seen included)."""
+        url = self.serve({"node": "Peer", "signed": self.fact})
+        discover_peer(self.store, url)
+        before = self.store.known_peers()[0]
+        discover_peer(self.store, url)
+        after = self.store.known_peers()[0]
+        self.assertEqual(before, after)
+
+    def test_a_pinned_url_does_not_move_on_a_second_discover_elsewhere(self):
+        """P8, the kill: the same signed facts served at a NEW url is a move,
+        not a refresh. discover refuses with PeerUrlChanged and the pin stays."""
+        url_a = self.serve({"node": "Peer", "signed": self.fact})
+        discover_peer(self.store, url_a)
+        pinned_before = self.store.known_peers()[0]["url"]
+        url_b = self._second_url()
+        with self.assertRaises(PeerUrlChanged):
+            discover_peer(self.store, url_b)
+        self.assertEqual(self.store.known_peers()[0]["url"], pinned_before)
+
+    def test_fetch_notices_refuses_an_unauthorized_url_override(self):
+        """P8: fetch_peer_notices(url=B) on a peer pinned at A is the same
+        one-shot redirect -- refused before any GET, pin untouched."""
+        url_a = self.serve({"node": "Peer", "signed": self.fact}, [self.notice])
+        discover_peer(self.store, url_a)
+        # url_b is a LIVE second endpoint serving the same signed facts, so a
+        # mutant that honoured the override would SUCCEED (and this test would
+        # fail cleanly with "PeerUrlChanged not raised") rather than die on a
+        # dead port for the wrong reason.
+        url_b = self._second_url()
+        with self.assertRaises(PeerUrlChanged):
+            fetch_peer_notices(self.store, "Peer", url=url_b)
+        self.assertEqual(self.store.known_peers()[0]["url"], url_a.rstrip("/"))
+
+    def test_reauthorize_moves_the_pin_after_proving_the_same_key(self):
+        """P8: the explicit move. Same key answers at B -> pin moves to B,
+        key and first_seen unchanged, and notices then come from B."""
+        url_a = self.serve({"node": "Peer", "signed": self.fact}, [self.notice])
+        discover_peer(self.store, url_a)
+        first_seen = self.store.known_peers()[0].get("first_seen_unix_ms")
+        key_before = self.store.known_peers()[0]["peer_key_id"]
+        url_b = self._second_url()
+        reauthorize_peer_url(self.store, "Peer", url_b)
+        row = self.store.known_peers()[0]
+        self.assertEqual(row["url"], url_b.rstrip("/"))
+        self.assertEqual(row["peer_key_id"], key_before)
+        if first_seen is not None:
+            self.assertEqual(row.get("first_seen_unix_ms"), first_seen)
+        # and a plain fetch now obeys the new pin
+        got = fetch_peer_notices(self.store, "Peer")
+        self.assertEqual(len(got), 1)
+
+    def test_reauthorize_to_a_different_key_is_a_swap_not_a_move(self):
+        """P8: a new key at B is a swap, refused as PeerVerificationError; the
+        pin stays at A."""
+        url_a = self.serve({"node": "Peer", "signed": self.fact})
+        discover_peer(self.store, url_a)
+        other = generate_keypair("Impostor", keys_root=self.root / "imp")
+        swapped = sign_node_fact(other, "Peer", "Coda", "a" * 64, ["Coda"], now_ms=3)
+        url_b = self._second_url({"node": "Peer", "signed": swapped})
+        with self.assertRaises(PeerVerificationError):
+            reauthorize_peer_url(self.store, "Peer", url_b)
+        self.assertEqual(self.store.known_peers()[0]["url"], url_a.rstrip("/"))
+
+    def test_reauthorize_an_unknown_peer_is_refused(self):
+        with self.assertRaises((PeerVerificationError, AgoraError)):
+            reauthorize_peer_url(self.store, "Nobody", "http://127.0.0.1:2/")
 
 
 @unittest.skipUnless(
