@@ -744,6 +744,49 @@ class ArtifactEndpointTests(unittest.TestCase):
         self.assertEqual(r.headers["X-Content-Type-Options"], "nosniff")
         self.assertIsNone(r.headers.get("Content-Disposition"))
 
+    def test_an_unexpected_fetch_fault_is_a_visible_500_not_a_denial(self):
+        """P11: a real listing plus an unexpected fault in fetch is OUR bug,
+        not the caller's denial. It must surface as 500, not hide behind the
+        byte-identical 404 -- otherwise an internal outage reads as a routine
+        permission answer and never gets looked at."""
+        def boom(*a, **k):
+            raise RuntimeError("simulated store fault")
+        self.arts.fetch = boom
+        with self.assertRaises(urllib.error.HTTPError) as cm:
+            self.get(self.digest, key("Marvin"))
+        self.assertEqual(cm.exception.code, 500)
+        self.assertIn(b"store failure", cm.exception.read())
+
+
+class BoardReadIsABoundedWindow(unittest.TestCase):
+    """P9b: the node is the replayed accumulator; the wire is a bounded
+    window over its NEWEST entries. read() must copy only the last N, and
+    report total from the full board without copying the rest."""
+
+    def test_read_returns_only_the_newest_max_entries(self):
+        store, keys, _ = fresh_store()
+        elect(store, keys)
+        node = store.load()
+        reader = keys["Coda"].key_id
+        node.boards[COLLAB] = [
+            {"content": f"entry {i}", "author": "Coda"} for i in range(201)
+        ]
+        rows = node.read(reader, COLLAB, NOW_MS, 200)
+        self.assertEqual(len(rows), 200)
+        # the NEWEST 200 -- entry 0 is dropped, entry 200 is kept
+        self.assertEqual(rows[0]["content"], "entry 1")
+        self.assertEqual(rows[-1]["content"], "entry 200")
+        store.close()
+
+    def test_read_zero_is_empty_not_the_whole_board(self):
+        """The [-0:] trap: a zero window must be empty, not the entire list."""
+        store, keys, _ = fresh_store()
+        elect(store, keys)
+        node = store.load()
+        node.boards[COLLAB] = [{"content": "x", "author": "Coda"} for _ in range(5)]
+        self.assertEqual(node.read(keys["Coda"].key_id, COLLAB, NOW_MS, 0), [])
+        store.close()
+
 
 class RotationAndHouseDecisionOnTheWire(unittest.TestCase):
     """Both were in Node and in REPLAY and unreachable from the socket."""

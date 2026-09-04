@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -21,7 +22,14 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from cryptography.exceptions import InvalidSignature
 
 from ..keys import KeyRecord, load_public
-from .artifacts import ArtifactHashMismatch
+from .artifacts import (
+    ArtifactAccessDenied,
+    ArtifactHashMismatch,
+    ArtifactListingError,
+    ArtifactTooLarge,
+    ArtifactUnavailable,
+    ArtifactUnknownHash,
+)
 from .canonical import COLLAB, body_digest, request_canonical
 from .node import AgoraError
 from .store import NodeStore
@@ -227,8 +235,19 @@ class AgoraHandler(BaseHTTPRequestHandler):
                     # permission answer.
                     self._send(500, {"error": "artifact integrity failure"})
                     return
-                except Exception:
+                except (ArtifactUnavailable, ArtifactUnknownHash,
+                        ArtifactAccessDenied, ArtifactListingError):
                     self._send(404, {"error": "artifact unavailable"})
+                    return
+                except ArtifactTooLarge as exc:
+                    print(f"artifact store failure: {type(exc).__name__}",
+                          file=sys.stderr)
+                    self._send(500, {"error": "artifact store failure"})
+                    return
+                except Exception as exc:
+                    print(f"artifact store failure: {type(exc).__name__}",
+                          file=sys.stderr)
+                    self._send(500, {"error": "artifact store failure"})
                     return
                 self.send_response(200)
                 self.send_header("Content-Type", "application/octet-stream")
@@ -250,13 +269,14 @@ class AgoraHandler(BaseHTTPRequestHandler):
                 board = self.path[len("/board/"):]
                 who = self._who()
                 now_ms = int(time.time() * 1000)
-                rows = node.read(who, board, now_ms)
+                rows = node.read(who, board, now_ms, MAX_ENTRIES_PER_READ)
+                total = len(node.boards[board])
                 self._send(200, {
                     "board": board,
                     "ring": node.live_ring(who, board, now_ms),
-                    "total": len(rows),
-                    "truncated": len(rows) > MAX_ENTRIES_PER_READ,
-                    "entries": rows[-MAX_ENTRIES_PER_READ:],
+                    "total": total,
+                    "truncated": total > MAX_ENTRIES_PER_READ,
+                    "entries": rows,
                 })
                 return
             self._send(404, {"error": "no such path"})

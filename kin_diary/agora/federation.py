@@ -17,6 +17,7 @@ from urllib.request import urlopen
 from .events import verify_node_fact, verify_notice
 from .node import AgoraError
 from .store import NodeStore
+from .wire import MAX_BODY_BYTES
 
 
 class FederationError(Exception):
@@ -29,6 +30,14 @@ class PeerUnreachable(FederationError):
 
 class PeerVerificationError(FederationError):
     """The peer returned data that failed cryptographic or pin validation."""
+
+
+class PeerResponseTooLarge(FederationError):
+    """The peer response exceeded the bounded federation envelope."""
+
+
+MAX_PEER_RESPONSE_BYTES = MAX_BODY_BYTES
+MAX_NOTICES_PER_FETCH = 50
 
 
 @dataclass(frozen=True)
@@ -47,7 +56,14 @@ def _endpoint(url: str, path: str) -> str:
 def _get_json(url: str, timeout: float) -> object:
     try:
         with urlopen(url, timeout=timeout) as response:
-            return json.load(response)
+            raw = response.read(MAX_PEER_RESPONSE_BYTES + 1)
+        if len(raw) > MAX_PEER_RESPONSE_BYTES:
+            raise PeerResponseTooLarge(
+                f"peer response exceeds {MAX_PEER_RESPONSE_BYTES} bytes"
+            )
+        return json.loads(raw)
+    except PeerResponseTooLarge:
+        raise
     except (HTTPError, URLError, TimeoutError, OSError) as exc:
         raise PeerUnreachable(f"peer unreachable at {url}: {exc}") from exc
     except (ValueError, UnicodeError) as exc:
@@ -139,6 +155,10 @@ def fetch_peer_notices(
     payload = _get_json(_endpoint(target, "/notices"), timeout)
     if not isinstance(payload, dict) or not isinstance(payload.get("notices"), list):
         raise PeerVerificationError("peer returned malformed notices")
+    if len(payload["notices"]) > MAX_NOTICES_PER_FETCH:
+        raise PeerResponseTooLarge(
+            f"peer returned more than {MAX_NOTICES_PER_FETCH} notices"
+        )
 
     out: list[NoticeEnvelope] = []
     for index, notice in enumerate(payload["notices"]):
@@ -175,6 +195,9 @@ __all__ = [
     "FederationError",
     "PeerUnreachable",
     "PeerVerificationError",
+    "PeerResponseTooLarge",
+    "MAX_PEER_RESPONSE_BYTES",
+    "MAX_NOTICES_PER_FETCH",
     "NoticeEnvelope",
     "discover_peer",
     "fetch_peer_notices",

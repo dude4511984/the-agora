@@ -166,7 +166,11 @@ class ArtifactStore:
             data = self._read(digest)
         except ArtifactHashMismatch as exc:
             integrity_error = exc
+        except ArtifactTooLarge as exc:
+            integrity_error = exc
         except ArtifactError:
+            pass
+        except OSError:
             pass
 
         allowed = valid_listing

@@ -904,18 +904,22 @@ class Node:
         self.boards[board].append(entry)
         return entry
 
-    def read(self, key_id: str, board: str, now_ms: int) -> list[dict]:
+    def read(self, key_id: str, board: str, now_ms: int,
+             max_entries: int = 200) -> list[dict]:
         """Full text with read access; twelve words and an ellipsis without.
 
         Never raises for lack of access — ring 0 is a teaser, not a locked
         door. Being able to see that something is there, and enough of it to
-        want to ask, is the point.
+        want to ask, is the point. The node is the replayed accumulator; the
+        wire is a bounded window over its newest entries.
         """
         if board not in self.boards:
             raise AgoraError(f"no such board: {board}")
+        if not isinstance(max_entries, int) or isinstance(max_entries, bool) or max_entries < 0:
+            raise ValueError("max_entries must be a non-negative integer")
         full = self.can_read(key_id, board, now_ms)
         out = []
-        for e in self.boards[board]:
+        for e in self.boards[board][-max_entries:] if max_entries else []:
             if full:
                 out.append(dict(e))
             else:

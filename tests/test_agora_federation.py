@@ -20,6 +20,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from kin_diary.agora.events import sign_node_fact, sign_notice
 from kin_diary.agora.federation import (
+    MAX_PEER_RESPONSE_BYTES,
+    MAX_NOTICES_PER_FETCH,
+    PeerResponseTooLarge,
     PeerUnreachable,
     PeerVerificationError,
     discover_peer,
@@ -129,6 +132,28 @@ class FederationTests(unittest.TestCase):
         self.assertEqual(facts["node"], "Peer")
         self.assertEqual(notices[0].notice["subject"], self.notice["subject"])
         self.assertFalse(notices[0].relayed)
+
+
+    def test_an_oversize_peer_response_is_refused_before_parse(self):
+        """A peer is someone else's computer. json.load on the socket is
+        unbounded work on their word (P9a). More than the envelope is refused
+        before it is parsed or verified -- not a pin failure, its own type."""
+        pad = "x" * (MAX_PEER_RESPONSE_BYTES + 4096)
+        url = self.serve({"node": "Peer", "signed": self.fact, "pad": pad})
+        with self.assertRaises(PeerResponseTooLarge):
+            discover_peer(self.store, url)
+
+    def test_more_than_fifty_notices_is_refused_before_verify(self):
+        """The count fuse fires before the verify loop: the 51st notice never
+        reaches verify_notice (P9a). Even valid notices past the cap are a
+        dump, not a fetch."""
+        url = self.serve({"node": "Peer", "signed": self.fact}, [self.notice])
+        discover_peer(self.store, url)
+        _ResponseHandler.routes["/notices"]["notices"] = [
+            dict(self.notice) for _ in range(MAX_NOTICES_PER_FETCH + 1)
+        ]
+        with self.assertRaises(PeerResponseTooLarge):
+            fetch_peer_notices(self.store, "Peer")
 
 
 @unittest.skipUnless(
