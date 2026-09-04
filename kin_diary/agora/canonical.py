@@ -19,6 +19,7 @@ MAGIC_HOUSE_DECISION = "agora-house-decision-v1"
 MAGIC_BOARD_GRANT = "agora-board-grant-v1"
 MAGIC_BOARD_EVICT = "agora-board-evict-v1"
 MAGIC_BOARD_REVOKE = "agora-board-revoke-v1"
+MAGIC_KEY_QUARANTINE = "agora-key-quarantine-v1"
 MAGIC_REQUEST = "agora-request-v1"
 MAGIC_NODE_FACT = "agora-node-fact-v1"
 MAGIC_NOTICE = "agora-notice-v1"
@@ -212,6 +213,35 @@ def board_grant_canonical(
         ("ring", _ring(ring)),
         ("issuer_key_id", _hex64(issuer_key_id)),
         ("granted_at_unix_ms", _unix_ms(granted_at_unix_ms)),
+    ])
+
+
+def quarantine_canonical(
+    host_node: str,
+    key_id: str,
+    action: str,
+    reason: str,
+    at_unix_ms: int,
+) -> bytes:
+    """A resident key's quorum status, named by the steward. `action` is
+    "quarantine" (this key no longer counts toward valid_resident_keys, the
+    wheel, or grant-as-issuer) or "release" (forget that) and nothing else.
+
+    NOT eviction — eviction is a visitor; this is a resident key. The reason is
+    in the signed bytes, not a hash: a silent quarantine is a bit that could be
+    flipped. Release needs a reason too ("undo" is a reason).
+    """
+    if action not in ("quarantine", "release"):
+        raise ValueError("quarantine action must be quarantine or release")
+    r = _line_value(reason)
+    if not r.strip():
+        raise ValueError("quarantine requires a stated reason")
+    return _lines(MAGIC_KEY_QUARANTINE, [
+        ("host_node", _line_value(host_node)),
+        ("key_id", _hex64(key_id)),
+        ("action", _line_value(action)),
+        ("reason", r),
+        ("at_unix_ms", _unix_ms(at_unix_ms)),
     ])
 
 

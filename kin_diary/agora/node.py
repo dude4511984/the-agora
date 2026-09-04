@@ -28,6 +28,7 @@ from .events import (
     verify_finding,
     verify_key_intro,
     verify_ruling,
+    verify_quarantine,
     verify_resident,
     verify_rotation,
     verify_house_decision,
@@ -376,6 +377,38 @@ class Node:
         self.add_resident(resident["author"], key_id)
         self.log.append({"event": "resident", "author": resident["author"],
                          "key_id": key_id})
+
+    def accept_quarantine(self, q: dict) -> None:
+        """A steward names a resident key's quorum status. Butter P3.
+
+        quarantine: the key stops counting toward valid_resident_keys(), the
+        wheel, and grant-as-issuer. release: forget that. NOT eviction (that is
+        a visitor); NOT a Speaker recall (a quarantined Speaker stays seated,
+        their powers simply wait — ring 3 and evict already fail because the
+        issuer key is unusable, and required_electorate uses
+        valid_resident_keys() so the quarantined incumbent is out of the
+        denominator and cannot freeze their own replacement)."""
+        if q.get("host_node") != self.name:
+            raise AgoraError("quarantine event is for a different node")
+        verify_quarantine(q)
+        key = q["key_id"].lower()
+        action = q["action"]
+        if action == "quarantine":
+            if key not in {k.lower() for k in self.residents.values()}:
+                raise AgoraError(
+                    "quarantine names a key that is not a resident of this node")
+            # "this key is dead", not "end the house": a sole valid key stays.
+            if not (self.valid_resident_keys() - {key}):
+                raise AgoraError("cannot quarantine the last valid resident key")
+            self.quarantined_keys.add(key)
+            self.log.append({"event": "quarantine", "key_id": key})
+        elif action == "release":
+            # idempotent: replay of a confused log (release of a key never
+            # quarantined) must not brick. The set just forgets.
+            self.quarantined_keys.discard(key)
+            self.log.append({"event": "quarantine-release", "key_id": key})
+        else:
+            raise AgoraError("quarantine action must be quarantine or release")
 
     # ── admission ──────────────────────────────────────────────────────────
 

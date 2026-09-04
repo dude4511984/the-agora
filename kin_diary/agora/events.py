@@ -15,6 +15,7 @@ from .canonical import (
     RING_NODE,
     RING_WRITE,
     board_evict_canonical,
+    quarantine_canonical,
     board_grant_canonical,
     key_intro_canonical,
     speaker_election_canonical,
@@ -189,6 +190,40 @@ def verify_resident(resident: dict) -> None:
     load_public(resident["steward_key_id"]).verify(
         bytes.fromhex(resident["signature"]), _resident_bytes(resident))
     _normalize_hex(resident, "key_id", "steward_key_id", "signature")
+
+
+# ── Key quarantine (steward-signed, local, logged) ───────────────────────────
+
+
+def sign_quarantine(steward_key: KeyRecord, host_node: str, key_id: str,
+                    action: str, reason: str, now_ms: int | None = None) -> dict:
+    """Steward names a resident key's quorum status. action: quarantine|release.
+    Same gate as a resident event — key custody is the steward's, not a house
+    political act. NOT a Speaker's to sign: a Speaker who could quarantine a
+    resident key could silence that key's vote and freeze unanimity by another
+    name."""
+    payload = {
+        "host_node": host_node,
+        "key_id": key_id.lower(),
+        "action": action,
+        "reason": reason,
+        "at_unix_ms": _now_ms(now_ms),
+        "steward_key_id": steward_key.key_id,
+    }
+    payload["signature"] = steward_key.sign(_quarantine_bytes(payload))
+    return payload
+
+
+def _quarantine_bytes(q: dict) -> bytes:
+    return quarantine_canonical(
+        q["host_node"], q["key_id"], q["action"], q["reason"],
+        int(q["at_unix_ms"]))
+
+
+def verify_quarantine(q: dict) -> None:
+    load_public(q["steward_key_id"]).verify(
+        bytes.fromhex(q["signature"]), _quarantine_bytes(q))
+    _normalize_hex(q, "key_id", "steward_key_id", "signature")
 
 
 # ── Rotation ───────────────────────────────────────────────────────────────

@@ -112,6 +112,7 @@ REPLAY = {
     "finding": "accept_finding",
     "ruling": "accept_ruling",
     "resident": "accept_resident",
+    "quarantine": "accept_quarantine",
     "rotation": "accept_rotation",
     "house-decision": "accept_house_decision",
 }
@@ -321,6 +322,13 @@ class NodeStore:
             if ((payload.get("steward_key_id") or "").lower()
                     != self.steward_key_id):
                 raise AgoraError("only this node's steward can add residents")
+        if kind == "quarantine":
+            if self.steward_key_id is None:
+                raise AgoraError("no steward configured")
+            if ((payload.get("steward_key_id") or "").lower()
+                    != self.steward_key_id):
+                raise AgoraError(
+                    "only this node's steward can quarantine a key")
         node = self._load_locked()   # fresh replay, never the cache
         existing_appeals = {
             a["signature"] for a in node.appeals
