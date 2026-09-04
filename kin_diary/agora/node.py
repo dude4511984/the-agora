@@ -402,7 +402,7 @@ class Node:
         key = intro["visitor_key_id"]
         if key.lower() in self.ephemeral_key_ids:
             raise AgoraError("ephemeral keys cannot graduate on this node")
-        if key in self.evicted:
+        if key.lower() in self.evicted:
             # A resident must not be able to undo the Speaker's eviction by
             # vouching again. The Speaker overriding a resident's grant is
             # the whole reason the role exists; letting the same resident
@@ -589,7 +589,7 @@ class Node:
             author = self.resident_for_key(issuer)
             if author is None:
                 raise AgoraError("grant issuer is not a resident of this node")
-            if issuer in self.quarantined_keys:
+            if issuer.lower() in self.quarantined_keys:
                 raise AgoraError("issuer key is quarantined")
             if board == COLLAB:
                 # The collab board is the shared table, not any one
@@ -625,7 +625,7 @@ class Node:
         if not is_speaker and board != f"personal:{author}":
             raise AgoraError("a resident can only revoke on their own board")
 
-        held = self.grants.get(rev["visitor_key_id"])
+        held = self.grants.get(rev["visitor_key_id"].lower())
         if not held or board not in held:
             raise AgoraError("no such grant to revoke")
         del held[board]
@@ -675,7 +675,7 @@ class Node:
         sig = appeal["signature"]
         if any(a["signature"] == sig for a in self.appeals):
             return
-        eviction = self.evictions.get(appeal["evict_signature"])
+        eviction = self.evictions.get(appeal["evict_signature"].lower())
         if eviction is None:
             raise AgoraError("appeal names no eviction on this node")
         if appeal["appellant_key_id"] != eviction["visitor_key_id"]:
@@ -732,7 +732,7 @@ class Node:
             raise AgoraError("this appeal already has a ruling")
         self.rulings[sig] = ruling
         if ruling["decision"] == "overturned":
-            self.evicted.pop(appeal["appellant_key_id"], None)
+            self.evicted.pop(appeal["appellant_key_id"].lower(), None)
             self.log.append({"event": "appeal-overturned",
                              "appellant": appeal["appellant_key_id"]})
         else:
