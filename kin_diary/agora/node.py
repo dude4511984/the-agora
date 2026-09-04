@@ -920,12 +920,18 @@ class Node:
         """Published even at ring 0. A visitor who needs ring 3 or an
         eviction has to know who to ask; hiding it is pointless secrecy.
         """
+        paused = self.is_paused()
         return {
             "node": self.name,
             "speaker": self.speaker,
             "speaker_key_id": self.speaker_key_id,
             "residents": sorted(self.residents),
-            "paused": self.is_paused(),
-            "pause_reason": self.PAUSE_REASON if self.is_paused() else None,
+            # The officer to ask is the Speaker, OR the wheel-holder when no
+            # Speaker is seated, OR nobody (paused). holder is never the
+            # Speaker's key -- a seated Speaker has no holder. P5.
+            "holder": self.rotation_holder or "",
+            "paused": paused,
+            "pause_reason": self.PAUSE_REASON if paused else None,
+            "wheel_last_before_reduced": self.wheel_last_before_reduced(),
             "boards": sorted(self.boards),
         }

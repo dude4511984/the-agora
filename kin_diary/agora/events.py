@@ -422,14 +422,20 @@ __all__ = [
 
 def sign_node_fact(node_key: KeyRecord, node: str, speaker: str | None,
                    speaker_key_id: str | None, residents,
-                   now_ms: int | None = None) -> dict:
-    from .canonical import node_fact_canonical
+                   now_ms: int | None = None, *,
+                   holder: str | None = None, paused: bool = False,
+                   pause_reason: str | None = None,
+                   wheel_last_before_reduced: bool = False) -> dict:
     payload = {
         "node": node,
         "node_key_id": node_key.key_id,
         "speaker": speaker or "",
         "speaker_key_id": (speaker_key_id or ""),
         "residents": sorted(residents),
+        "holder": (holder or ""),
+        "paused": bool(paused),
+        "pause_reason": (pause_reason or ""),
+        "wheel_last_before_reduced": bool(wheel_last_before_reduced),
         "published_at_unix_ms": _now_ms(now_ms),
     }
     payload["signature"] = node_key.sign(_node_fact_bytes(payload))
@@ -440,7 +446,10 @@ def _node_fact_bytes(f: dict) -> bytes:
     from .canonical import node_fact_canonical
     return node_fact_canonical(
         f["node"], f["node_key_id"], f["speaker"], f["speaker_key_id"],
-        f["residents"], int(f["published_at_unix_ms"]))
+        f["residents"], int(f["published_at_unix_ms"]),
+        holder=f["holder"], paused=f["paused"],
+        pause_reason=f["pause_reason"],
+        wheel_last_before_reduced=f["wheel_last_before_reduced"])
 
 
 def verify_node_fact(f: dict, expected_node_key_id: str | None = None) -> None:

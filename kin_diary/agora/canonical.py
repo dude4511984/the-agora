@@ -338,6 +338,11 @@ def node_fact_canonical(
     speaker_key_id: str,
     residents,
     published_at_unix_ms: int,
+    *,
+    holder: str,
+    paused: bool,
+    pause_reason: str,
+    wheel_last_before_reduced: bool,
 ) -> bytes:
     """What a node says about itself, signed by the node's own key.
 
@@ -345,6 +350,16 @@ def node_fact_canonical(
     WHO TO ASK for ring 3, so anyone able to answer on the wire could
     advertise a Speaker key of their own choosing. Over plain HTTP on a
     LAN that is not hypothetical.
+
+    P5 closes the rest of that same hole. The officer to ask is not only
+    the Speaker: a house with no elected Speaker but a rotated wheel-holder
+    has an officer (the holder), and `paused`/`pause_reason` tell a visitor
+    whether the door is even open. Those lived in the unsigned wrapper, so a
+    MITM could invent a `holder`, or flip `paused`, and the signature still
+    verified. They are in the bytes now. `holder` is the wheel-holder's key,
+    NEVER the Speaker's (conflating them is how board_evict's docstring named
+    the wrong object); empty when none. `paused`/`pause_reason` stay derived
+    from is_paused() at the source, signed here.
 
     A node key is not a mind's key. It attests "this is what this node
     publishes about itself", nothing about who signed the events inside.
@@ -355,6 +370,11 @@ def node_fact_canonical(
         ("speaker", _line_value(speaker or "")),
         ("speaker_key_id", _hex64(speaker_key_id) if speaker_key_id else ""),
         ("residents", ",".join(sorted(_line_value(r) for r in residents))),
+        ("holder", _hex64(holder) if holder else ""),
+        ("paused", "true" if paused else "false"),
+        ("pause_reason", _line_value(pause_reason or "")),
+        ("wheel_last_before_reduced",
+         "true" if wheel_last_before_reduced else "false"),
         ("published_at_unix_ms", _unix_ms(published_at_unix_ms)),
     ])
 

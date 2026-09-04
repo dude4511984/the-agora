@@ -170,9 +170,17 @@ class AgoraHandler(BaseHTTPRequestHandler):
                 facts = node.node_facts()
                 if self.node_key is not None:
                     from .events import sign_node_fact
+                    # Sign from the same dict the unsigned mirror is built
+                    # from, so paused/holder are computed once and the two
+                    # cannot drift. The signed object is the authoritative
+                    # one (federation reads facts["signed"], not the wrapper).
                     facts["signed"] = sign_node_fact(
                         self.node_key, node.name, node.speaker,
-                        node.speaker_key_id, node.residents)
+                        node.speaker_key_id, node.residents,
+                        holder=facts["holder"], paused=facts["paused"],
+                        pause_reason=facts["pause_reason"],
+                        wheel_last_before_reduced=facts[
+                            "wheel_last_before_reduced"])
                 self._send(200, facts)
                 return
             if self.path == "/view":

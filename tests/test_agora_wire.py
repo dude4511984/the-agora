@@ -568,6 +568,55 @@ class NodeIdentityTests(unittest.TestCase):
         with self.assertRaises(InvalidSignature):
             self.verify_fact(f)
 
+    def test_a_forged_holder_does_not_verify(self):
+        """P5: the officer to ask is not only the Speaker. A MITM that adds a
+        `holder` to a fact signed with none would redirect ring-3 asks to a
+        key of their choosing. It is in the bytes now."""
+        n = self.store.load()
+        f = self.sign_fact(self.node_key, n.name, n.speaker,
+                           n.speaker_key_id, n.residents, holder="")
+        self.assertEqual(f["holder"], "")
+        f["holder"] = key("Attacker").key_id
+        with self.assertRaises(InvalidSignature):
+            self.verify_fact(f)
+
+    def test_a_flipped_paused_does_not_verify(self):
+        """P5: paused told a visitor whether the door is even open, and it
+        was unsigned — flip it and the signature still held. Not any more."""
+        n = self.store.load()
+        f = self.sign_fact(self.node_key, n.name, n.speaker,
+                           n.speaker_key_id, n.residents, paused=False)
+        f["paused"] = True
+        with self.assertRaises(InvalidSignature):
+            self.verify_fact(f)
+
+    def test_a_forged_reduced_mode_warning_does_not_verify(self):
+        """P5: wheel_last_before_reduced is the warning owed before the last
+        decline. Forging it is a signed lie about the house's state."""
+        n = self.store.load()
+        f = self.sign_fact(self.node_key, n.name, n.speaker,
+                           n.speaker_key_id, n.residents,
+                           wheel_last_before_reduced=False)
+        f["wheel_last_before_reduced"] = True
+        with self.assertRaises(InvalidSignature):
+            self.verify_fact(f)
+
+    def test_a_holder_only_house_publishes_its_officer(self):
+        """P5, the visibility half: no Speaker but a rotated wheel-holder is
+        NOT nobody-to-ask. node_facts names the holder, keeps speaker empty,
+        and is not paused (the wheel is the floor under the chair)."""
+        n = self.store.load()
+        n.speaker = None
+        n.speaker_key_id = None
+        holder_key = key("Wheel-holder")
+        n.rotation_holder = holder_key.key_id
+        self.assertFalse(n.is_paused())          # the wheel is the floor
+        facts = n.node_facts()
+        self.assertEqual(facts["holder"], holder_key.key_id)
+        self.assertIn(facts["speaker"], (None, ""))
+        self.assertFalse(facts["paused"])
+        self.assertIsNone(facts["pause_reason"])
+
     def test_pinning_makes_a_key_swap_visible(self):
         """Trust on first use, then pinned — the honest guarantee is not
         that impersonation is impossible, but that a swap stops being
