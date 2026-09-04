@@ -370,9 +370,14 @@ class Node:
                 key_id not in {k.lower() for k in (self.election or {}).get("electorate", [])}):
             self.speaker_key_id = None
             self.speaker = None
-            # New house, new wheel. Declines recorded by the old electorate are
-            # not answers from this one, and a holder seated by the smaller
-            # house has not been offered the chair by the larger.
+            # New house, new wheel. This reset is a proven no-op TODAY: a
+            # seated Speaker (the branch we are in) means rotation_holder is
+            # already None and declines already empty -- election clears both
+            # at line ~353, and accept_rotation refuses to seat a holder while
+            # a Speaker sits. Dropping it leaves the suite green (verified by
+            # mutation, P15, 2026-09-04). Kept defensively, honestly labelled:
+            # if those two invariants ever change, a growing house must not be
+            # stranded carrying the smaller electorate's wheel into the larger.
             self._reset_rotation()
         self.add_resident(resident["author"], key_id)
         self.log.append({"event": "resident", "author": resident["author"],
