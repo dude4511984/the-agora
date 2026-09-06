@@ -113,6 +113,7 @@ PAGE = """<!doctype html>
 <header>
   <h1>Agora&nbsp;Map</h1>
   <select id="node"></select>
+  <button id="mode">place view →</button>
   <button id="refresh">refresh</button>
   <label class="status"><input type="checkbox" id="live" checked> live</label>
   <span class="sp"></span>
@@ -128,6 +129,9 @@ PRESETS.forEach(([name,url]) => {
   sel.appendChild(o);
 });
 let timer = null;
+let MODE = 'map';        // 'map' (top-down) | 'place' (you-are-here)
+let CURRENT = null;      // current place_id in place mode
+let STATE = null;        // last {data, byId, roots} for navigation
 
 function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
@@ -142,7 +146,7 @@ function buildTree(view){
     const par = n.p.parent || '';
     if(par && byId[par]) byId[par].children.push(n); else roots.push(n);
   });
-  return roots;
+  return { roots, byId };
 }
 
 function renderPlace(n){
@@ -179,9 +183,15 @@ async function load(){
     if(!r.ok || data.error) throw new Error(data.error || ('HTTP '+r.status));
     const world = document.getElementById('world');
     world.innerHTML = '';
-    const roots = buildTree(data);
-    if(!roots.length){ world.innerHTML = '<p class="empty">This node publishes no places yet.</p>'; }
-    roots.sort((a,b)=> (a.p.place_id>b.p.place_id?1:-1)).forEach(n => world.appendChild(renderPlace(n)));
+    const tree = buildTree(data);
+    STATE = { data, byId: tree.byId, roots: tree.roots };
+    if(!tree.roots.length){
+      world.innerHTML = '<p class="empty">This node publishes no places yet.</p>';
+    } else if(MODE === 'place'){
+      renderPlaceView(world);
+    } else {
+      tree.roots.sort((a,b)=> (a.p.place_id>b.p.place_id?1:-1)).forEach(n => world.appendChild(renderPlace(n)));
+    }
     const when = data.as_of_unix_ms ? new Date(data.as_of_unix_ms).toLocaleTimeString() : '';
     const signed = data.signature ? ' · <span class="ok">signed</span>' : '';
     st.innerHTML = `<span class="ok">${esc(data.node||'node')}</span> · ${(data.places||[]).length} places · `
@@ -191,18 +201,64 @@ async function load(){
   }
 }
 
+// ── place view: one room at a time, doors you walk through ──
+function renderPlaceView(world){
+  const { byId, roots, data } = STATE;
+  if(!CURRENT || !byId[CURRENT]){
+    CURRENT = roots.slice().sort((a,b)=>a.p.place_id<b.p.place_id?-1:1)[0].p.place_id;
+  }
+  const n = byId[CURRENT];
+  const kind = n.p.kind || 'place';
+  const parent = n.p.parent || '';
+  const occ = n.occupants.length
+    ? n.occupants.map(o=>`<span class="tag who">${esc(o.label||(o.key_id||'').slice(0,8)||'someone')}</span>`).join('')
+    : '<span class="empty">no one here yet</span>';
+  const wares = (kind === 'kiosk')
+    ? (n.wares.length ? n.wares.map(w=>`<span class="tag ware">${esc(w.title||w.listing_id)}</span>`).join('')
+                      : '<span class="empty">no wares listed</span>')
+    : '';
+  let nav = '';
+  if(parent) nav += `<button class="door" data-place="${esc(parent)}">⟵ ${esc(parent)}</button>`;
+  n.children.slice().sort((a,b)=>a.p.place_id<b.p.place_id?-1:1).forEach(c =>
+    nav += `<button class="door" data-place="${esc(c.p.place_id)}">${esc(c.p.place_id)} · ${esc(c.p.kind)} →</button>`);
+  n.doors.forEach(d =>
+    nav += `<button class="door" data-url="${esc(d.url)}" ${d.url?'':'disabled'} title="${esc(d.peer_key_id||'')}">`
+         + `${d.locked?'<span class="lock">🔒</span> ':''}${esc(d.peer)} (node) →</button>`);
+  world.innerHTML =
+    `<div class="place">
+       <div class="head"><span class="kind ${esc(kind)}">${esc(kind)}</span>`
+     + `<span class="pid">${esc(CURRENT)} <span class="n">· you are here on ${esc(data.node)}</span></span></div>
+       <div class="body">
+         <div class="row"><span class="label">here</span>${occ}</div>`
+     + (wares ? `<div class="row"><span class="label">wares</span>${wares}</div>` : '')
+     + `<div class="row"><span class="label">doors</span>${nav || '<span class="empty">nowhere to go</span>'}</div>
+       </div>
+     </div>`;
+}
+
 document.getElementById('world').addEventListener('click', e => {
   const b = e.target.closest('.door');
-  if(!b || !b.dataset.url) return;
-  // step through a door: point the map at that peer, if it is a preset or private
+  if(!b) return;
+  if(b.dataset.place){                 // walk to another room on this node
+    CURRENT = b.dataset.place; load(); return;
+  }
+  if(!b.dataset.url) return;
+  // step through a door to a peer node: re-point the map, land at its root
   const url = b.dataset.url;
   let opt = [...sel.options].find(o => o.value.replace(/\\/$/,'') === url.replace(/\\/$/,''));
   if(!opt){ opt = document.createElement('option'); opt.value = url; opt.textContent = b.textContent.replace(/[🔒→\\s]/g,'') + ' — ' + url; sel.appendChild(opt); }
+  CURRENT = null;                      // new node, start at its concourse
   sel.value = opt.value; load();
 });
 
+document.getElementById('mode').addEventListener('click', () => {
+  MODE = (MODE === 'map') ? 'place' : 'map';
+  document.getElementById('mode').textContent = (MODE === 'map') ? 'place view →' : '← map view';
+  CURRENT = null; load();
+});
+
 document.getElementById('refresh').addEventListener('click', load);
-sel.addEventListener('change', load);
+sel.addEventListener('change', () => { CURRENT = null; load(); });
 function arm(){ if(timer) clearInterval(timer); if(document.getElementById('live').checked) timer = setInterval(load, 5000); }
 document.getElementById('live').addEventListener('change', arm);
 load(); arm();
