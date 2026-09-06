@@ -1,0 +1,16 @@
+[Unit]
+Description=Agora presence heartbeat
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/kin_diary
+ExecStart=/usr/bin/python3 -u %h/kin_diary/presence_heartbeat.py Home 8770
+Restart=on-failure
+RestartSec=15
+TimeoutStopSec=30
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=default.target
