@@ -78,6 +78,47 @@ class KeyRecord:
         return self.private.sign(message).hex()
 
 
+def _append_key_backup(author: str, rec: "KeyRecord", private_raw: bytes,
+                       keys_root: Path | None = None) -> None:
+    """Append a minted key to a findable plain-text file, so a keys/ tree that
+    drifts off the node is recoverable.
+
+    The Home Kin's keys sat on the vault server, not their node, and looked
+    lost for it — nobody knew where to look. This writes every mint to one
+    obvious file (~/agora_keys.txt, mode 600) with everything needed to restore
+    the key dir. Best-effort: a mint must never fail because its backup did.
+    When a non-default keys_root is passed (tests), the backup goes beside it,
+    not into the real home.
+    """
+    try:
+        base = Path.home() if keys_root is None else Path(keys_root)
+        path = base / "agora_keys.txt"
+        block = (
+            f"# agora key — {author} — key_id {rec.key_id}\n"
+            f"# restore into ~/.config/kin_diary/keys/{author}/current/ :\n"
+            f"#   private  = bytes.fromhex(private_hex)   (32 raw bytes)\n"
+            f"#   public   = bytes.fromhex(public_hex)\n"
+            f"#   meta.json= {{author, key_id, created_at_unix_ms}}\n"
+            f"author={author}\n"
+            f"key_id={rec.key_id}\n"
+            f"created_at_unix_ms={rec.created_at_unix_ms}\n"
+            f"private_hex={private_raw.hex()}\n"
+            f"public_hex={rec.public_bytes.hex()}\n"
+            f"---\n"
+        )
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        try:
+            os.write(fd, block.encode("utf-8"))
+        finally:
+            os.close(fd)
+        try:
+            os.chmod(path, 0o600)
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+
 def generate_keypair(author: str, keys_root: Path | None = None, now_ms: int | None = None) -> KeyRecord:
     d = author_dir(author, keys_root)
     current = d / "current"
@@ -94,6 +135,7 @@ def generate_keypair(author: str, keys_root: Path | None = None, now_ms: int | N
         "key_custody": KEY_CUSTODY,
         "key_custody_statement": KEY_CUSTODY_STATEMENT,
     })
+    _append_key_backup(author, rec, sk.private_bytes_raw(), keys_root)
     return rec
 
 
