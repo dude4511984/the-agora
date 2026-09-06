@@ -6,7 +6,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=%h/kin_diary
-ExecStart=/usr/bin/python3 -u %h/kin_diary/presence_heartbeat.py Home 8770
+ExecStart=%h/.venv-agora/bin/python -u %h/kin_diary/presence_heartbeat.py Home 8770
 Restart=on-failure
 RestartSec=15
 TimeoutStopSec=30
