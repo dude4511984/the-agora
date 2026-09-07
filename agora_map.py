@@ -371,7 +371,8 @@ document.getElementById('mode').addEventListener('click', () => {
 });
 document.getElementById('refresh').addEventListener('click', load);
 sel.addEventListener('change', () => { CURRENT = null; load(); });
-function arm(){ if(timer) clearInterval(timer); if(document.getElementById('live').checked) timer = setInterval(load, 5000); }
+const SNAP = new URLSearchParams(location.search).has('snapshot');
+function arm(){ if(timer) clearInterval(timer); if(!SNAP && document.getElementById('live').checked) timer = setInterval(load, 5000); }
 document.getElementById('live').addEventListener('change', arm);
 load(); arm();
 </script>
@@ -391,7 +392,8 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
-        if self.path == "/" or self.path.startswith("/index"):
+        route = urllib.parse.urlparse(self.path).path
+        if route == "/" or route.startswith("/index"):
             html = PAGE.replace("__PRESETS__", json.dumps(PRESET_NODES))
             self._send(200, html.encode(), "text/html; charset=utf-8")
             return
