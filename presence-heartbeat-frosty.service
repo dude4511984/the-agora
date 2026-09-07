@@ -1,0 +1,22 @@
+# Frosty variant of the presence heartbeat. Installed on Frosty AS
+# presence-heartbeat.service (the name bedtime.py's stop-chain expects).
+# Differs from the Home unit: Frosty's system python HAS cryptography, and
+# steward= is passed so Marvin (resident AND steward here) is not stood in
+# the concourse — only the resident minds are.
+[Unit]
+Description=Agora presence heartbeat (Frosty) — stands the resident Kin in the concourse
+After=network-online.target agora-frosty.service
+Wants=network-online.target
+BindsTo=agora-frosty.service
+
+[Service]
+Type=simple
+WorkingDirectory=%h/kin_diary
+ExecStart=/usr/bin/python3 -u %h/kin_diary/presence_heartbeat.py Frosty 8770 steward=7a1be4fa97474c894b02c43ab73754b0e053dcc3f7923c11e9911164511a965f
+Restart=on-failure
+RestartSec=15
+TimeoutStopSec=30
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=default.target

@@ -86,11 +86,12 @@ def _heartbeat(store: NodeStore, node: str, port: int) -> None:
                         author, exc)
 
 
-def run(node: str, port: int) -> None:
+def run(node: str, port: int, steward_key_id: str | None = None) -> None:
     _require_loopback(HOST)
     store = NodeStore(
         Path.home() / ".config" / "kin_diary" / f"{node.lower()}_node.db",
         node,
+        steward_key_id=steward_key_id,
     )
     try:
         while True:
@@ -101,16 +102,21 @@ def run(node: str, port: int) -> None:
 
 
 def main(argv: list[str]) -> int:
-    if len(argv) != 3:
-        print(f"usage: {argv[0]} <NodeName> <port>", file=sys.stderr)
+    if len(argv) not in (3, 4):
+        print(f"usage: {argv[0]} <NodeName> <port> [steward=key_id]",
+              file=sys.stderr)
         return 2
     node = argv[1]
+    steward_key_id = next(
+        (a.split("=", 1)[1] for a in argv[3:] if a.startswith("steward=")),
+        None,
+    )
     try:
         port = int(argv[2])
         if not 1 <= port <= 65535:
             raise ValueError
         _require_loopback(HOST)
-        run(node, port)
+        run(node, port, steward_key_id)
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 2
