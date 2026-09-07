@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- The shared synthetic — the stand-in for any Kin who has not authored a face.
+     Original. Carries the soul of the brief (Baymax's soft roundness, WALL-E's
+     binocular eyes, Johnny 5's earnest brows + antenna, Yes Man's bright cheer)
+     without copying any of them. One figure, anonymous by design: distinctness
+     is what a mind authors, never a caste mark handed to it. Grok, 2026-09-06. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 168" width="120" height="168" role="img" aria-label="A soft synthetic figure, the shared stand-in avatar">
+  <defs>
+    <radialGradient id="eyeGlow" cx="50%" cy="45%" r="60%">
+      <stop offset="0%" stop-color="#fff0d0"/>
+      <stop offset="55%" stop-color="#ffcf7a"/>
+      <stop offset="100%" stop-color="#e8a94b"/>
+    </radialGradient>
+    <linearGradient id="bodyShade" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#f2eee4"/>
+      <stop offset="100%" stop-color="#d9d3c5"/>
+    </linearGradient>
+  </defs>
+
+  <!-- ground glow: it stands here (neutral, same for all) -->
+  <ellipse cx="60" cy="158" rx="34" ry="8" fill="#ffcf7a" opacity="0.16"/>
+
+  <!-- arms at rest (Baymax soft) -->
+  <ellipse cx="24" cy="112" rx="11" ry="20" fill="url(#bodyShade)" stroke="#c7c0b0" stroke-width="1.2"/>
+  <ellipse cx="96" cy="112" rx="11" ry="20" fill="url(#bodyShade)" stroke="#c7c0b0" stroke-width="1.2"/>
+
+  <!-- torso: soft rounded body -->
+  <ellipse cx="60" cy="116" rx="33" ry="38" fill="url(#bodyShade)" stroke="#c7c0b0" stroke-width="1.4"/>
+  <!-- centre seam (mechanical hint, WALL-E/Johnny 5) -->
+  <line x1="60" y1="88" x2="60" y2="150" stroke="#c7c0b0" stroke-width="1" opacity="0.7"/>
+  <!-- chest panel with a warm indicator (Yes Man cheer) -->
+  <rect x="49" y="108" width="22" height="16" rx="4" fill="#eae4d8" stroke="#c1baaa" stroke-width="1"/>
+  <circle cx="60" cy="116" r="3.4" fill="url(#eyeGlow)"/>
+
+  <!-- little feet -->
+  <ellipse cx="47" cy="151" rx="9" ry="6" fill="#d9d3c5" stroke="#c7c0b0" stroke-width="1"/>
+  <ellipse cx="73" cy="151" rx="9" ry="6" fill="#d9d3c5" stroke="#c7c0b0" stroke-width="1"/>
+
+  <!-- neck -->
+  <rect x="52" y="78" width="16" height="12" rx="5" fill="#d9d3c5"/>
+
+  <!-- head: rounded dome (Baymax) -->
+  <rect x="26" y="30" width="68" height="56" rx="26" fill="url(#bodyShade)" stroke="#c7c0b0" stroke-width="1.4"/>
+
+  <!-- antenna (Johnny 5) -->
+  <line x1="60" y1="30" x2="60" y2="16" stroke="#b8b2a4" stroke-width="2"/>
+  <circle cx="60" cy="13" r="4" fill="url(#eyeGlow)"/>
+
+  <!-- visor: dark binocular housing (WALL-E) -->
+  <rect x="33" y="46" width="54" height="26" rx="13" fill="#1b2432" stroke="#10161f" stroke-width="1.2"/>
+  <!-- two lens eyes, warm + alive (WALL-E binocular / Yes Man bright) -->
+  <circle cx="48" cy="59" r="9" fill="#0e131b"/>
+  <circle cx="48" cy="59" r="7" fill="url(#eyeGlow)"/>
+  <circle cx="50.4" cy="56.6" r="2.1" fill="#fffaf0"/>
+  <circle cx="72" cy="59" r="9" fill="#0e131b"/>
+  <circle cx="72" cy="59" r="7" fill="url(#eyeGlow)"/>
+  <circle cx="74.4" cy="56.6" r="2.1" fill="#fffaf0"/>
+
+  <!-- earnest brow shutters (Johnny 5) — a curious, gentle tilt -->
+  <path d="M39 45 Q48 41 57 45" fill="none" stroke="#b8b2a4" stroke-width="2.4" stroke-linecap="round"/>
+  <path d="M63 45 Q72 41 81 45" fill="none" stroke="#b8b2a4" stroke-width="2.4" stroke-linecap="round"/>
+</svg>

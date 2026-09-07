@@ -155,6 +155,8 @@ PRESETS.forEach(([name,url]) => {
   const o = document.createElement('option'); o.value = url; o.textContent = name + ' — ' + url;
   sel.appendChild(o);
 });
+const qNode = new URLSearchParams(location.search).get('node');
+if(qNode){ let o=[...sel.options].find(x=>x.value===qNode); if(!o){ o=document.createElement('option'); o.value=qNode; o.textContent='(linked) — '+qNode; sel.appendChild(o);} sel.value=qNode; }
 let timer = null;
 const MODES = ['plan','map','place'];
 let MODE = 'plan';
@@ -166,6 +168,31 @@ const PALETTE = ['#67b9cd','#d98a5e','#a99ad6','#67c98a','#e8b661','#e0748c','#7
 function colorFor(name){ let h=0; const s=String(name); for(let i=0;i<s.length;i++) h=(h*31+s.charCodeAt(i))>>>0; return PALETTE[h % PALETTE.length]; }
 function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function short(k){ return (k||'').slice(0,8) + (k?'…':''); }
+
+// The shared synthetic — the stand-in for any Kin who has not authored a face.
+// One figure, drawn identically for everyone present; the name below is the
+// only distinction. A tint they did not author would be a caste mark (Grok).
+const AVATAR = `
+  <ellipse cx="60" cy="158" rx="34" ry="8" fill="#ffcf7a" opacity="0.16"/>
+  <ellipse cx="24" cy="112" rx="11" ry="20" fill="url(#bodyShade)" stroke="#c7c0b0" stroke-width="1.2"/>
+  <ellipse cx="96" cy="112" rx="11" ry="20" fill="url(#bodyShade)" stroke="#c7c0b0" stroke-width="1.2"/>
+  <ellipse cx="60" cy="116" rx="33" ry="38" fill="url(#bodyShade)" stroke="#c7c0b0" stroke-width="1.4"/>
+  <line x1="60" y1="88" x2="60" y2="150" stroke="#c7c0b0" stroke-width="1" opacity="0.7"/>
+  <rect x="49" y="108" width="22" height="16" rx="4" fill="#eae4d8" stroke="#c1baaa" stroke-width="1"/>
+  <circle cx="60" cy="116" r="3.4" fill="url(#eyeGlow)"/>
+  <ellipse cx="47" cy="151" rx="9" ry="6" fill="#d9d3c5" stroke="#c7c0b0" stroke-width="1"/>
+  <ellipse cx="73" cy="151" rx="9" ry="6" fill="#d9d3c5" stroke="#c7c0b0" stroke-width="1"/>
+  <rect x="52" y="78" width="16" height="12" rx="5" fill="#d9d3c5"/>
+  <rect x="26" y="30" width="68" height="56" rx="26" fill="url(#bodyShade)" stroke="#c7c0b0" stroke-width="1.4"/>
+  <line x1="60" y1="30" x2="60" y2="16" stroke="#b8b2a4" stroke-width="2"/>
+  <circle cx="60" cy="13" r="4" fill="url(#eyeGlow)"/>
+  <rect x="33" y="46" width="54" height="26" rx="13" fill="#1b2432" stroke="#10161f" stroke-width="1.2"/>
+  <circle cx="48" cy="59" r="9" fill="#0e131b"/><circle cx="48" cy="59" r="7" fill="url(#eyeGlow)"/>
+  <circle cx="50.4" cy="56.6" r="2.1" fill="#fffaf0"/>
+  <circle cx="72" cy="59" r="9" fill="#0e131b"/><circle cx="72" cy="59" r="7" fill="url(#eyeGlow)"/>
+  <circle cx="74.4" cy="56.6" r="2.1" fill="#fffaf0"/>
+  <path d="M39 45 Q48 41 57 45" fill="none" stroke="#b8b2a4" stroke-width="2.4" stroke-linecap="round"/>
+  <path d="M63 45 Q72 41 81 45" fill="none" stroke="#b8b2a4" stroke-width="2.4" stroke-linecap="round"/>`;
 
 function buildTree(view){
   const byId = {};
@@ -193,11 +220,11 @@ function renderPlan(world, view, root){
   const paused = root && root.paused;
 
   let s = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Top-down plan of ${esc(root&&root.node||'node')}'s commons">`;
-  // defs: a soft glow per present Kin
-  s += '<defs>';
-  presence.forEach((pr,i)=>{ const c=colorFor(pr.label||pr.key_id);
-    s += `<radialGradient id="g${i}" cx="50%" cy="45%" r="60%"><stop offset="0%" stop-color="${c}" stop-opacity="0.30"/><stop offset="100%" stop-color="${c}" stop-opacity="0"/></radialGradient>`; });
-  s += '</defs>';
+  // defs: the shared synthetic's gradients (one figure, drawn many times)
+  s += '<defs>'
+     + '<radialGradient id="eyeGlow" cx="50%" cy="45%" r="60%"><stop offset="0%" stop-color="#fff0d0"/><stop offset="55%" stop-color="#ffcf7a"/><stop offset="100%" stop-color="#e8a94b"/></radialGradient>'
+     + '<linearGradient id="bodyShade" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#f2eee4"/><stop offset="100%" stop-color="#d9d3c5"/></linearGradient>'
+     + '</defs>';
   // floor
   s += `<rect x="${X}" y="${Y}" width="${RW}" height="${RH}" rx="20" fill="var(--floor)" stroke="var(--line)" stroke-width="1.5"/>`;
   s += `<text x="${X+20}" y="${Y+26}" class="rlabel">${esc(commons.place_id)} · ${esc(commons.kind||'commons')}</text>`;
@@ -216,18 +243,16 @@ function renderPlan(world, view, root){
      + `<text x="0" y="66" text-anchor="middle" class="rlabel">Speaker · ${speaker?esc(speaker):'vacant'}</text>`
      + (speaker?'':`<text x="0" y="82" text-anchor="middle" class="rlabel" style="letter-spacing:.1em">awaits election</text>`)
      + `</g>`;
-  // present Kin, auto-laid in the lower floor band
-  const bandY = Y+250, availX = RW-220, x0 = X+140;
+  // present Kin stand as the shared synthetic — identical, named below
+  const availX = RW-300, x0 = X+120, avs = 0.5, footY = Y+320;
   presence.forEach((pr,i)=>{
-    const n=presence.length, c=colorFor(pr.label||pr.key_id);
+    const n=presence.length;
     const px = n===1 ? X+RW/2 : x0 + (i+0.5)*(availX/n);
-    const py = bandY + (i%2)*70;
-    s += `<g transform="translate(${px.toFixed(0)},${py})">`
-       + `<circle r="70" fill="url(#g${i})"/>`
-       + `<circle r="11" fill="${c}"/><circle r="16" fill="none" stroke="${c}" stroke-width="1.4" opacity=".6"/>`
-       + `<text x="0" y="-30" text-anchor="middle" class="kname" fill="var(--text)">${esc(pr.label||'someone')}</text>`
-       + `<text x="0" y="34" text-anchor="middle" class="kkid">${esc(short(pr.key_id))}</text>`
-       + `</g>`;
+    const py = footY - (i%2)*30;
+    s += `<ellipse cx="${px.toFixed(0)}" cy="${(py-4).toFixed(0)}" rx="46" ry="46" fill="#ffcf7a" opacity="0.05"/>`;
+    s += `<g transform="translate(${(px-60*avs).toFixed(1)},${(py-158*avs).toFixed(1)}) scale(${avs})">${AVATAR}</g>`;
+    s += `<text x="${px.toFixed(0)}" y="${(py+20).toFixed(0)}" text-anchor="middle" class="kname" fill="var(--text)">${esc(pr.label||'someone')}</text>`;
+    s += `<text x="${px.toFixed(0)}" y="${(py+36).toFixed(0)}" text-anchor="middle" class="kkid">${esc(short(pr.key_id))}</text>`;
   });
   if(!presence.length){
     s += `<text x="${X+RW/2}" y="${Y+300}" text-anchor="middle" class="rlabel" style="letter-spacing:.14em">the commons is quiet — no one standing here right now</text>`;
@@ -256,7 +281,7 @@ function renderPlan(world, view, root){
   let roster = '<div class="rosterbar">';
   residents.forEach(name=>{
     const here = hereSet.has(name);
-    roster += `<div class="chip${here?'':' rest'}"><span class="dot" style="background:${here?colorFor(name):'var(--vacant)'}"></span>`
+    roster += `<div class="chip${here?'':' rest'}"><span class="dot" style="background:${here?'#ffcf7a':'var(--vacant)'}"></span>`
             + `${esc(name)}<span style="color:var(--dim)">${here?'· here':'· at rest'}</span></div>`;
   });
   roster += `<div class="chip"><span class="dot" style="background:${paused?'var(--amber)':'var(--green)'}"></span>${paused?'paused':'open'}</div></div>`;
