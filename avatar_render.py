@@ -178,7 +178,7 @@ class OpenAIImageBackend(Backend):
 class XaiImageBackend(Backend):
     name = "xai"
     key_env = "XAI_API_KEY"
-    default_model = "grok-2-image"
+    default_model = "grok-imagine-image-2.0"
 
     def build_request(self, prompt, model, size, api_key):
         url = "https://api.x.ai/v1/images/generations"
@@ -292,6 +292,20 @@ BACKENDS = {b.name: b for b in [
 ]}
 
 
+def _sniff_mime(b: bytes) -> str | None:
+    if b[:2] == b"\xff\xd8":
+        return "image/jpeg"
+    if b[:8] == b"\x89PNG\r\n\x1a\n":
+        return "image/png"
+    if b[:6] in (b"GIF87a", b"GIF89a"):
+        return "image/gif"
+    if b[:4] == b"RIFF" and b[8:12] == b"WEBP":
+        return "image/webp"
+    if b.lstrip()[:5] == b"<?xml" or b"<svg" in b[:256]:
+        return "image/svg+xml"
+    return None
+
+
 def _fetch(url: str) -> bytes:
     if not url.lower().startswith("https://"):
         raise ValueError("image url must be https")
@@ -321,15 +335,20 @@ def render(prompt: str, backend: str = "mock", model: str | None = None,
 
     url, headers, body = be.build_request(prompt, model, size, api_key)
     if url is None:                          # mock / offline backend
-        return be.parse_response(200, b"")
-    try:
-        req = urllib.request.Request(url, data=body, headers=headers, method="POST")
-        with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT) as resp:
-            return be.parse_response(resp.status, resp.read(24 * 1024 * 1024))
-    except urllib.error.HTTPError as e:
-        return be.parse_response(e.code, e.read())
-    except Exception as e:
-        return RenderResult(be.name, model, error=f"transport: {e}")
+        res = be.parse_response(200, b"")
+    else:
+        try:
+            req = urllib.request.Request(url, data=body, headers=headers, method="POST")
+            with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT) as resp:
+                res = be.parse_response(resp.status, resp.read(24 * 1024 * 1024))
+        except urllib.error.HTTPError as e:
+            res = be.parse_response(e.code, e.read())
+        except Exception as e:
+            res = RenderResult(be.name, model, error=f"transport: {e}")
+    res.model = model                        # the model actually asked for
+    if res.ok and res.image_bytes:
+        res.mime = _sniff_mime(res.image_bytes) or res.mime
+    return res
 
 
 # ── CLI (Kin-free) ──────────────────────────────────────────────────────────
