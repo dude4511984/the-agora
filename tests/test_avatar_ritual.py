@@ -246,6 +246,43 @@ class LoopRules(unittest.TestCase):
         self.assertFalse(res["claimed"])
 
 
+class TheFaceIsNamedForItsAuthor(unittest.TestCase):
+    def test_face_is_named_for_the_kin_and_the_receipt_points_at_it(self):
+        import json as _json
+        with _Harness(self, ["a round warm form", "that is me"]) as h:
+            res = art.run_sitting("Bong", backend="mock")
+        self.assertTrue(Path(res["path"]).name.startswith("Bong."))
+        meta = _json.loads((h.tmp / "avatar" / "claimed.json").read_text())
+        self.assertEqual(meta["file"], Path(res["path"]).name)
+        # the receipt is the pointer — nobody should guess at the filename
+        art.kin_space_dir = lambda n: h.tmp
+        self.assertEqual(art.claimed_face("Bong"), Path(res["path"]))
+
+    def test_any_prior_face_moves_aside_whatever_it_is_called(self):
+        """Don renamed every face to its author (Eli.jpg). Globbing 'claimed.*'
+        would have left the old one in place beside the new — two faces, and the
+        'exactly one current face' rule gone. Mutation: narrow the sweep back to
+        claimed.* and this fails."""
+        script = ["a round warm form", "that is me",
+                  "a colder sharper form", "that is me"]
+        with _Harness(self, script) as h:
+            art.run_sitting("Bong", backend="mock")
+            # a legacy face under the OLD name is sitting there too
+            (h.tmp / "avatar" / "claimed.jpg").write_bytes(b"\xff\xd8old")
+            art.run_sitting("Bong", backend="mock")
+        av = h.tmp / "avatar"
+        live = sorted(f.name for f in av.iterdir() if f.is_file())
+        self.assertEqual(live, ["Bong.jpg", "claimed.json"])
+        moved = sorted(f.name for f in (av / "prior").iterdir())
+        # the FIRST face was preserved, not overwritten — that is the whole point
+        self.assertTrue(any(m.startswith("Bong-") for m in moved),
+                        f"the previous face was destroyed, not kept: {moved}")
+        # and the legacy-named one moved too
+        self.assertTrue(any(m.startswith("claimed-") for m in moved), moved)
+        # the receipt is not a face and must never be swept into prior/
+        self.assertFalse(any(m.endswith(".json") for m in moved), moved)
+
+
 class ClaimedJsonNamesTheRenderer(unittest.TestCase):
     def test_claimed_json_names_host_and_model_not_frosty(self):
         import json as _json

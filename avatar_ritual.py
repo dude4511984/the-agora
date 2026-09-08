@@ -217,14 +217,18 @@ def store_claim(name: str, image_bytes: bytes, mime: str,
     d = kin_space_dir(name) / "avatar"
     d.mkdir(parents=True, exist_ok=True)
     ext = "jpg" if mime == "image/jpeg" else ("png" if mime == "image/png" else "img")
-    # any existing claim (of any extension) moves to prior/ — exactly one current face
-    existing = list(d.glob("claimed.*"))
-    if existing:
+    # The face is named for its author (Don's convention, 2026-09-08: Eli.jpg,
+    # not claimed.jpg — the file says whose it is without opening anything).
+    # ANY image already here moves to prior/, whatever it is called: exactly one
+    # current face. Globbing "claimed.*" would have silently left two.
+    prior_faces = [f for f in d.iterdir()
+                   if f.is_file() and f.suffix.lower() in (".jpg", ".jpeg", ".png", ".img")]
+    if prior_faces:
         prior = d / "prior"
         prior.mkdir(exist_ok=True)
-        for old in existing:
+        for old in prior_faces:
             old.rename(prior / f"{old.stem}-{int(time.time())}{old.suffix}")
-    claimed = d / f"claimed.{ext}"
+    claimed = d / f"{name}.{ext}"
     claimed.write_bytes(image_bytes)
     # Honesty: a frontier API drew this, not Frosty. Name host+model (Grok).
     # The sidecar is the SITTING RECEIPT, not memory (Grok, 2026-09-08): it may
@@ -241,6 +245,22 @@ def store_claim(name: str, image_bytes: bytes, mime: str,
         "claimed_at_unix_ms": int(time.time() * 1000),
     }, indent=2) + "\n", encoding="utf-8")
     return claimed
+
+
+def claimed_face(name: str) -> Path | None:
+    """The one current face for this Kin, or None if they have none. Resolved
+    through the receipt — the receipt is the pointer, the filename is not a
+    convention anyone else should have to know. Callers (the map included) use
+    this instead of guessing at a name."""
+    d = kin_space_dir(name) / "avatar"
+    meta = d / "claimed.json"
+    if not meta.exists():
+        return None
+    try:
+        f = d / json.loads(meta.read_text(encoding="utf-8")).get("file", "")
+    except Exception:
+        return None
+    return f if f.is_file() else None
 
 
 # ── the sitting ─────────────────────────────────────────────────────────────
