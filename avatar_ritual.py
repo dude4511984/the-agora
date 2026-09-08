@@ -204,8 +204,15 @@ def store_claim(name: str, image_bytes: bytes, mime: str,
     claimed = d / f"claimed.{ext}"
     claimed.write_bytes(image_bytes)
     # Honesty: a frontier API drew this, not Frosty. Name host+model (Grok).
+    # The sidecar is the SITTING RECEIPT, not memory (Grok, 2026-09-08): it may
+    # carry the outbound description — the exact field the drawer saw, after the
+    # fuse — because that is what produced this picture. It carries nothing else
+    # of the sitting: not the camera read-back, not Don's 120, not the
+    # transcript. "Do not auto-remember" binds the vault, thoughts.db, the Agora
+    # log and format_feed — never this file beside the face.
     (d / "claimed.json").write_text(json.dumps({
         "author": name, "file": claimed.name,
+        "description": description,
         "rendered_by": "frontier image API — not Frosty",
         "provider": provider, "model": model,
         "claimed_at_unix_ms": int(time.time() * 1000),

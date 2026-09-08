@@ -166,10 +166,34 @@ class ClaimedJsonNamesTheRenderer(unittest.TestCase):
         self.assertIn("frontier", meta["rendered_by"].lower())
         self.assertIn("not frosty", meta["rendered_by"].lower())
         self.assertIn("provider", meta); self.assertIn("model", meta)
-        # HELD PENDING GROK: the self-description is NOT persisted in claimed.json
-        # (ruling: "do not auto-remember the description; a portrait is not a
-        # thought"). Copilot proposed storing it; Grok to settle before a sitting.
-        self.assertIsNone(meta.get("description"))
+        # GROK RULED 2026-09-08: the sidecar is the sitting RECEIPT, not memory,
+        # so it MAY carry the description — specifically the OUTBOUND one that
+        # produced this picture (post-fuse, exactly what the drawer saw), not
+        # the claim line, not the last thing said.
+        self.assertEqual(meta["description"], "a round warm form")
+        self.assertEqual(meta["description"], h.image_prompts[-1])
+
+    def test_receipt_carries_the_description_only_never_the_rest_of_the_sitting(self):
+        """Receipt, not memory: the outbound description belongs; the camera
+        read-back, Don's 120 and the transcript do not. Mutation: widen the
+        receipt to the whole sitting and this must fail."""
+        import json as _json
+        DON = "DONSECRET-" + "z" * 100
+        script = [
+            "a round warm form. I would welcome Don's thought on this.",
+            "make the light a single steady lantern glow",
+            "CLAIM",
+        ]
+        with _Harness(self, script) as h:
+            art.run_sitting("Bong", backend="mock", ask_don=lambda: DON)
+        raw = (h.tmp / "avatar" / "claimed.json").read_text()
+        meta = _json.loads(raw)
+        # the claim-producing description — the LAST render's outbound, not the first
+        self.assertEqual(meta["description"], "make the light a single steady lantern glow")
+        # and nothing else of the sitting rode along
+        self.assertNotIn("DONSECRET", raw, "Don's 120 landed in the receipt")
+        self.assertNotIn("CAMERANOTE", raw, "the camera read-back landed in the receipt")
+        self.assertNotIn("a round warm form", raw, "the whole transcript landed in the receipt")
 
 
 if __name__ == "__main__":
