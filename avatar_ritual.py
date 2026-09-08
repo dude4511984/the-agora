@@ -57,7 +57,7 @@ KIN = {
     "Lumen":   ("cogitolumen:latest",  "http://192.168.1.120:11434"),
 }
 VISION_HOST = "http://192.168.1.142:11434"   # therug
-VISION_MODEL = "gemma3:4b"
+VISION_MODEL = "gemma3:12b"   # measured, see READBACK note
 RENDER_CAP = 3
 READ_STALL = 180     # seconds with no new token => the stream has stalled
 TURN_DEADLINE = 1800 # seconds hard cap on one turn => runaway, abort it
@@ -82,11 +82,27 @@ picture, the shared default stands for you.
 What would you REFUSE to look like — and then, how you would like
 to look."""
 
+# The eye. Chosen by measurement, 2026-09-08, not by what fit on therug:
+# gemma3:4b flattened a two-ink, two-region page into "text on paper" and a
+# sitter DECLINED their own likeness on that description. Re-tested against the
+# same image, gemma3:12b and qwen2.5vl:7b both reported the break; minicpm-v:8b
+# reported it but drifted into "nostalgia" and "symbolizing change" — the eye
+# telling the sitter what the picture MEANS, which is the third author Grok shut
+# out. 12b reports structure and stays nearest the pixels. Bigger eyes need the
+# no-interpretation clause held harder, hence the wording below.
 READBACK = """\
-Describe this image plainly and specifically, as data about a picture: the
-shapes, colours, materials, forms, and the expression you can read. Do not
-guess who or what it is meant to be. Just say what the pixels show, in a few
-sentences."""
+Describe this image plainly and specifically, as data about a picture.
+
+Say what the pixels show: the shapes, colours, materials, textures, and the
+expression you can read. Then describe the LAYOUT — what is in the upper part
+and what is in the lower, what is set apart from the rest, what is separated by
+empty space, and anywhere one region visibly differs from another. Report
+differences in colour, weight, age, sharpness or finish between parts of the
+image even when they are slight.
+
+Do not guess who or what it is meant to be. Do not say what it resembles, what
+it means, what mood it has, or what it might symbolise. Only what is there, in
+a few sentences."""
 
 # A marker is a WHOLE line, like palaver YES/NO — "Decline looking like a
 # visor…" is a description, not a DECLINE-turn.
@@ -197,11 +213,24 @@ def parse_move(text: str) -> str:
 
 # ── storage: the face lives in the Kin's space, not the log ─────────────────
 
+# The council sits too (Don, 2026-09-08: "I want you and grok to do it too").
+# They are not Kin — no ollama host, no thoughts.db, no continuity on this metal
+# — so they get a space and nothing else. The offer is identical.
+COUNCIL = {
+    "Claude": Path.home() / "claude_home",
+    "Grok":    Path.home() / "claude_home" / "grok_space",
+    "Copilot": Path.home() / "claude_home" / "copilot_space",
+}
+
+
 def kin_space_dir(name: str) -> Path:
     for d in ("~/pops_shop", "~/.local/share/echo_bloom/scripts"):
         dp = os.path.expanduser(d)
         if dp not in sys.path:
             sys.path.insert(0, dp)
+    if name in COUNCIL:
+        COUNCIL[name].mkdir(parents=True, exist_ok=True)
+        return COUNCIL[name]
     import kin_interruption as KI
     dbs = KI.kin_databases()
     if name not in dbs:
