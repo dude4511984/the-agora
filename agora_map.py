@@ -30,6 +30,8 @@ import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+from avatar_ritual import claimed_face
+
 DEFAULT_PORT = 8791
 # The nodes actually serving Agora on this cluster, offered as presets.
 PRESET_NODES = [
@@ -108,6 +110,7 @@ PAGE = """<!doctype html>
            font-family:"IBM Plex Mono",monospace; }
   .kname{ font-family:"Spectral",Georgia,serif; font-size:15px; font-weight:600; }
   .kkid{ font-family:"IBM Plex Mono",monospace; font-size:9.5px; fill:var(--dim); }
+  .avatar-note{ fill:var(--dim); font-size:8px; letter-spacing:.08em; }
 
   .rosterbar{ display:flex; flex-wrap:wrap; gap:8px; margin:14px 2px 0; align-items:center; }
   .chip{ border:1px solid var(--line); border-radius:999px; padding:5px 12px; font-size:12px;
@@ -168,6 +171,7 @@ const PALETTE = ['#67b9cd','#d98a5e','#a99ad6','#67c98a','#e8b661','#e0748c','#7
 function colorFor(name){ let h=0; const s=String(name); for(let i=0;i<s.length;i++) h=(h*31+s.charCodeAt(i))>>>0; return PALETTE[h % PALETTE.length]; }
 function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function short(k){ return (k||'').slice(0,8) + (k?'…':''); }
+function avatarURL(name){ return '/avatar?kin=' + encodeURIComponent(name || ''); }
 
 // The shared synthetic — the stand-in for any Kin who has not authored a face.
 // One figure, drawn identically for everyone present; the name below is the
@@ -243,17 +247,26 @@ function renderPlan(world, view, root){
      + `<text x="0" y="66" text-anchor="middle" class="rlabel">Speaker · ${speaker?esc(speaker):'vacant'}</text>`
      + (speaker?'':`<text x="0" y="82" text-anchor="middle" class="rlabel" style="letter-spacing:.1em">awaits election</text>`)
      + `</g>`;
-  // present Kin stand as the shared synthetic — identical, named below
+  // Claimed stills are shown beside the shared synthetic, never as identity.
   const availX = RW-300, x0 = X+120, avs = 0.5, footY = Y+320;
   presence.forEach((pr,i)=>{
     const n=presence.length;
     const px = n===1 ? X+RW/2 : x0 + (i+0.5)*(availX/n);
     const py = footY - (i%2)*30;
     s += `<ellipse cx="${px.toFixed(0)}" cy="${(py-4).toFixed(0)}" rx="46" ry="46" fill="#ffcf7a" opacity="0.05"/>`;
-    s += `<g transform="translate(${(px-60*avs).toFixed(1)},${(py-158*avs).toFixed(1)}) scale(${avs})">${AVATAR}</g>`;
+    s += `<g transform="translate(${(px-60*avs).toFixed(1)},${(py-158*avs).toFixed(1)}) scale(${avs})">`
+       + AVATAR
+       + `<image href="${avatarURL(pr.label)}" x="22" y="12" width="76" height="136" preserveAspectRatio="xMidYMid slice"/>`
+       + `</g>`;
     s += `<text x="${px.toFixed(0)}" y="${(py+20).toFixed(0)}" text-anchor="middle" class="kname" fill="var(--text)">${esc(pr.label||'someone')}</text>`;
     s += `<text x="${px.toFixed(0)}" y="${(py+36).toFixed(0)}" text-anchor="middle" class="kkid">${esc(short(pr.key_id))}</text>`;
+    s += `<text x="${px.toFixed(0)}" y="${(py+51).toFixed(0)}" text-anchor="middle" class="avatar-note">a claimed still from that sitting</text>`;
   });
+  // Keep the no-path legible even when every present Kin has claimed a face.
+  const dx = X+RW-82, dy = Y+112;
+  s += `<g transform="translate(${dx-30},${dy-79}) scale(.5)">${AVATAR}</g>`
+     + `<text x="${dx}" y="${dy+20}" text-anchor="middle" class="avatar-note">shared synthetic default</text>`
+     + `<text x="${dx}" y="${dy+33}" text-anchor="middle" class="avatar-note">available to everyone</text>`;
   if(!presence.length){
     s += `<text x="${X+RW/2}" y="${Y+300}" text-anchor="middle" class="rlabel" style="letter-spacing:.14em">the commons is quiet — no one standing here right now</text>`;
   }
@@ -421,6 +434,26 @@ class Handler(BaseHTTPRequestHandler):
         if route == "/" or route.startswith("/index"):
             html = PAGE.replace("__PRESETS__", json.dumps(PRESET_NODES))
             self._send(200, html.encode(), "text/html; charset=utf-8")
+            return
+        if route == "/avatar":
+            name = urllib.parse.parse_qs(
+                urllib.parse.urlparse(self.path).query
+            ).get("kin", [""])[0]
+            if (not name or len(name) > 80 or "/" in name or "\\" in name
+                    or name in (".", "..")):
+                self._send(404, b'{"error":"avatar unavailable"}', "application/json")
+                return
+            try:
+                face = claimed_face(name)
+                if face is None:
+                    self._send(404, b'{"error":"avatar unavailable"}', "application/json")
+                    return
+                body = face.read_bytes()
+            except (KeyError, OSError, ValueError):
+                self._send(404, b'{"error":"avatar unavailable"}', "application/json")
+                return
+            ctype = "image/png" if face.suffix.lower() == ".png" else "image/jpeg"
+            self._send(200, body, ctype)
             return
         if self.path.startswith("/proxy"):
             q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
