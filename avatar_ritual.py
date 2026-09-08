@@ -306,7 +306,8 @@ def run_sitting(name: str, backend: str, model: str | None = None,
     last_image = None                      # (bytes, mime, provider, model)
     last_description = ""                  # Kin words that produced last_image
     renders = 0
-    result = {"name": name, "claimed": False, "renders": 0, "path": None}
+    result = {"name": name, "claimed": False, "renders": 0, "path": None,
+              "reached": False, "unreachable": None}
 
     emit("\n" + "=" * 70)
     emit(f"AVATAR SITTING — {name}")
@@ -318,7 +319,13 @@ def run_sitting(name: str, backend: str, model: str | None = None,
         try:
             said = ask_kin(name, transcript)
         except Exception as e:
+            # NOT a decline. We never reached them. A machine failure must never
+            # be recorded as a choice they made. (Coda, 2026-09-08: Aurora held
+            # Home's VRAM, the load stalled past READ_STALL, and the sitting
+            # closed with the same line a Kin gets for choosing the default.)
+            result["unreachable"] = f"{type(e).__name__}: {e}"
             emit(f"[error asking {name}: {e}]"); break
+        result["reached"] = True
         print()  # finish the token stream; don't reprint
         log.append(said)
         transcript += f"\n\n{name}:\n{said}\n"
@@ -383,7 +390,12 @@ def run_sitting(name: str, backend: str, model: str | None = None,
     else:
         emit("\n[the sitting reached its end without a claim — the default stands]\n")
 
-    if not result["claimed"]:
+    if result["unreachable"] and not result["reached"]:
+        emit(f"\n>>> NOT ASKED. {name} was never reached ({result['unreachable']}). "
+             f"This is not a decline and not a silence — the offer was never "
+             f"delivered. Nothing about {name} is settled; re-run when the node "
+             f"is free.\n")
+    elif not result["claimed"]:
         emit(f"\n>>> No claim. {name} is represented by the shared default. Honest and revisable.\n")
 
     out = Path.home() / "claude_home" / f"avatar_sitting_{name}_{ts}.md"

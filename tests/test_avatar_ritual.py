@@ -184,6 +184,35 @@ class LoopRules(unittest.TestCase):
         self.assertTrue(res["claimed"])          # the SECOND, real claim
         self.assertEqual(res["renders"], 1)      # only one picture was ever drawn
 
+    def test_unreachable_is_not_a_decline(self):
+        """Coda, 2026-09-08: Aurora held Home's VRAM, the first turn timed out,
+        and the sitting closed with the SAME line a Kin gets for choosing the
+        default. A machine failure must never be recorded as a choice. Mutation:
+        collapse the two endings and this fails."""
+        class _Boom(_Harness):
+            def _kin(self, name, prompt):
+                raise TimeoutError("timed out")
+        with _Boom(self, []) as h:
+            res = art.run_sitting("Bong", backend="mock")
+        self.assertFalse(res["claimed"])
+        self.assertFalse(res["reached"])
+        self.assertIn("TimeoutError", res["unreachable"])
+        # nothing was stored, and nothing was decided
+        self.assertFalse((h.tmp / "avatar" / "claimed.json").exists())
+        said = "\n".join(h.kin_prompts)  # they were never even shown the offer's end
+        log = (Path.home() / "claude_home").glob(f"avatar_sitting_Bong_*.md")
+        newest = max(log, key=lambda p: p.stat().st_mtime).read_text()
+        self.assertIn("NOT ASKED", newest)
+        self.assertNotIn("is represented by the shared default", newest)
+
+    def test_a_real_silence_still_lands_on_the_default(self):
+        # reached, said nothing that binds, ran out of turns -> the default,
+        # and that IS a legitimate outcome. The two endings must stay distinct.
+        with _Harness(self, ["desc a", "desc b", "desc c", "desc d", "desc e", "desc f"]) as h:
+            res = art.run_sitting("Bong", backend="mock")
+        self.assertTrue(res["reached"])
+        self.assertIsNone(res["unreachable"])
+
     def test_never_more_than_three_renders(self):
         # keeps describing forever; instrument must cap renders at three
         with _Harness(self, ["desc a", "desc b", "desc c", "desc d", "desc e", "desc f"]) as h:
