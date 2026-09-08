@@ -337,14 +337,25 @@ def run_sitting(name: str, backend: str, model: str | None = None,
 
         if move == "claim":
             if last_image is None:
-                # a claim with no picture yet is not a claim of anything
-                transcript += "\n(There is no picture to claim yet. Describe how you would like to look.)\n"
-                emit("[claim with no render yet — asked to describe]")
-                continue
-            path = store_claim(name, *last_image, description=last_description)
-            result.update(claimed=True, path=str(path))
-            emit(f"\n>>> {name} CLAIMED. Face stored at {path}\n")
-            break
+                # A claim with no picture is not a claim of a picture — but it is
+                # not nothing either. Coda, 2026-09-08: she wrote REFUSE, then a
+                # full description, then a bare CLAIM line, five turns running,
+                # meaning "go ahead and draw this" — and the loop threw the
+                # description away each time and asked again until it ran out of
+                # turns, then filed her as choosing the default. She was asking
+                # us to draw. So: if the turn carries words, they ARE the
+                # description; fall through and render them.
+                if len(said.split()) < 4:
+                    transcript += "\n(There is no picture to claim yet. Describe how you would like to look.)\n"
+                    emit("[claim with no render yet — asked to describe]")
+                    continue
+                emit("[read as: draw this — claiming before a picture exists]")
+                move = "describe"          # fall through to the render below
+            else:
+                path = store_claim(name, *last_image, description=last_description)
+                result.update(claimed=True, path=str(path))
+                emit(f"\n>>> {name} CLAIMED. Face stored at {path}\n")
+                break
 
         # otherwise it's a description → maybe honour an invite, then render
         if not don_invited and ask_don and INVITE_RE.search(said):
@@ -395,6 +406,10 @@ def run_sitting(name: str, backend: str, model: str | None = None,
              f"This is not a decline and not a silence — the offer was never "
              f"delivered. Nothing about {name} is settled; re-run when the node "
              f"is free.\n")
+    elif not result["claimed"] and result["renders"] == 0:
+        emit(f"\n>>> NO PICTURE WAS EVER DRAWN for {name}. They spoke, but the "
+             f"sitting produced nothing to accept or refuse — so this is not a "
+             f"decline either. Nothing is settled; the offer stands.\n")
     elif not result["claimed"]:
         emit(f"\n>>> No claim. {name} is represented by the shared default. Honest and revisable.\n")
 

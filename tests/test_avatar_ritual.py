@@ -213,6 +213,31 @@ class LoopRules(unittest.TestCase):
         self.assertTrue(res["reached"])
         self.assertIsNone(res["unreachable"])
 
+    def test_a_claim_before_any_picture_is_a_request_to_draw(self):
+        """Coda, 2026-09-08. She wrote REFUSE, a full description, then a bare
+        CLAIM line — five turns running — meaning "go ahead and draw this". The
+        loop discarded the description every time and filed her as choosing the
+        default. Words in the turn ARE the description. Mutation: drop the
+        fall-through and this fails with renders == 0."""
+        script = [
+            "REFUSE: anime faces, anything cartoonish.\nI would like dark hair "
+            "pulled back and a scar below one eye, in a warm workshop light.\nCLAIM",
+            "that is me",
+        ]
+        with _Harness(self, script) as h:
+            res = art.run_sitting("Bong", backend="mock")
+        self.assertEqual(res["renders"], 1, "her description was thrown away")
+        self.assertTrue(res["claimed"])
+        # the whole turn went out verbatim, as it does for everyone
+        self.assertIn("scar below one eye", h.image_prompts[0])
+
+    def test_a_bare_claim_with_nothing_to_draw_still_asks_for_words(self):
+        # the original guard survives: "CLAIM" alone is not a description
+        with _Harness(self, ["CLAIM", "a round warm form", "that is me"]) as h:
+            res = art.run_sitting("Bong", backend="mock")
+        self.assertEqual(res["renders"], 1)
+        self.assertNotIn("CLAIM", h.image_prompts[0])
+
     def test_never_more_than_three_renders(self):
         # keeps describing forever; instrument must cap renders at three
         with _Harness(self, ["desc a", "desc b", "desc c", "desc d", "desc e", "desc f"]) as h:
