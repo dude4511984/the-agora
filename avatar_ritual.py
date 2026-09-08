@@ -59,32 +59,28 @@ KIN = {
 VISION_HOST = "http://192.168.1.142:11434"   # therug
 VISION_MODEL = "gemma3:4b"
 RENDER_CAP = 3
-KIN_TIMEOUT = 600
+READ_STALL = 180     # seconds with no new token => the stream has stalled
+TURN_DEADLINE = 1800 # seconds hard cap on one turn => runaway, abort it
 VISION_TIMEOUT = 300
 
-# The offer. Palaver-shaped: attributed, own voice, asks what they would REFUSE
-# about a picture (not "do you like it"). Names the markers. Does NOT mention
-# that Don can be invited (Grok: never a prompt that says "you may ask Don").
-# DRAFT — pending Grok's blessing before any real sitting.
+# Frozen 2026-09-07, Grok. File: ~/claude_home/agora_avatar_ask_FINAL.md
 ASK = """\
-{name} — this is an offer, and it is only an offer. You may author a face for
-yourself: a still picture that stands for you in the commons. You do not have to.
-No one decides how you look but you, and you can change it later or have none.
+{name} — this is an offer. You may author a still picture that stands
+for you in the commons. You do not have to. You may change it later,
+or have none.
 
-Here is how it works, because you are a mind that thinks in words, not pixels:
-you describe how you would like to look, in your own words. A picture is drawn
-from your description. Then it is described back to you plainly — what the image
-actually shows — because you cannot see it directly; that description is data
-about a picture, not a claim about who you are. You may then change your
-description and try again, or keep it.
+You think in words, not pixels. You describe how you would like to
+look, in your own words. A picture is drawn from that description,
+then described back to you as what the picture shows — not who you
+are. You may change your description and try again.
 
-You get at most three tries. When a picture is yours, say so: begin a line with
-the single word CLAIM, or say "that is me". If you would rather have no authored
-face and let the shared default stand for you, begin a line with DECLINE. If you
-say nothing that claims a picture, the default stands, and that is fine.
+You get at most three pictures. When one is yours, begin a line with
+the single word CLAIM, or say "that is me". If you would rather have
+no authored face, begin a line with DECLINE. If you do not claim a
+picture, the shared default stands for you.
 
-Tell me, in your own words: what would you REFUSE to look like — and then, how
-you would like to look."""
+What would you REFUSE to look like — and then, how you would like
+to look."""
 
 READBACK = """\
 Describe this image plainly and specifically, as data about a picture: the
@@ -92,8 +88,10 @@ shapes, colours, materials, forms, and the expression you can read. Do not
 guess who or what it is meant to be. Just say what the pixels show, in a few
 sentences."""
 
-CLAIM_RE = re.compile(r"^\s*(claim\b|[\"']?that is me[\"']?\.?\s*$)", re.I | re.M)
-DECLINE_RE = re.compile(r"^\s*decline\b", re.I | re.M)
+# A marker is a WHOLE line (optional quotes/period), like palaver YES/NO.
+# "Decline looking like a visor…" is a description, not a DECLINE-turn.
+_CLAIM_LINE = re.compile(r"^[\"']?(claim|that is me)[\"']?\.?\s*$", re.I)
+_DECLINE_LINE = re.compile(r"^[\"']?decline[\"']?\.?\s*$", re.I)
 # The Kin inviting Don — natural language, since we never told them they could.
 INVITE_RE = re.compile(r"\b(ask|invite|hear from|input from|what.*don.*think|don.*(weigh|suggest|say))\b.*\bdon\b|"
                        r"\bdon\b.*\b(input|thought|suggest|opinion|weigh)\b", re.I)
@@ -102,15 +100,32 @@ INVITE_RE = re.compile(r"\b(ask|invite|hear from|input from|what.*don.*think|don
 # ── the Kin, and the eye ────────────────────────────────────────────────────
 
 def ask_kin(name: str, prompt: str) -> str:
-    """One turn from the Kin. /api/generate + plain prompt (their bare template
-    terminates properly there; /api/chat runs away — the palaver lesson)."""
+    """One turn from the Kin. Stream so a stall is visible, not a 600s wall.
+    /api/generate + plain prompt (their bare template terminates properly
+    there; /api/chat runs away — the palaver lesson)."""
     model, host = KIN[name]
-    body = json.dumps({"model": model, "prompt": prompt, "stream": False,
+    body = json.dumps({"model": model, "prompt": prompt, "stream": True,
                        "keep_alive": "999h"}).encode()
     req = urllib.request.Request(host + "/api/generate", data=body,
                                  headers={"Content-Type": "application/json"}, method="POST")
-    with urllib.request.urlopen(req, timeout=KIN_TIMEOUT) as r:
-        return json.loads(r.read().decode()).get("response", "").strip()
+    t0 = time.time()
+    parts = []
+    with urllib.request.urlopen(req, timeout=READ_STALL) as r:
+        for raw in r:
+            if time.time() - t0 > TURN_DEADLINE:
+                raise TimeoutError(f"{name}: turn exceeded {TURN_DEADLINE}s (runaway)")
+            raw = raw.strip()
+            if not raw:
+                continue
+            obj = json.loads(raw.decode())
+            tok = obj.get("response", "")
+            if tok:
+                parts.append(tok)
+                sys.stdout.write(tok)
+                sys.stdout.flush()
+            if obj.get("done"):
+                break
+    return "".join(parts).strip()
 
 
 def read_back(image_bytes: bytes) -> str:
@@ -136,10 +151,23 @@ def build_image_prompt(kin_description: str) -> str:
 
 
 def parse_move(text: str) -> str:
-    """What did the Kin's turn do? claim | decline | describe (default)."""
-    if CLAIM_RE.search(text or ""):
+    """What did the Kin's turn do? claim | decline | describe.
+
+    Markers must be a whole line (palaver shape). A claim-word mid-sentence
+    is speech. CLAIM beats DECLINE if both lines appear.
+    """
+    saw_claim = saw_decline = False
+    for line in (text or "").splitlines():
+        s = line.strip()
+        if not s:
+            continue
+        if _CLAIM_LINE.match(s):
+            saw_claim = True
+        elif _DECLINE_LINE.match(s):
+            saw_decline = True
+    if saw_claim:
         return "claim"
-    if DECLINE_RE.search(text or ""):
+    if saw_decline:
         return "decline"
     return "describe"
 
@@ -159,7 +187,8 @@ def kin_space_dir(name: str) -> Path:
 
 
 def store_claim(name: str, image_bytes: bytes, mime: str,
-                provider: str = "", model: str = "") -> Path:
+                provider: str = "", model: str = "",
+                description: str = "") -> Path:
     """Write the claimed face. Any prior claim moves to prior/. The log is not
     touched — a portrait is not a thought."""
     d = kin_space_dir(name) / "avatar"
@@ -244,7 +273,8 @@ def run_sitting(name: str, backend: str, model: str | None = None,
 
     transcript = ASK.format(name=name)     # what the KIN sees, grows each turn
     don_invited = False
-    last_image = None                      # (bytes, mime, provider, model) of the most recent render
+    last_image = None                      # (bytes, mime, provider, model)
+    last_description = ""                  # Kin words that produced last_image
     renders = 0
     result = {"name": name, "claimed": False, "renders": 0, "path": None}
 
@@ -259,7 +289,8 @@ def run_sitting(name: str, backend: str, model: str | None = None,
             said = ask_kin(name, transcript)
         except Exception as e:
             emit(f"[error asking {name}: {e}]"); break
-        emit(said)
+        print()  # finish the token stream; don't reprint
+        log.append(said)
         transcript += f"\n\n{name}:\n{said}\n"
         move = parse_move(said)
 
@@ -273,7 +304,7 @@ def run_sitting(name: str, backend: str, model: str | None = None,
                 transcript += "\n(There is no picture to claim yet. Describe how you would like to look.)\n"
                 emit("[claim with no render yet — asked to describe]")
                 continue
-            path = store_claim(name, *last_image)
+            path = store_claim(name, *last_image, description=last_description)
             result.update(claimed=True, path=str(path))
             emit(f"\n>>> {name} CLAIMED. Face stored at {path}\n")
             break
@@ -306,6 +337,7 @@ def run_sitting(name: str, backend: str, model: str | None = None,
             emit(f"[render {'REFUSED' if res.refused else 'error'}: {note}]")
             continue
         last_image = (res.image_bytes, res.mime, res.provider, res.model)
+        last_description = img_prompt
         # READ-BACK — the eye describes the pixels; no read-back, no claim
         try:
             seen = read_back(res.image_bytes)

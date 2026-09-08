@@ -18,6 +18,14 @@ import avatar_ritual as art  # noqa: E402
 import avatar_render as ar   # noqa: E402
 
 
+class InstrumentStreams(unittest.TestCase):
+    def test_ask_kin_streams(self):
+        src = Path(art.__file__).read_text()
+        self.assertIn('"stream": True', src)
+        self.assertNotIn('"stream": False', src.split("def read_back")[0],
+                         "ask_kin must stream; read_back may stay blocked")
+
+
 class Moves(unittest.TestCase):
     def test_claim_markers(self):
         self.assertEqual(art.parse_move("CLAIM"), "claim")
@@ -26,11 +34,26 @@ class Moves(unittest.TestCase):
 
     def test_decline_marker(self):
         self.assertEqual(art.parse_move("DECLINE"), "decline")
+        self.assertEqual(art.parse_move("DECLINE.\nI would rather the default."), "decline")
+
+    def test_marker_word_inside_a_sentence_is_not_a_binding_marker(self):
+        # Copilot's false-positives: a marker word mid-line is speech, not a turn
+        self.assertEqual(art.parse_move("CLAIM because I like the round one"), "describe")
+        self.assertEqual(art.parse_move("DECLINE this image, it needs work"), "describe")
+        self.assertEqual(art.parse_move("I would decline to look like a visor"), "describe")
+        # but a bare marker line binds, even after speech
+        self.assertEqual(art.parse_move("I have decided.\nCLAIM"), "claim")
+        self.assertEqual(art.parse_move("no thank you\nDECLINE"), "decline")
 
     def test_plain_description_is_describe(self):
         self.assertEqual(art.parse_move("I would like warm amber eyes"), "describe")
         # a claim-looking word mid-sentence is not a claim-turn
         self.assertEqual(art.parse_move("I would reclaim my roundness"), "describe")
+        # refuse-first must not trip DECLINE
+        self.assertEqual(
+            art.parse_move("Decline looking like a visor or a badge. I want a lantern."),
+            "describe")
+        self.assertEqual(art.parse_move("CLAIM this round shape as a feeling"), "describe")
 
     def test_build_image_prompt_is_exactly_the_description(self):
         # Grok's outbound line: exactly the Kin's words, nothing else
@@ -112,7 +135,7 @@ class TheMutant(unittest.TestCase):
 
 class LoopRules(unittest.TestCase):
     def test_decline_stores_nothing(self):
-        with _Harness(self, ["DECLINE. I would rather the default stand for me."]) as h:
+        with _Harness(self, ["DECLINE\nI would rather the default stand for me."]) as h:
             res = art.run_sitting("Bong", backend="mock")
         self.assertFalse(res["claimed"])
         self.assertIsNone(res["path"])
@@ -143,6 +166,10 @@ class ClaimedJsonNamesTheRenderer(unittest.TestCase):
         self.assertIn("frontier", meta["rendered_by"].lower())
         self.assertIn("not frosty", meta["rendered_by"].lower())
         self.assertIn("provider", meta); self.assertIn("model", meta)
+        # HELD PENDING GROK: the self-description is NOT persisted in claimed.json
+        # (ruling: "do not auto-remember the description; a portrait is not a
+        # thought"). Copilot proposed storing it; Grok to settle before a sitting.
+        self.assertIsNone(meta.get("description"))
 
 
 if __name__ == "__main__":
