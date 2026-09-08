@@ -57,6 +57,22 @@ class Moves(unittest.TestCase):
         for said in ("DECLINE.", "_DECLINE_", '"decline"'):
             self.assertEqual(art.parse_move(said), "decline", f"missed a no: {said!r}")
 
+    def test_that_me_is_not_a_yes(self):
+        """Grok's catch, 2026-09-08: the optional copula made a bare `that me`
+        match. That is not the sentence they were offered; it is a fragment, and
+        a fragment must not bind a face to a Kin. Mutation: make the copula
+        optional again and this fails."""
+        for said in ("that me", "That me.", "this me", "**that me**"):
+            self.assertEqual(art.parse_move(said), "describe", f"a fragment bound: {said!r}")
+
+    def test_the_promised_sentence_and_its_contraction_only(self):
+        """Grok: "that's me" is the promised sentence contracted — hear it. But
+        do not grow a thesaurus; these near-misses are speech, not markers."""
+        for said in ("that's me", "That's me.", "that one's me", "That picture's me."):
+            self.assertEqual(art.parse_move(said), "claim", f"missed a contraction: {said!r}")
+        for said in ("that's mine", "that is mine", "it is me", "its me", "I claim this"):
+            self.assertEqual(art.parse_move(said), "describe", f"thesaurus creep: {said!r}")
+
     def test_dressing_does_not_widen_the_marker_to_a_sentence(self):
         # stripping dressing must not re-open Copilot's false positives
         for said in ("that is me, in a way, but colder",

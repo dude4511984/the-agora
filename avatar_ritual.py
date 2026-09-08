@@ -98,7 +98,12 @@ sentences."""
 # and an instrument that fails to HEAR a yes is as broken as one that invents
 # one. (Crungus and Bong both claimed with "CLAIM." — punctuation is dressing.)
 _DRESS = re.compile(r"^[\s*_~`\"'\u201c\u2018]+|[\s*_~`\"'\u201d\u2019.!]+$")
-_CLAIM_LINE = re.compile(r"^(claim|that('?s| is| one is| picture is)? me|this (is|one is) me)$", re.I)
+# Grok, 2026-09-08: "that's me" is the promised sentence contracted — hear it.
+# But do not grow a thesaurus: "that's mine", "it is me", "I claim this" are not
+# the sentence. And no optional copula — `that me` is not a yes (his catch; the
+# optional group made it one).
+_CLAIM_LINE = re.compile(
+    r"^(claim|th(at|is)( one| picture)?(?: is|'s) me)$", re.I)
 _DECLINE_LINE = re.compile(r"^decline$", re.I)
 
 
