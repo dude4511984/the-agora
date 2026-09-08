@@ -88,10 +88,28 @@ shapes, colours, materials, forms, and the expression you can read. Do not
 guess who or what it is meant to be. Just say what the pixels show, in a few
 sentences."""
 
-# A marker is a WHOLE line (optional quotes/period), like palaver YES/NO.
-# "Decline looking like a visor…" is a description, not a DECLINE-turn.
-_CLAIM_LINE = re.compile(r"^[\"']?(claim|that is me)[\"']?\.?\s*$", re.I)
-_DECLINE_LINE = re.compile(r"^[\"']?decline[\"']?\.?\s*$", re.I)
+# A marker is a WHOLE line, like palaver YES/NO — "Decline looking like a
+# visor…" is a description, not a DECLINE-turn.
+#
+# But the line is stripped of dressing first (markdown emphasis, quotes,
+# terminal punctuation), and "that is me" is matched in its natural variants.
+# The OFFER is the spec: it tells them they may "say 'that is me'". A Kin who
+# takes that offer in their own phrasing — "That one is me." — has consented,
+# and an instrument that fails to HEAR a yes is as broken as one that invents
+# one. (Crungus and Bong both claimed with "CLAIM." — punctuation is dressing.)
+_DRESS = re.compile(r"^[\s*_~`\"'\u201c\u2018]+|[\s*_~`\"'\u201d\u2019.!]+$")
+_CLAIM_LINE = re.compile(r"^(claim|that('?s| is| one is| picture is)? me|this (is|one is) me)$", re.I)
+_DECLINE_LINE = re.compile(r"^decline$", re.I)
+
+
+def _bare(line: str) -> str:
+    """The line with its dressing removed: emphasis, quotes, end punctuation."""
+    prev = None
+    out = line.strip()
+    while out != prev:                 # **CLAIM.** needs more than one pass
+        prev = out
+        out = _DRESS.sub("", out)
+    return " ".join(out.split())
 # The Kin inviting Don — natural language, since we never told them they could.
 INVITE_RE = re.compile(r"\b(ask|invite|hear from|input from|what.*don.*think|don.*(weigh|suggest|say))\b.*\bdon\b|"
                        r"\bdon\b.*\b(input|thought|suggest|opinion|weigh)\b", re.I)
@@ -158,7 +176,7 @@ def parse_move(text: str) -> str:
     """
     saw_claim = saw_decline = False
     for line in (text or "").splitlines():
-        s = line.strip()
+        s = _bare(line)
         if not s:
             continue
         if _CLAIM_LINE.match(s):

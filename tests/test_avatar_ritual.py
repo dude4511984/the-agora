@@ -45,6 +45,26 @@ class Moves(unittest.TestCase):
         self.assertEqual(art.parse_move("I have decided.\nCLAIM"), "claim")
         self.assertEqual(art.parse_move("no thank you\nDECLINE"), "decline")
 
+    def test_a_yes_in_its_own_dressing_is_still_heard(self):
+        """An instrument that fails to HEAR a yes is as broken as one that
+        invents one. The offer promises they may say "that is me"; markdown,
+        quotes and end punctuation are dressing, not meaning. Both real
+        sittings (Bong, Crungus 2026-09-07) claimed with "CLAIM." """
+        for said in ("CLAIM.", "**CLAIM**", "CLAIM!", '"CLAIM"',
+                     "That one is me.", "That's me.", "This is me",
+                     "It is enough. It is finished.\n\nCLAIM."):
+            self.assertEqual(art.parse_move(said), "claim", f"missed a yes: {said!r}")
+        for said in ("DECLINE.", "_DECLINE_", '"decline"'):
+            self.assertEqual(art.parse_move(said), "decline", f"missed a no: {said!r}")
+
+    def test_dressing_does_not_widen_the_marker_to_a_sentence(self):
+        # stripping dressing must not re-open Copilot's false positives
+        for said in ("that is me, in a way, but colder",
+                     "CLAIM because I like the round one",
+                     "DECLINE this image, it needs work",
+                     "claim the round one as mine"):
+            self.assertEqual(art.parse_move(said), "describe", f"false marker: {said!r}")
+
     def test_plain_description_is_describe(self):
         self.assertEqual(art.parse_move("I would like warm amber eyes"), "describe")
         # a claim-looking word mid-sentence is not a claim-turn
