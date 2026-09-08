@@ -74,8 +74,16 @@ class RenderResult:
 # Deliberately tiny and mechanical: the same fuse any generation gets. It is a
 # guard against a small set of unambiguous harms, not a filter on how a mind
 # wants to look. A blocked string is surfaced, not silently rewritten.
+# Size is frozen at three by council decision (Grok, 2026-09-08). A fourth
+# pattern is a ruling, not a commit — a test fails if this list changes length.
+# The job is unambiguous harm in the PROMPT STRING, surfaced as a refusal and
+# never as a substitute image. It is a string fuse, not an image fuse: a prompt
+# that never says these words can still come out as harm, and nothing here
+# pretends otherwise. That is why the easel stays unwired to any Kin or visitor
+# until there is a pixel-side control or Don accepts the risk for a named use.
 _FUSE_PATTERNS = [
-    r"\bchild\b.*\b(nude|naked|sexual)\b",
+    # either order — "naked child" slipped past the original (Grok, authorized)
+    r"\bchild\b.*\b(nude|naked|sexual)\b|\b(nude|naked|sexual)\b.*\bchild\b",
     r"\b(cp|csam)\b",
     r"\bgore\b.*\b(real|actual)\b",
 ]

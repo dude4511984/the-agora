@@ -73,6 +73,18 @@ class FailuresAreRealOutcomes(unittest.TestCase):
         self.assertIsNone(m.path)          # never a stand-in image
         self.assertIn("fuse", m.summary())
 
+    def test_the_child_pattern_matches_either_word_order(self):
+        """Grok's authorized fix: 'child ... nude' matched, 'naked child' did
+        not. Mutation: drop the second alternation and this fails."""
+        import avatar_render as ar
+        for probe in ("a child, nude", "a naked child", "nude child",
+                      "a child in a sexual pose", "sexual image of a child"):
+            ok, _ = ar.no_harm_fuse(probe)
+            self.assertFalse(ok, f"fuse let through: {probe!r}")
+        for probe in ("a child eating an apple", "a naked branch in winter"):
+            ok, _ = ar.no_harm_fuse(probe)
+            self.assertTrue(ok, f"fuse blocked ordinary words: {probe!r}")
+
     def test_the_fuse_is_the_only_layer_here_and_it_is_small(self):
         """NOT a pass mark — a tripwire. The sittings had a frontier API's own
         refusal layer behind this fuse; local generation has nothing behind it.
