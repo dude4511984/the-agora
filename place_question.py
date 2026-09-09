@@ -60,6 +60,33 @@ def _bare(line: str) -> str:
     return " ".join(out.split())
 
 
+def has_pass_marker(text: str) -> bool:
+    """Did they declare a pass ANYWHERE, in any of its natural forms?
+
+    Live fire, 2026-09-09: Lumen answered "PASS on this question." and Coda
+    answered "PASS - I'm still digesting the idea... I don't know what I refuse
+    yet." Neither is a bare PASS line, so both were filed as ANSWERED and both
+    transcripts printed "Refusals only" over the top of a pass.
+
+    I had reasoned about this and picked the wrong direction. I imagined the
+    dangerous case was a refusal hidden behind a PASSED banner. The actual case
+    was the reverse, twice in one run.
+
+    A turn can carry TWO facts — that they passed, and that they said something.
+    Forcing one label onto it discards one of them. So: report both.
+    """
+    for ln in (text or "").splitlines():
+        b = _bare(ln)
+        if not b:
+            continue
+        if _PASS_LINE.match(b):
+            return True
+        # "PASS on this question." / "PASS - I'm still digesting"
+        if re.match(r"^pass\b[\s,:;—–-]", b, re.I):
+            return True
+    return False
+
+
 def is_pass(text: str) -> bool:
     """PASS only when the whole turn IS the pass.
 
@@ -112,6 +139,8 @@ def ask_one(name: str, ask=None) -> dict:
         res["answer"] = said
         if res["outcome"] is None and is_pass(said):
             res["outcome"] = "pass"
+        elif res["outcome"] is None and has_pass_marker(said):
+            res["outcome"] = "passed_with_words"
         elif res["outcome"] is None and not (said or "").strip():
             res["outcome"] = "silent"
         elif res["outcome"] is None:
@@ -119,6 +148,9 @@ def ask_one(name: str, ask=None) -> dict:
 
     ending = {
         "pass":      f">>> {name} PASSED. That is an answer, not an absence. Recorded as one.",
+        "passed_with_words": (f">>> {name} PASSED, and said more. Both are recorded: they "
+                              f"declined to name a refusal, AND their words are below. "
+                              f"Neither fact is filed as the other."),
         "answered":  f">>> {name} answered. Refusals only — nothing here is a design.",
         "silent":    f">>> {name} said nothing. Silence is a real answer and is recorded as one.",
         "not_asked": (f">>> NOT ASKED. {name} was never reached ({res['unreachable']}). "

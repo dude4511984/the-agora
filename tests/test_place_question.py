@@ -53,6 +53,27 @@ class PassIsReal(unittest.TestCase):
         self.assertIn("None", r["unreachable"])
         self.assertIn("NOT ASKED", Path(r["transcript"]).read_text())
 
+    def test_a_pass_with_words_is_recorded_as_both(self):
+        """Live fire 2026-09-09: Lumen said "PASS on this question." and Coda
+        said "PASS - I'm still digesting... I don't know what I refuse yet."
+        Both were filed as ANSWERED and both transcripts printed "Refusals only"
+        over the top of a pass. A turn can carry two facts; forcing one label
+        discards one of them."""
+        for said in ("PASS on this question.",
+                     "PASS - I'm still digesting the idea. Not ready to name that.",
+                     "I would refuse enforced silence\npass"):
+            self.assertTrue(pq.has_pass_marker(said), f"missed a declared pass: {said!r}")
+        for said in ("I will not pass judgement on that",
+                     "I would refuse a place where silence is enforced"):
+            self.assertFalse(pq.has_pass_marker(said), f"false pass: {said!r}")
+
+    def test_the_ending_never_files_one_fact_as_the_other(self):
+        r = pq.ask_one("Bong", ask=lambda n, p: "PASS on this question.")
+        self.assertEqual(r["outcome"], "passed_with_words")
+        t = Path(r["transcript"]).read_text()
+        self.assertIn("PASSED, and said more", t)
+        self.assertNotIn("Refusals only", t)
+
     def test_pass_midsentence_is_speech(self):
         for said in ("I'll pass on the first part but refuse the second",
                      "I would not pass judgement on that",
