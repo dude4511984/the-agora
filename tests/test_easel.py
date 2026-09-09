@@ -171,6 +171,21 @@ class OfferingItToAKin(unittest.TestCase):
             self.assertEqual(m.error, "passed")
             self.assertEqual(list(Path(d).iterdir()), [])
 
+    def test_a_description_beside_a_pass_line_still_gets_drawn(self):
+        """qwen3.8, 2026-09-09: any(line is PASS) threw the drawing away."""
+        seen = {}
+        with tempfile.TemporaryDirectory() as d:
+            m = easel.offer("Bong",
+                            ask=lambda n, p: "a red fox in the snow\npass",
+                            read_back=lambda b: "", out_dir=Path(d),
+                            )
+        self.assertNotEqual(m.error, "passed", "the description was discarded")
+
+    def test_a_transport_returning_none_is_not_a_pass(self):
+        m = easel.offer("Bong", ask=lambda n, p: None)
+        self.assertIn("not asked", m.error)
+        self.assertNotEqual(m.error, "passed")
+
     def test_unreachable_is_never_recorded_as_a_pass(self):
         def boom(n, p): raise TimeoutError("host down")
         m = easel.offer("Bong", ask=boom)

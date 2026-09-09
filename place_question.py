@@ -61,8 +61,19 @@ def _bare(line: str) -> str:
 
 
 def is_pass(text: str) -> bool:
-    """A whole line reading PASS. Mid-sentence 'I'll pass on that' is speech."""
-    return any(_PASS_LINE.match(_bare(ln)) for ln in (text or "").splitlines())
+    """PASS only when the whole turn IS the pass.
+
+    Not `any(line is PASS)`. A turn carrying real words AND a bare PASS line is
+    an ANSWER — the words win. (qwen3.8 caught this on review 2026-09-09, and it
+    is the Coda bug in a new costume: on 2026-09-08 a CLAIM marker beside a full
+    description made the loop throw the description away, five turns running.
+    Same failure, different marker. Substance always outranks a marker.)
+    """
+    lines = [_bare(ln) for ln in (text or "").splitlines()]
+    lines = [ln for ln in lines if ln]
+    if not lines:
+        return False
+    return all(_PASS_LINE.match(ln) for ln in lines)
 
 
 def question_for(name: str) -> str:
@@ -91,12 +102,19 @@ def ask_one(name: str, ask=None) -> dict:
         res["outcome"] = "not_asked"
         print(f"\n[error asking {name}: {e}]")
     else:
+        # a transport may RETURN nothing rather than raise; that is still a
+        # machine failure and must never be filed as a mind's silence.
+        if said is None:
+            res["unreachable"] = "transport returned None"
+            res["outcome"] = "not_asked"
+            print(f"\n[no response object from {name} — not asked]")
+            said = ""
         res["answer"] = said
-        if is_pass(said):
+        if res["outcome"] is None and is_pass(said):
             res["outcome"] = "pass"
-        elif not said.strip():
+        elif res["outcome"] is None and not (said or "").strip():
             res["outcome"] = "silent"
-        else:
+        elif res["outcome"] is None:
             res["outcome"] = "answered"
 
     ending = {

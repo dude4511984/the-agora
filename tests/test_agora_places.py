@@ -194,6 +194,20 @@ class ListingTests(unittest.TestCase):
                 keys["Coda"], "x", "Home", "concourse", "t", "a"))
         self.assertIn("kiosk", str(cm.exception))
 
+    def test_a_table_is_an_unserious_listing_surface(self):
+        node, keys, nk, atlas = furnished()
+        atlas.add_place(sign_place(
+            nk, "table-1", "Home", "table", parent="concourse",
+            ring_to_see=1, points_to="collab"))
+        listing = sign_listing(
+            keys["Coda"], "aside-1", "Home", "table-1",
+            "a rubber chicken", b"not a program")
+        atlas.add_listing(listing)
+        self.assertEqual(
+            atlas.view(keys["Coda"].key_id, NOW_MS)["listings"],
+            [listing],
+        )
+
     def test_a_stranger_cannot_list(self):
         node, keys, nk, atlas = furnished()
         outsider = key("Rando")

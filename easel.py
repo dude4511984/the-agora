@@ -184,6 +184,9 @@ def offer(name: str, ask=None, read_back=None, out_dir: Path | None = None) -> M
     except Exception as e:                      # noqa: BLE001
         m.error = f"not asked: {type(e).__name__}: {e}"   # never "they declined"
         return m
+    if said is None:                    # a transport that returns nothing is
+        m.error = "not asked: transport returned None"   # not a mind that passed
+        return m
     if _is_pass(said):
         m.error = "passed"          # an answer, not a failure of the easel
         return m
@@ -211,7 +214,14 @@ _PASS = re.compile(r"^[\s*_~`\"']*pass[\s*_~`\"'.!]*$", re.I)
 
 
 def _is_pass(text: str) -> bool:
-    return any(_PASS.match(ln.strip()) for ln in (text or "").splitlines() if ln.strip())
+    """PASS only when the whole turn IS the pass — never `any(line)`.
+
+    A turn with a description AND a bare 'pass' line is a description; draw it.
+    Throwing away words because a marker appeared beside them is the exact bug
+    that refused Coda five times on 2026-09-08. (qwen3.8, review 2026-09-09.)
+    """
+    lines = [ln.strip() for ln in (text or "").splitlines() if ln.strip()]
+    return bool(lines) and all(_PASS.match(ln) for ln in lines)
 
 
 def main(argv):

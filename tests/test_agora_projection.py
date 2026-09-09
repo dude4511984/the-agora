@@ -51,6 +51,20 @@ class ProjectionTests(unittest.TestCase):
         self.assertEqual(scene["edges"][0]["label"], "Frosty")
         self.assertTrue(scene["edges"][0]["locked"])
 
+    def test_table_remains_the_place_kind_for_unserious_objects(self):
+        source = view()
+        source["places"].append({
+            "place_id": "table", "kind": "table", "parent": "concourse",
+        })
+        source["listings"].append({
+            "listing_id": "aside-1", "place_id": "table",
+            "title": "a rubber chicken", "artifact_sha256": "b" * 64,
+        })
+        scene = project(source, now_ms=100)
+        table = next(node for node in scene["nodes"] if node["id"] == "table")
+        self.assertEqual(table["kind"], "table")
+        self.assertEqual(table["listings"][0]["listing_id"], "aside-1")
+
     def test_replace_not_merge(self):
         first = view()
         second = view()

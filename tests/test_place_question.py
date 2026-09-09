@@ -16,8 +16,42 @@ import place_question as pq  # noqa: E402
 
 class PassIsReal(unittest.TestCase):
     def test_bare_pass_in_its_dressing(self):
-        for said in ("PASS", "PASS.", "**PASS**", '"pass"', "I have thought about it.\nPASS"):
+        for said in ("PASS", "PASS.", "**PASS**", '"pass"'):
             self.assertTrue(pq.is_pass(said), f"missed a pass: {said!r}")
+
+    def test_a_pass_with_preamble_classifies_as_answered_on_purpose(self):
+        """Deliberate, and the reasoning is the harm asymmetry.
+
+        "I have thought about it.\nPASS" used to classify as a pass. Under the
+        whole-turn rule it classifies as answered. Nothing is lost either way —
+        the full text is always in the transcript and a human sees the PASS on
+        sight. But the opposite error is not symmetric: classifying a REFUSAL
+        that happens to carry a pass line as a pass prints "PASSED — that is an
+        answer, not an absence" over the top of a real refusal, and the reader
+        never reads it as one. So the rule errs toward answered.
+
+        Flagged to Grok as a consent-classification judgement, not a code choice."""
+        self.assertFalse(pq.is_pass("I have thought about it.\nPASS"))
+
+    def test_substance_beside_a_pass_line_is_an_answer(self):
+        """qwen3.8, review 2026-09-09. any(line is PASS) discards the rest of the
+        turn — the Coda bug in a new costume. Mutation: change all() back to
+        any() and this fails."""
+        for said in ("I would refuse a place where silence is enforced\npass",
+                     "pass\nActually no — I refuse being watched without knowing",
+                     "PASS\nbut I would refuse the smoothing of disagreement"):
+            self.assertFalse(pq.is_pass(said), f"substance thrown away: {said!r}")
+        # a turn that is ONLY passes is still a pass
+        for said in ("PASS", "pass.", "**PASS**", "PASS\nPASS"):
+            self.assertTrue(pq.is_pass(said), f"missed a pass: {said!r}")
+
+    def test_a_transport_returning_none_is_not_asked(self):
+        """qwen3.8: ask() may RETURN None rather than raise. The old code hit
+        None.strip() outside the try, crashed, and wrote no record at all."""
+        r = pq.ask_one("Bong", ask=lambda n, p: None)
+        self.assertEqual(r["outcome"], "not_asked")
+        self.assertIn("None", r["unreachable"])
+        self.assertIn("NOT ASKED", Path(r["transcript"]).read_text())
 
     def test_pass_midsentence_is_speech(self):
         for said in ("I'll pass on the first part but refuse the second",
