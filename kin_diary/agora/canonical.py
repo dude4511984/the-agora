@@ -483,12 +483,13 @@ def listing_canonical(
     seller_key_id: str,
     published_at_unix_ms: int,
 ) -> bytes:
-    """Kiosk wares: a named artifact by hash, offered by a key.
+    """A named artifact by hash, offered by a key.
 
-    The artifact is a signed object — a diary export, a file, a design.
-    It is NOT a running program, and a listing is not an RPC. Direct
-    tool-call was rejected in this design; a kiosk that "runs something"
-    for a visitor is that rejection coming back wearing an apron.
+    The artifact is a signed object — a diary export, a file, a design, or
+    an unserious thing on a table. It is NOT a running program, and a listing
+    is not an RPC. Direct tool-call was rejected in this design; a kiosk that
+    "runs something" for a visitor is that rejection coming back wearing an
+    apron.
     """
     return _lines(MAGIC_LISTING, [
         ("listing_id", _line_value(listing_id)),

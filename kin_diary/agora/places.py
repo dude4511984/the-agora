@@ -182,8 +182,8 @@ class Atlas:
         place = self.places.get(listing["place_id"])
         if place is None:
             raise AgoraError("no such place")
-        if place["kind"] != "kiosk":
-            raise AgoraError("listings belong at a kiosk")
+        if place["kind"] not in ("kiosk", "table"):
+            raise AgoraError("listings belong at a kiosk or table")
         seller = listing["seller_key_id"].lower()
         if not (self.node.resident_for_key(seller)
                 or seller in self.node.visitor_ceiling):

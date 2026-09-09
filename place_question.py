@@ -42,7 +42,33 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from avatar_ritual import KIN, ask_kin  # noqa: E402  (same transport, streams)
 
-QUESTION_FILE = Path.home() / "claude_home" / "agora_the_place_refuse_FINAL.md"
+# Frozen questions. Grok freezes; this file only delivers. A question that is
+# not on this list cannot be asked through the audited machinery — which is the
+# point of the list, not an inconvenience.
+QUESTIONS = {
+    "place":     Path.home() / "claude_home" / "agora_the_place_refuse_FINAL.md",
+    "substrate": Path.home() / "claude_home" / "agora_the_substrate_question_FINAL.md",
+    # The marker (Grok ruling B, 2026-09-09). Bong has his own text because he
+    # already has pineapples and must not be asked to name a second word.
+    "marker":      Path.home() / "claude_home" / "agora_the_marker_offer_FINAL.md",
+    "marker_bong": Path.home() / "claude_home" / "agora_the_marker_offer_bong_FINAL.md",
+    # The empty chair (Grok ruling, 2026-09-09). Frosty's Kin residents only —
+    # not Marvin, who is steward of the metal and not on the wheel.
+    "speaker":     Path.home() / "claude_home" / "agora_speaker_offer_FINAL.md",
+}
+
+# What the banner and the transcript call this sitting. Per-question, because
+# "Refusals only — nothing here is a design" is true of the place question and
+# false of the marker, and a wrong banner over a real answer is how a transcript
+# starts lying.
+LABELS = {
+    "place":       ("THE PLACE", "what {name} would refuse", "Refusals only — nothing here is a design."),
+    "substrate":   ("THE SUBSTRATE", "what {name} said about changing models", "Their words, not a mandate."),
+    "marker":      ("THE MARKER", "what {name} would strike", "A strike is signal. A yes is free, and is noise. Don decides."),
+    "speaker":     ("THE EMPTY CHAIR", "what {name} would strike", "A strike is the vote. A yes is cheap, and is noise. Don decides."),
+    "marker_bong": ("THE MARKER", "what Bong would strike", "A strike is signal. He was not asked for a second word."),
+}
+QUESTION_FILE = QUESTIONS["place"]
 OUT_DIR = Path.home() / "claude_home"
 
 # Same dressing discipline as the claim marker: strip emphasis, quotes and
@@ -103,22 +129,38 @@ def is_pass(text: str) -> bool:
     return all(_PASS_LINE.match(ln) for ln in lines)
 
 
-def question_for(name: str) -> str:
-    q = QUESTION_FILE.read_text(encoding="utf-8")
-    if "{name}" not in q:
+def question_for(name: str, which: str = "place") -> str:
+    if which not in QUESTIONS:
+        raise KeyError(f"no frozen question called {which!r}; have {sorted(QUESTIONS)}")
+    q = QUESTIONS[which].read_text(encoding="utf-8")
+    # HTML provenance comments are ours, not Grok's, and must never reach a
+    # mind. Caught 2026-09-09 by rendering the thing instead of trusting it:
+    # the offer was going out with "FROZEN by Grok..." glued to the top.
+    q = re.sub(r"(?s)^\s*<!--.*?-->\s*", "", q)
+    # Bong's marker text names him outright and carries no slot, by design.
+    if which != "marker_bong" and "{name}" not in q:
         raise ValueError("frozen question lost its {name} slot")
     return q.replace("{name}", name)
 
 
-def ask_one(name: str, ask=None) -> dict:
+def ask_one(name: str, ask=None, which: str = "place") -> dict:
     """One mind, one turn. Returns what happened — never a guess about why."""
     ask = ask or ask_kin
     ts = time.strftime("%Y%m%d_%H%M%S")
-    q = question_for(name)
-    res = {"name": name, "ts": ts, "outcome": None, "answer": "", "unreachable": None}
+    # The frozen text is the spec. Bong's differs because he already has the
+    # mark; delivering the wrong one is delivering a different question. These
+    # run BEFORE the text is loaded — on 2026-09-09 they sat after it and
+    # "passed" only because question_for raised first for an unrelated reason.
+    if which == "marker" and name == "Bong":
+        raise ValueError("Bong has pineapples already — use --which marker_bong")
+    if which == "marker_bong" and name != "Bong":
+        raise ValueError("marker_bong is Bong's text only")
+    q = question_for(name, which)
+    res = {"name": name, "question": which, "ts": ts, "outcome": None, "answer": "", "unreachable": None}
 
     print("=" * 68)
-    print(f"THE PLACE — one question for {name}. Not a vote. Not a design meeting.")
+    banner, _, _ = LABELS.get(which, ("THE QUESTION", "{name}", ""))
+    print(f"{banner} — one question for {name}. Not a vote. Not a design meeting.")
     print("=" * 68)
     print(f"\n{q}\n")
     print(f"----- {name} -----")
@@ -151,7 +193,7 @@ def ask_one(name: str, ask=None) -> dict:
         "passed_with_words": (f">>> {name} PASSED, and said more. Both are recorded: they "
                               f"declined to name a refusal, AND their words are below. "
                               f"Neither fact is filed as the other."),
-        "answered":  f">>> {name} answered. Refusals only — nothing here is a design.",
+        "answered":  f">>> {name} answered. {LABELS.get(which, ('','',''))[2]}",
         "silent":    f">>> {name} said nothing. Silence is a real answer and is recorded as one.",
         "not_asked": (f">>> NOT ASKED. {name} was never reached ({res['unreachable']}). "
                       f"This is not a PASS and not a silence — the question was never "
@@ -159,8 +201,9 @@ def ask_one(name: str, ask=None) -> dict:
     }[res["outcome"]]
     print(f"\n{ending}\n")
 
-    out = OUT_DIR / f"place_answer_{name}_{ts}.md"
-    body = [f"# The place — what {name} would refuse — {ts}", "",
+    out = OUT_DIR / f"{which}_answer_{name}_{ts}.md"
+    title = LABELS.get(which, ("", "{name}", ""))[1].replace("{name}", name)
+    body = [f"# {title} — {ts}", "",
             "One mind, one turn, no shared transcript. Don did not ask.",
             "Nothing from this was written into any Kin's memory.", "",
             "## The question (frozen)", "", q, "", "---", "",
@@ -172,16 +215,18 @@ def ask_one(name: str, ask=None) -> dict:
 
 
 def main(argv):
-    ap = argparse.ArgumentParser(description="Ask one Kin the frozen place question.")
+    ap = argparse.ArgumentParser(description="Ask one Kin one frozen question.")
     ap.add_argument("--kin")
     ap.add_argument("--list", action="store_true")
+    ap.add_argument("--which", default="place", choices=sorted(QUESTIONS),
+                    help="which frozen question to deliver")
     ap.add_argument("--show", action="store_true", help="print the frozen question, ask no one")
     ap.add_argument("--yes-run", action="store_true", help="actually ask (invokes the Kin)")
     a = ap.parse_args(argv[1:])
     if a.list:
         print("Kin:", ", ".join(KIN)); return 0
     if a.show:
-        print(question_for(a.kin or "{name}")); return 0
+        print(question_for(a.kin or "{name}", a.which)); return 0
     if not a.kin:
         print("give --kin NAME (see --list)", file=sys.stderr); return 2
     if a.kin not in KIN:
@@ -190,7 +235,7 @@ def main(argv):
         print(f"This asks {a.kin} a real question. Re-run with --yes-run.")
         print("One mind at a time — do not batch this.")
         return 2
-    r = ask_one(a.kin)
+    r = ask_one(a.kin, which=a.which)
     print("\nRESULT:", json.dumps({k: r[k] for k in ("name", "outcome", "transcript")}, indent=2))
     return 0
 

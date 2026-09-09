@@ -56,13 +56,18 @@ def main(argv):
         print(f"  generated node key {node_key.key_id[:16]}…")
 
     # Minimal furnishing so the snapshot is real rather than empty: a
-    # commons, a kiosk, and one gated door per resident board.
+    # commons, an invite-only unserious table, a kiosk, and one gated door
+    # per resident board.
     from kin_diary.agora.artifacts import ArtifactStore
+    from kin_diary.agora.canonical import COLLAB
     from kin_diary.agora.places import Atlas, sign_place
     from kin_diary.agora.presence_wire import PresenceStore
     node = store.load()
     atlas = Atlas(node, store=store)   # live, not a boot-time snapshot
     atlas.add_place(sign_place(node_key, "concourse", name, "commons"))
+    atlas.add_place(sign_place(
+        node_key, "table", name, "table", parent="concourse",
+        ring_to_see=1, points_to=COLLAB))
     atlas.add_place(sign_place(node_key, "stall-1", name, "kiosk",
                                parent="concourse"))
     for author in sorted(node.residents):
