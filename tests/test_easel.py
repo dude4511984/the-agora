@@ -118,7 +118,10 @@ class ItIsNotASitting(unittest.TestCase):
     def test_it_never_asks_anyone_to_respond(self):
         """Grok: name the unserious kind, stop interviewing it."""
         code = Path(easel.__file__).read_text().split('"""', 2)[2].lower()
-        for forbidden in ("ask_kin", "respond", "what do you think"):
+        # ask_kin is legitimate now — it delivers the OFFER. What must never
+        # appear is anything asking a mind to answer for the made thing.
+        for forbidden in ("respond", "what do you think", "how does it feel",
+                          "tell us about"):
             self.assertNotIn(forbidden, code)
 
     def test_the_eye_is_optional_and_separate(self):
@@ -144,6 +147,52 @@ class ItYieldsToMindsThatAreThinking(unittest.TestCase):
         code = Path(easel.__file__).read_text()
         self.assertIn("os.nice", code, "a made thing must not outrank a mind mid-thought")
         self.assertLess(easel.THREADS, os.cpu_count() or 24)
+
+
+class OfferingItToAKin(unittest.TestCase):
+    """Don opened the easel to the Kin 2026-09-09, risk accepted. The offer must
+    stay an offer: pass is real, unreachable is not a pass, and nothing asks
+    anyone to respond to what was made."""
+
+    def test_the_offer_does_not_stuff_them(self):
+        """Grok's tell: 'you should share something fun' is stuffing; 'the table
+        is quiet, you may leave a thing or not' is an honest cron."""
+        o = " ".join(easel.OFFER.lower().split())
+        for pushy in ("you should", "please make", "share something", "we would like",
+                      "why not", "have fun", "be creative"):
+            self.assertNotIn(pushy, o, f"the offer pressures: {pushy!r}")
+        for promise in ("does not have to be good", "leave it alone", "pass"):
+            self.assertIn(promise, o, f"the offer drops its promise: {promise!r}")
+
+    def test_pass_makes_nothing_and_is_not_an_error(self):
+        with tempfile.TemporaryDirectory() as d:
+            m = easel.offer("Bong", ask=lambda n, p: "PASS", out_dir=Path(d))
+            self.assertIsNone(m.path)
+            self.assertEqual(m.error, "passed")
+            self.assertEqual(list(Path(d).iterdir()), [])
+
+    def test_unreachable_is_never_recorded_as_a_pass(self):
+        def boom(n, p): raise TimeoutError("host down")
+        m = easel.offer("Bong", ask=boom)
+        self.assertIn("not asked", m.error)
+        self.assertNotIn("pass", m.error)
+
+    def test_a_made_thing_survives_a_dark_eye(self):
+        """therug sleeps on the bedtime cycle. Drawing must not need the eye."""
+        with tempfile.TemporaryDirectory() as d:
+            def blind(b): raise OSError("eye asleep")
+            import unittest.mock as _m
+            with _m.patch.object(easel, "make", lambda prompt, author="", out_dir=None: (
+                    lambda mm: (Path(out_dir or d, "Bong.png").write_bytes(b"\x89PNG"),
+                                setattr(mm, "ok", True),
+                                setattr(mm, "path", Path(out_dir or d, "Bong.png")), mm)[-1]
+                )(easel.Made(author=author, prompt=prompt))):
+                m = easel.offer("Bong", ask=lambda n, p: "a rubber chicken on a bench",
+                                read_back=blind, out_dir=Path(d))
+            self.assertTrue(m.ok)
+            self.assertTrue(m.path.is_file())
+            self.assertEqual(m.seen, "")
+            self.assertIn("read_back_error", m.meta)
 
 
 if __name__ == "__main__":

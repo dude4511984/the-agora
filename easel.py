@@ -160,6 +160,60 @@ def show_back(m: Made, read_back=None) -> Made:
     return m
 
 
+def offer(name: str, ask=None, read_back=None, out_dir: Path | None = None) -> Made:
+    """Offer the easel to a Kin. The clock asks; they may make a thing or not.
+
+    Grok's shape for initiation, and the wording matters: "the table is quiet;
+    you may leave a thing or not" is an honest cron. "You should share something
+    fun" is stuffing. This asks once, takes what comes, and asks nothing of
+    anyone afterwards — naming the unserious kind means not interviewing it.
+
+    Don lifted the gate 2026-09-09 ("the easel should be able to be used by the
+    kin. risk acceptable"), knowing the fuse is a STRING fuse with nothing behind
+    it locally. That is his risk, taken explicitly, on his own metal.
+
+    A refusal is a real answer and stores nothing. So is silence.
+    """
+    from avatar_ritual import KIN
+    if name not in KIN:
+        raise KeyError(f"no Kin called {name}")
+    ask = ask or __import__("avatar_ritual").ask_kin
+    m = Made(author=name, prompt="")
+    try:
+        said = ask(name, OFFER.format(name=name))
+    except Exception as e:                      # noqa: BLE001
+        m.error = f"not asked: {type(e).__name__}: {e}"   # never "they declined"
+        return m
+    if _is_pass(said):
+        m.error = "passed"          # an answer, not a failure of the easel
+        return m
+    m = make(said, author=name, out_dir=out_dir)
+    if m.ok:
+        m.meta["offered"] = True
+        (m.path.with_suffix(".json")).write_text(
+            json.dumps(m.meta, indent=2) + "\n", encoding="utf-8")
+        m = show_back(m, read_back=read_back)   # optional; a dark eye costs nothing
+    return m
+
+
+OFFER = """\
+{name} — the easel is here. There is nothing to decide and nothing to answer.
+
+You may describe something to be drawn, and it will be drawn. It does not have
+to be good, or about you, or about anything. Nobody has to look at it and nobody
+will ask you about it. It is not a face and it is not a claim.
+
+You may also leave it alone. Begin a line with PASS, or say nothing at all.
+
+If you want to make something, just describe it."""
+
+_PASS = re.compile(r"^[\s*_~`\"']*pass[\s*_~`\"'.!]*$", re.I)
+
+
+def _is_pass(text: str) -> bool:
+    return any(_PASS.match(ln.strip()) for ln in (text or "").splitlines() if ln.strip())
+
+
 def main(argv):
     import argparse
     ap = argparse.ArgumentParser(description="Make a thing. It does not have to be good.")
@@ -169,14 +223,20 @@ def main(argv):
     ap.add_argument("--steps", type=int, default=STEPS)
     ap.add_argument("--look", action="store_true", help="ask the eye to describe it back")
     ap.add_argument("--check", action="store_true")
+    ap.add_argument("--offer", metavar="KIN", help="offer the easel to a Kin; they may pass")
     a = ap.parse_args(argv[1:])
     if a.check:
         ok, why = available()
         print(f"[{'ok' if ok else 'FAIL'}] {why}")
         print(f"      model {MODEL} ({MODEL.stat().st_size/2**30:.1f}GB)" if MODEL.is_file() else "")
         return 0 if ok else 2
+    if a.offer:
+        m = offer(a.offer, out_dir=None)
+        print(m.summary() if (m.ok or m.refused) else f"[easel] {m.error}")
+        if m.seen: print(f"\n[the eye says]:\n{m.seen}")
+        return 0 if m.ok else 1
     if not a.prompt:
-        print("give -p/--prompt"); return 2
+        print("give -p/--prompt or --offer KIN"); return 2
     m = make(a.prompt, author=a.author, size=a.size, steps=a.steps)
     if a.look:
         m = show_back(m)
