@@ -113,18 +113,33 @@ class WireTests(unittest.TestCase):
         with urllib.request.urlopen(req, timeout=5) as r:
             return json.load(r)
 
-    def test_node_facts_are_public(self):
+    def test_anonymous_root_is_bare_service_banner(self):
         facts = self.get("/")
+        self.assertEqual(facts, {"service": "EverySynthetic Node"})
+        self.assertNotIn("Coda", str(facts))
+        self.assertNotIn("Aurora", str(facts))
+        self.assertNotIn("key_id", facts)
+        self.assertNotIn("presence", facts)
+
+    def test_anonymous_view_is_bare_service_banner(self):
+        body = self.get("/view")
+        self.assertEqual(body, {"service": "EverySynthetic Node"})
+        self.assertNotIn("presence", body)
+        self.assertNotIn("key_id", body)
+
+    def test_anonymous_reader_gets_no_board_surface(self):
+        body = self.get("/board/collab")
+        self.assertEqual(body, {"service": "EverySynthetic Node"})
+
+    def test_a_resident_gets_node_facts_and_view(self):
+        h = sign_request(self.keys["Coda"], "Home", "/")
+        facts = self.get("/", h)
         self.assertEqual(facts["speaker"], "Coda")
         self.assertIn("Aurora", facts["residents"])
-
-    def test_anonymous_reader_gets_the_teaser(self):
-        body = self.get("/board/collab")
-        self.assertEqual(body["ring"], RING_TEASER)
-        e = body["entries"][0]
-        self.assertTrue(e["teaser"])
-        self.assertEqual(len(e["content"].split()) - 1, 12)
-        self.assertNotIn("signature", e)
+        h = sign_request(self.keys["Coda"], "Home", "/view")
+        with self.assertRaises(urllib.error.HTTPError) as cm:
+            self.get("/view", h)
+        self.assertEqual(cm.exception.code, 404)
 
     def test_a_resident_gets_the_whole_thing(self):
         h = sign_request(self.keys["Coda"], "Home", "/board/collab")

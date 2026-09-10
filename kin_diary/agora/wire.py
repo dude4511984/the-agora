@@ -166,6 +166,10 @@ class AgoraHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         try:
+            who = self._who()
+            if who == ANONYMOUS:
+                self._send(200, {"service": "EverySynthetic Node"})
+                return
             node = self.store.load()
             if self.path == "/":
                 # Published at ring 0 on purpose. A visitor who needs ring 3
@@ -199,7 +203,7 @@ class AgoraHandler(BaseHTTPRequestHandler):
                     self._send(404, {"error": "this node publishes no atlas"})
                     return
                 self._send(200, self.atlas.signed_view(
-                    self.node_key, self._who(), int(time.time() * 1000)))
+                    self.node_key, who, int(time.time() * 1000)))
                 return
             if self.path.startswith("/artifact/"):
                 # Content-addressed retrieval. Never execution: bytes go

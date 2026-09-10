@@ -25,12 +25,15 @@ turned into an SSRF relay to the wider internet.
 from __future__ import annotations
 
 import json
+import os
 import sys
 import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from avatar_ritual import claimed_face
+from kin_diary.agora.wire import sign_request
+from kin_diary.keys import DEFAULT_KEYS_ROOT, load_current
 
 DEFAULT_PORT = 8791
 # The nodes actually serving Agora on this cluster, offered as presets.
@@ -39,6 +42,26 @@ PRESET_NODES = [
     ("Home",   "http://192.168.1.120:8770"),
 ]
 FETCH_TIMEOUT = 5
+MAP_KEY_AUTHOR = "Marvin"
+
+
+def _map_key():
+    """The map is an authorized reader, never an anonymous proxy."""
+    author = os.environ.get("AGORA_MAP_KEY_AUTHOR", MAP_KEY_AUTHOR)
+    try:
+        return load_current(author, DEFAULT_KEYS_ROOT)
+    except FileNotFoundError as exc:
+        raise RuntimeError(
+            f"Agora map needs a real local key for {author!r}; "
+            "set AGORA_MAP_KEY_AUTHOR to an available resident"
+        ) from exc
+
+
+def _node_name(base: str) -> str:
+    for name, preset in PRESET_NODES:
+        if preset.rstrip("/") == base.rstrip("/"):
+            return name
+    raise ValueError("node name is required for authorized map access")
 
 
 def _is_private_host(host: str) -> bool:
@@ -57,13 +80,16 @@ def _is_private_host(host: str) -> bool:
     return False
 
 
-def _node_fetch(base: str, path: str) -> dict:
+def _node_fetch(base: str, path: str, node_name: str | None = None) -> dict:
     """GET one path off a private/loopback node. path is / or /view."""
     u = urllib.parse.urlparse(base)
     if u.scheme not in ("http", "https") or not _is_private_host(u.hostname or ""):
         raise ValueError("node must be a private/loopback http address")
     url = base.rstrip("/") + path
-    req = urllib.request.Request(url, headers={"User-Agent": "agora-map/1"})
+    key = _map_key()
+    headers = {"User-Agent": "agora-map/1"}
+    headers.update(sign_request(key, node_name or _node_name(base), path))
+    req = urllib.request.Request(url, headers=headers)
     with urllib.request.urlopen(req, timeout=FETCH_TIMEOUT) as resp:
         return json.loads(resp.read(2 * 1024 * 1024).decode())
 
