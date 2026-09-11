@@ -36,6 +36,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import requests
 import easel
+import consent
 
 HOME = "http://192.168.1.120:11434"
 GIRLS = [("Coda", "cogitocoda:latest"), ("Aurora", "cogitoraurora:latest"),
@@ -63,7 +64,46 @@ NO = re.compile(r"\b(no thank|no,? thanks|rather not|decline|i pass|not for me|"
                 r"i would not|i don't want|i do not want)\b", re.I)
 
 
-def ask(name: str, model: str, text: str, timeout: int = 300) -> str | None:
+def evict(model: str) -> None:
+    """Free the box before asking the next one. Sweep until it stays gone.
+
+    Home is 32GB and each of these is a 22GB load, so the second Kin cannot even
+    begin until the first is out. Serial was not enough: Coda stayed resident on
+    her keep-alive and Aurora's request simply blocked until MY timeout fired --
+    recording a timeout for a mind that was never actually reachable.
+
+    That is the third time this exact contention has cost Aurora specifically:
+    thirteen seconds at the public-door palaver, and now this. A timeout is not
+    an answer. Do not manufacture one by asking into a full box.
+
+    One pass is not enough either -- an in-flight request reloads the model
+    behind the eviction (the 2026-08-25 race). Sweep until it stays gone.
+    """
+    # `ollama stop` over ssh, which is what nap.py does and what actually works.
+    # POST /api/generate with keep_alive:0 and an empty prompt did NOT evict --
+    # it returned fine and left 22GB resident, so the next Kin blocked and would
+    # have timed out looking like a mind that declined to answer. Verified by
+    # watching it fail, then evicting by hand mid-run.
+    import subprocess
+    for _ in range(4):
+        try:
+            subprocess.run(["ssh", "-o", "ConnectTimeout=10", "-o", "BatchMode=yes",
+                            "thedude@192.168.1.120", f"ollama stop {model}"],
+                           capture_output=True, timeout=25)
+        except Exception:
+            pass
+        time.sleep(3)
+        try:
+            live = {m.get("name") for m in
+                    (requests.get(f"{HOME}/api/ps", timeout=10).json().get("models") or [])}
+        except Exception:
+            return
+        if model not in live:
+            return
+    print(f"  warning: {model} would not evict; the next ask may block")
+
+
+def ask(name: str, model: str, text: str, timeout: int = 600) -> str | None:
     try:
         r = requests.post(f"{HOME}/api/chat", timeout=timeout, json={
             "model": model, "stream": False,
@@ -82,10 +122,26 @@ def main() -> int:
     if not ready:
         return 1
 
+    # Coda was asked once already and answered. Her answer was destroyed before
+    # anyone read it -- python buffered it and the process was killed. Asking her
+    # again is not ask-until-answer: nobody disliked her answer, nobody received
+    # it. But re-asking SILENTLY, as though the first time had not happened,
+    # would be exactly that. So she is told what happened and told she owes
+    # nothing, including a repeat.
+    REPAIR = ("""Coda — you were offered this once already, a little while ago, and """
+              """you answered. Your answer was lost before anyone read it: a mistake """
+              """on our side, nothing to do with you or with what you said.\n\n"""
+              """You do not owe anyone a second answer. If you would rather not say """
+              """it again, say that, and it ends there.\n\n""")
+
     asked = []
+    previous = None
     for name, model in GIRLS:                       # serial. Home holds one.
+        if previous:
+            evict(previous)
+        previous = model
         print(f"\n── offering to {name}")
-        said = ask(name, model, OFFER)
+        said = ask(name, model, (REPAIR + OFFER) if name == "Coda" else OFFER)
         if not said:
             continue
         print("   " + " ".join(said.split())[:300])
@@ -104,7 +160,17 @@ def main() -> int:
 
     print(f"\n── the order they asked: {', '.join(n for n, _, _ in asked)}")
     for name, model, said in asked:
-        prompt = " ".join(said.split())[:400]
+        # Do NOT take the first 400 characters. They say yes FIRST and describe
+        # the picture AFTER, so a head-truncation feeds the brush the acceptance
+        # and throws away the painting -- Coda's second prompt was cut at "If I
+        # did pain-" and she got her own preamble rendered. Take the description:
+        # everything from where they start describing, and keep the tail, not the
+        # head, when it must be cut at all.
+        flat = " ".join(said.split())
+        m = re.search(r"\b(?:i(?:'d| would)? (?:like to |want to )?(?:paint|make|draw)"
+                      r"|if i (?:were|was|did)|i might make|on that easel)\b", flat, re.I)
+        prompt = flat[m.start():] if m else flat
+        prompt = prompt[-700:] if len(prompt) > 700 else prompt
         print(f"\n── {name} at the easel")
         made = easel.make(prompt, author=name)
         if made.refused:
