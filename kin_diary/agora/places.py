@@ -16,7 +16,9 @@ the hint is untrusted, but because a hint must never be load-bearing.
 
 from __future__ import annotations
 
+import json
 import time
+from datetime import datetime, timezone
 
 from ..canonical import content_sha256
 from ..keys import KeyRecord, load_public
@@ -34,6 +36,26 @@ from .node import AgoraError, Node
 
 def _now_ms(now_ms: int | None) -> int:
     return int(now_ms if now_ms is not None else time.time() * 1000)
+
+
+def _post_timestamp_ms(raw) -> int | None:
+    """Posts carry timestamps in at least two shapes that predate this
+    function — a "YYYY-MM-DD HH:MM:SS" string from one writer and a raw
+    unix-epoch-seconds string (with fractional seconds) from another
+    (the chess table entries). Returns None rather than guessing when
+    neither parses, so a malformed post just scores zero instead of
+    distorting the decay with a wrong age."""
+    if raw is None:
+        return None
+    try:
+        return int(float(raw) * 1000)
+    except (TypeError, ValueError):
+        pass
+    try:
+        dt = datetime.strptime(str(raw), "%Y-%m-%d %H:%M:%S")
+        return int(dt.replace(tzinfo=timezone.utc).timestamp() * 1000)
+    except (TypeError, ValueError):
+        return None
 
 
 # ── places ─────────────────────────────────────────────────────────────────
@@ -252,6 +274,52 @@ class Atlas:
             return True
         return True
 
+    _RESONANCE_HALF_LIFE_HOURS = 72.0
+
+    def resonance(self, now_ms: int) -> dict[str, float]:
+        """Ghost voltage — how much just happened at each place, decaying.
+
+        v1, deliberately honest rather than clever: one post is one unit of
+        weight, exponentially decayed by age (72h half-life — a heavy day
+        still glows three days later, a month-old thread has gone quiet).
+        Only places that name a board via points_to score at all; a place
+        with nothing pointing through it has nothing to be warm about.
+        Not signed, not part of the atlas snapshot's inventory — this is a
+        rendering hint recomputed live from the log, the same status as
+        presence is ephemeral, never a fact anyone else's node would need
+        to verify.
+        """
+        if self._store is None:
+            return {}
+        import math
+        boards_by_place = {
+            p["place_id"]: p.get("points_to")
+            for p in self.places.values()
+            if p.get("points_to")
+        }
+        if not boards_by_place:
+            return {}
+        scores: dict[str, float] = {}
+        for place_id, board in boards_by_place.items():
+            rows = self._store.conn.execute(
+                "SELECT entry FROM agora_posts WHERE node=? AND board=?",
+                (self.node.name, board),
+            ).fetchall()
+            total = 0.0
+            for row in rows:
+                try:
+                    entry = json.loads(row["entry"])
+                    ts = _post_timestamp_ms(entry.get("timestamp"))
+                except Exception:
+                    ts = None
+                if ts is None:
+                    continue
+                age_hours = max(0.0, (now_ms - ts) / 3_600_000.0)
+                total += math.pow(0.5, age_hours / self._RESONANCE_HALF_LIFE_HOURS)
+            if total > 0:
+                scores[place_id] = round(total, 4)
+        return scores
+
     def view(self, key_id: str, now_ms: int) -> dict:
         """The snapshot both clients render from — the human's map and the
         visiting mind's data feed are the same object, filtered the same
@@ -274,6 +342,7 @@ class Atlas:
         ]
         wares = [li for li in self.listings.values() if li["place_id"] in seen]
         doors = [d for d in self.peer_doors() if d["parent"] in seen]
+        resonance = {pid: v for pid, v in self.resonance(now).items() if pid in seen}
 
         return {
             "node": self.node.name,
@@ -282,6 +351,7 @@ class Atlas:
             "places": sorted(places, key=lambda p: p["place_id"]),
             "presence": sorted(here, key=lambda p: p["key_id"]),
             "listings": sorted(wares, key=lambda li: li["listing_id"]),
+            "resonance": resonance,
         }
 
     # ── the snapshot on the wire ───────────────────────────────────────────

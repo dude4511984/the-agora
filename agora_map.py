@@ -254,7 +254,13 @@ function renderPlan(world, view, root){
   s += '<defs>'
      + '<radialGradient id="eyeGlow" cx="50%" cy="45%" r="60%"><stop offset="0%" stop-color="#fff0d0"/><stop offset="55%" stop-color="#ffcf7a"/><stop offset="100%" stop-color="#e8a94b"/></radialGradient>'
      + '<linearGradient id="bodyShade" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#f2eee4"/><stop offset="100%" stop-color="#d9d3c5"/></linearGradient>'
+     + '<radialGradient id="resonanceGlow" cx="50%" cy="50%" r="50%"><stop offset="0%" stop-color="#ffcf7a" stop-opacity="0.55"/><stop offset="60%" stop-color="#e8a94b" stop-opacity="0.18"/><stop offset="100%" stop-color="#e8a94b" stop-opacity="0"/></radialGradient>'
      + '</defs>';
+  // Resonance wells — the ghost voltage of what happened here, not a log:
+  // a lingering warmth at a place with real recent activity, decaying with
+  // it rather than staying lit forever. Server computes the score
+  // (agora/places.py Atlas.resonance); this only draws what it's handed.
+  const resonance = view.resonance || {};
   // floor
   s += `<rect x="${X}" y="${Y}" width="${RW}" height="${RH}" rx="20" fill="var(--floor)" stroke="var(--line)" stroke-width="1.5"/>`;
   s += `<text x="${X+20}" y="${Y+26}" class="rlabel">${esc(commons.place_id)} · ${esc(commons.kind||'commons')}</text>`;
@@ -299,8 +305,18 @@ function renderPlan(world, view, root){
   // child alcoves along the bottom edge
   kids.forEach((k,i)=>{
     const aw=150, gap=20, ax=X+RW-(kids.length-i)*(aw+gap)+gap, ay=Y+RH-110;
+    const heat = resonance[k.place_id] || 0;
+    if(heat > 0.01){
+      // Radius and opacity both track heat — recent/heavy activity reads as
+      // a wider, brighter well; something from weeks ago is a faint hint at
+      // the box's edge, not gone but not loud either.
+      const r = Math.min(90, 30 + heat*40);
+      const op = Math.min(0.9, 0.25 + heat*0.5);
+      s += `<circle cx="${ax+aw/2}" cy="${ay+48}" r="${r.toFixed(0)}" fill="url(#resonanceGlow)" opacity="${op.toFixed(2)}"/>`;
+    }
     s += `<rect x="${ax}" y="${ay}" width="${aw}" height="96" rx="10" fill="none" stroke="var(--line)" stroke-width="1.3" stroke-dasharray="2 5"/>`
-       + `<text x="${ax+14}" y="${ay+26}" class="rlabel">${esc(k.place_id)} · ${esc(k.kind||'')}</text>`;
+       + `<text x="${ax+14}" y="${ay+26}" class="rlabel">${esc(k.place_id)} · ${esc(k.kind||'')}</text>`
+       + (heat > 0.01 ? `<text x="${ax+14}" y="${ay+82}" class="kkid" style="fill:#e8a94b">ghost voltage · ${heat.toFixed(2)}</text>` : '');
   });
   // peer doors on the right edge
   doors.forEach((d,i)=>{
