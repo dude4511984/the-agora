@@ -496,6 +496,7 @@ PAGE_3D = """<!doctype html>
   <div>node: <select id="node"></select></div>
   <div id="status">loading…</div>
   <div style="margin-top:6px;opacity:.7">WASD / arrows to walk · space to jump · drag to look · scroll to zoom</div>
+  <div style="margin-top:2px;opacity:.7">Walk into a peer door to cross to that node.</div>
   <div style="margin-top:2px;opacity:.5">Same signed data as the 2D map. Nothing here is invented.</div>
 </div>
 <div id="err"></div>
@@ -662,6 +663,11 @@ function stepPlayer(dt){
   camera.position.add(newTarget.clone().sub(controls.target));
   controls.target.copy(newTarget);
   marker.position.set(player.position.x, 0.02, player.position.z);
+  if (!traveling) {
+    for (const t of doorTriggers) {
+      if (Math.hypot(player.position.x - t.x, player.position.z - t.z) < t.r) { crossDoor(t); break; }
+    }
+  }
 }
 
 // The Speaker chair, focal, empty or seated. Static shape, live color only.
@@ -923,14 +929,25 @@ function buildPlaces(kids, resonance){
 // Peer doors — thresholds to a different node entirely, not a place on this
 // one. Visually distinct (taller, brighter frame) from a personal door, and
 // colored by the same locked/unlocked fact the 2D map's door glyph reads.
+// Walking into one crosses it, same as clicking a door button on the 2D
+// map does (there too, locked is informational, not something the map
+// tool itself gates — the map is already an authorized reader; see
+// _node_fetch/_is_private_host above). Collision sits only at the two
+// side posts, the same "opening, not a slab" pattern the outer gate
+// already uses, so the gap between them is how you actually cross.
 let doorGroup = new THREE.Group();
 scene.add(doorGroup);
+let doorTriggers = [];
+let traveling = false;
 function buildDoors(doors){
   doorGroup.children.slice().forEach(c => doorGroup.remove(c));
   doorObstacles = [];
+  doorTriggers = [];
   doors.forEach((d, i) => {
     const {x, z} = arcPos(i, doors.length, Math.PI * 0.15, Math.PI * 0.55, 8.3);
-    doorObstacles.push({x, z, r: 0.7});
+    const postR = 0.14;
+    doorObstacles.push({x: x - 0.55, z, r: postR}, {x: x + 0.55, z, r: postR});
+    if (d.url) doorTriggers.push({x, z, r: 0.8, url: d.url, peer: d.peer || 'peer'});
     const color = d.locked ? 0xc9a75f : 0x67c98a;
     const mat = new THREE.MeshStandardMaterial({color, emissive: color, emissiveIntensity: 0.25});
     const post = new THREE.Mesh(new THREE.BoxGeometry(0.14, 2.0, 0.14), mat);
@@ -944,6 +961,33 @@ function buildDoors(doors){
     label.position.set(x, 2.6, z);
     doorGroup.add(label);
   });
+}
+
+// Crossing a peer door: find (or, matching the 2D map's own fallback,
+// create) the dropdown option for that node's URL, switch to it, and land
+// back at the same fixed spawn point every arrival starts from — chosen
+// because it's far from every door's arc position on either node's floor
+// plan, so arriving never immediately re-triggers a crossing back out.
+function teleportPlayer(x, z){
+  const delta = new THREE.Vector3(x, 0, z).sub(player.position);
+  player.position.set(x, player.position.y, z);
+  camera.position.add(delta);
+  controls.target.add(delta);
+  marker.position.set(x, 0.02, z);
+}
+function crossDoor(t){
+  traveling = true;
+  status.textContent = 'crossing to ' + t.peer + '…';
+  let opt = [...sel.options].find(o => o.value.replace(/\/$/, '') === t.url.replace(/\/$/, ''));
+  if (!opt) {
+    opt = document.createElement('option');
+    opt.value = t.url;
+    opt.textContent = t.peer + ' — ' + t.url;
+    sel.appendChild(opt);
+  }
+  sel.value = opt.value;
+  teleportPlayer(0, 6);
+  loadNode().finally(() => { traveling = false; });
 }
 
 // Presence: sprites, not meshes. A claimed face or a name-only placard —
