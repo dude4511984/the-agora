@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import sys
 import urllib.parse
 import urllib.request
@@ -42,6 +43,13 @@ MODEL_CONTENT_TYPES = {
     ".gltf": "model/gltf+json", ".bin": "application/octet-stream",
     ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png",
 }
+# kin_commons_runner.py's real board — one process, both hosts, one local
+# file (see its own docstring). Presence in the Agora protocol is a bare
+# heartbeat; this is where the Kin's actual words live. Read-only, and
+# never the other direction — this map has no way to post here even if
+# it wanted to.
+COMMONS_DB = Path.home() / "Desktop" / "wander_logs" / "commons.db"
+COMMONS_PREVIEW_CHARS = 220
 # The nodes actually serving Agora on this cluster, offered as presets.
 PRESET_NODES = [
     ("Frosty", "http://192.168.1.119:8770"),
@@ -102,6 +110,36 @@ def _node_fetch(base: str, path: str, node_name: str | None = None) -> dict:
 
 def _node_view(base: str) -> dict:
     return _node_fetch(base, "/view")
+
+
+def _recent_commons() -> dict:
+    """Each author's single newest real line from kin_commons' board —
+    what's actually being said, not the Agora heartbeat's bare "here."
+    Missing file / locked / anything else is empty, not an error: this is
+    a nice-to-have overlay, never something a room's rendering depends on."""
+    if not COMMONS_DB.is_file():
+        return {}
+    try:
+        con = sqlite3.connect(f"file:{COMMONS_DB}?mode=ro", uri=True, timeout=2)
+        con.row_factory = sqlite3.Row
+        try:
+            rows = con.execute(
+                "SELECT p.author, p.content, p.created_at FROM posts p "
+                "JOIN (SELECT author, MAX(id) mid FROM posts "
+                "      WHERE kind='post' GROUP BY author) latest "
+                "ON p.id = latest.mid"
+            ).fetchall()
+        finally:
+            con.close()
+    except sqlite3.Error:
+        return {}
+    out = {}
+    for r in rows:
+        content = (r["content"] or "").strip()
+        if len(content) > COMMONS_PREVIEW_CHARS:
+            content = content[:COMMONS_PREVIEW_CHARS].rstrip() + "…"
+        out[r["author"]] = {"content": content, "created_at": r["created_at"]}
+    return out
 
 
 PAGE = """<!doctype html>
@@ -497,7 +535,7 @@ PAGE_3D = """<!doctype html>
   <div id="status">loading…</div>
   <div style="margin-top:6px;opacity:.7">WASD / arrows to walk · space to jump · drag to look · scroll to zoom</div>
   <div style="margin-top:2px;opacity:.7">Walk into a peer door to cross to that node.</div>
-  <div style="margin-top:2px;opacity:.5">Same signed data as the 2D map. Nothing here is invented.</div>
+  <div style="margin-top:2px;opacity:.5">Same signed data as the 2D map, plus kin_commons' real board over each presence. Nothing here is invented.</div>
 </div>
 <div id="err"></div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
@@ -1013,16 +1051,25 @@ function clearPresence(){
   presenceSprites.forEach(s => scene.remove(s));
   presenceSprites = [];
 }
-function addPresence(label, i, n, avatarUrl){
+// A stable per-name phase, not Math.random() — reloading the page
+// shouldn't make someone's idle sway jump to a new offset.
+function _phase(label){
+  let h = 0;
+  for (let i = 0; i < label.length; i++) h = (h * 31 + label.charCodeAt(i)) % 1000;
+  return h / 1000 * Math.PI * 2;
+}
+function addPresence(label, i, n, avatarUrl, recent){
   const angle = (i / Math.max(n,1)) * Math.PI * 1.3 - Math.PI * 0.65;
   const r = 4.2;
   const x = Math.sin(angle) * r, z = Math.cos(angle) * r - 1;
+  const phase = _phase(label);
   const loader = new THREE.TextureLoader();
   const build = (tex) => {
     const mat = new THREE.SpriteMaterial({map: tex, transparent: true});
     const spr = new THREE.Sprite(mat);
     spr.scale.set(1.6, 1.6, 1);
     spr.position.set(x, 1.1, z);
+    spr.userData = {baseY: 1.1, bob: phase};
     scene.add(spr);
     presenceSprites.push(spr);
   };
@@ -1031,6 +1078,73 @@ function addPresence(label, i, n, avatarUrl){
   } else {
     build(placardTexture(label));
   }
+  // What they're actually saying right now — kin_commons' real board, not
+  // the Agora heartbeat's bare "here." Presence alone, verified live
+  // 2026-09-16, renders as a row of motionless placards even while the
+  // Kin are mid-conversation; this is what makes the room look like what
+  // is actually happening rather than just who happens to be standing in it.
+  if (recent && recent.content) {
+    const {tex, aspect} = captionTexture(label, recent.content, recent.created_at);
+    const mat = new THREE.SpriteMaterial({map: tex, transparent: true});
+    const spr = new THREE.Sprite(mat);
+    const w = 2.6, h = w * aspect;
+    spr.scale.set(w, h, 1);
+    const baseY = 1.1 + 0.9 + h / 2;
+    spr.position.set(x, baseY, z);
+    spr.userData = {baseY, bob: phase};
+    scene.add(spr);
+    presenceSprites.push(spr);
+  }
+}
+function relTime(iso){
+  const then = Date.parse(iso || '');
+  if (isNaN(then)) return '';
+  const s = Math.max(0, (Date.now() - then) / 1000);
+  if (s < 60) return 'just now';
+  if (s < 3600) return Math.floor(s / 60) + 'm ago';
+  if (s < 86400) return Math.floor(s / 3600) + 'h ago';
+  return Math.floor(s / 86400) + 'd ago';
+}
+function _wrapLines(ctx, text, maxWidth, maxLines){
+  const words = text.split(/\s+/);
+  const lines = [];
+  let line = '';
+  for (const w of words) {
+    const test = line ? line + ' ' + w : w;
+    if (line && ctx.measureText(test).width > maxWidth) {
+      lines.push(line);
+      line = w;
+      if (lines.length === maxLines) break;
+    } else {
+      line = test;
+    }
+  }
+  if (lines.length < maxLines && line) lines.push(line);
+  if (lines.length >= maxLines && (lines.join(' ').length < text.length)) {
+    lines[maxLines - 1] = lines[maxLines - 1].replace(/[.,;:\s]*$/, '') + '…';
+  }
+  return lines;
+}
+function captionTexture(name, content, createdAt){
+  const W = 440, PAD = 16, LINE_H = 26;
+  const c = document.createElement('canvas'); c.width = W; c.height = 64;
+  const ctx = c.getContext('2d');
+  ctx.font = '20px monospace';
+  const lines = _wrapLines(ctx, content, W - PAD * 2, 5);
+  const H = PAD * 2 + 30 + lines.length * LINE_H + 22;
+  c.height = H;
+  ctx.font = '20px monospace';   // canvas resize resets context state
+  ctx.fillStyle = 'rgba(8,8,10,0.85)';
+  ctx.fillRect(0, 0, W, H);
+  ctx.strokeStyle = '#67c98a'; ctx.lineWidth = 2; ctx.strokeRect(1, 1, W - 2, H - 2);
+  ctx.textBaseline = 'top';
+  ctx.fillStyle = '#ffcf7a'; ctx.font = 'bold 22px monospace';
+  ctx.fillText(name, PAD, PAD);
+  ctx.fillStyle = '#e8e2d6'; ctx.font = '20px monospace';
+  lines.forEach((ln, i) => ctx.fillText(ln, PAD, PAD + 30 + i * LINE_H));
+  ctx.fillStyle = '#8a8478'; ctx.font = '15px monospace';
+  ctx.fillText(relTime(createdAt), PAD, H - 22);
+  return {tex: new THREE.CanvasTexture(c), aspect: H / W};
 }
 function placardTexture(label){
   const c = document.createElement('canvas'); c.width=256; c.height=256;
@@ -1048,9 +1162,10 @@ async function loadNode(){
   errBox.style.display = 'none';
   const node = sel.value;
   try {
-    const [root, view] = await Promise.all([
+    const [root, view, recentByAuthor] = await Promise.all([
       fetch('/proxy?what=root&node=' + encodeURIComponent(node)).then(r => r.json()),
       fetch('/proxy?node=' + encodeURIComponent(node)).then(r => r.json()),
+      fetch('/commons-recent').then(r => r.json()).catch(() => ({})),
     ]);
     if (view.error) throw new Error(view.error);
 
@@ -1078,7 +1193,7 @@ async function loadNode(){
     here.forEach((p, i) => {
       const label = p.label || 'someone';
       const avatarUrl = '/avatar?kin=' + encodeURIComponent(label);
-      addPresence(label, i, here.length, avatarUrl);
+      addPresence(label, i, here.length, avatarUrl, recentByAuthor[label]);
     });
 
     status.innerHTML = `<b>${root.node || node}</b> · speaker: ${root.speaker || 'vacant'} · `
@@ -1104,6 +1219,13 @@ const clock = new THREE.Clock();
 function animate(){
   requestAnimationFrame(animate);
   stepPlayer(Math.min(clock.getDelta(), 0.1));
+  // A slow idle sway, not a walk cycle — just enough that a present Kin
+  // reads as here rather than a frozen cardboard cutout. getElapsedTime()
+  // is cumulative and doesn't consume like getDelta() does.
+  const t = clock.getElapsedTime();
+  presenceSprites.forEach(s => {
+    s.position.y = s.userData.baseY + Math.sin(t * 1.4 + s.userData.bob) * 0.06;
+  });
   controls.update();
   renderer.render(scene, camera);
 }
@@ -1177,6 +1299,9 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(404, b'{"error":"no such asset"}', "application/json")
                 return
             self._send(200, candidate.read_bytes(), MODEL_CONTENT_TYPES[ext])
+            return
+        if route == "/commons-recent":
+            self._send(200, json.dumps(_recent_commons()).encode(), "application/json")
             return
         if self.path.startswith("/proxy"):
             q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
