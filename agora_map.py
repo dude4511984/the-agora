@@ -30,12 +30,18 @@ import sys
 import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 
 from avatar_ritual import claimed_face
 from kin_diary.agora.wire import sign_request
 from kin_diary.keys import DEFAULT_KEYS_ROOT, load_current
 
 DEFAULT_PORT = 8791
+MODELS_DIR = (Path(__file__).parent / "static" / "models").resolve()
+MODEL_CONTENT_TYPES = {
+    ".gltf": "model/gltf+json", ".bin": "application/octet-stream",
+    ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png",
+}
 # The nodes actually serving Agora on this cluster, offered as presets.
 PRESET_NODES = [
     ("Frosty", "http://192.168.1.119:8770"),
@@ -460,6 +466,601 @@ load(); arm();
 """
 
 
+# ── 3D: the first real proof, scoped small on purpose ───────────────────────
+#
+# Not a walkable game. Not a second data source — every fact this page draws
+# comes through the exact same /proxy endpoint the 2D plan view already
+# proved works, same authenticated fetch, same signed data. This page's only
+# job is to prove three.js can read that real data and put something true on
+# screen: a floor, whoever is actually standing there, and a Resonance Well
+# that actually glows by the actual number the server actually computed.
+# Precompute the static (the room geometry never changes), spend the light
+# budget on what's alive (presence, the well) — same discipline as the Doom
+# conversation this came out of, 2026-09-16.
+PAGE_3D = """<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agora — 3D (proof)</title>
+<style>
+  html,body{margin:0;height:100%;background:#0b0d10;overflow:hidden;font-family:ui-monospace,monospace}
+  #hud{position:fixed;top:10px;left:10px;color:#cfc7b8;font-size:12px;z-index:2;
+       background:rgba(10,10,10,.55);padding:8px 12px;border-radius:8px;max-width:360px}
+  #hud b{color:#ffcf7a}
+  #err{position:fixed;top:10px;right:10px;color:#ff9a7a;font-size:12px;z-index:2;
+       background:rgba(10,10,10,.6);padding:6px 10px;border-radius:8px;display:none}
+  select{background:#151515;color:#cfc7b8;border:1px solid #333;padding:2px 6px;font-family:inherit}
+</style>
+</head><body>
+<div id="hud">
+  <div><b>Agora — 3D proof of pipeline</b></div>
+  <div>node: <select id="node"></select></div>
+  <div id="status">loading…</div>
+  <div style="margin-top:6px;opacity:.7">WASD / arrows to walk · space to jump · drag to look · scroll to zoom</div>
+  <div style="margin-top:2px;opacity:.5">Same signed data as the 2D map. Nothing here is invented.</div>
+</div>
+<div id="err"></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+<script>
+const PRESETS = __PRESETS__;
+const sel = document.getElementById('node');
+const status = document.getElementById('status');
+const errBox = document.getElementById('err');
+
+function showErr(msg){ errBox.style.display='block'; errBox.textContent = msg; }
+
+// ── scene: precomputed once, static geometry never rebuilt per frame ──────
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0b0d10);
+scene.fog = new THREE.FogExp2(0x0b0d10, 0.02);
+
+// You: a position on the floor, not a body — same "sprites, not sittings"
+// discipline the presence figures already follow, just for a visitor who
+// has no claimed face at all. A ring on the ground marks where you are;
+// the camera orbits and walks around that point, never becomes a face.
+const player = new THREE.Object3D();
+player.position.set(0, 0, 6);
+
+const camera = new THREE.PerspectiveCamera(55, innerWidth/innerHeight, 0.1, 200);
+camera.position.set(player.position.x, 4.4, player.position.z + 6.5);
+
+const renderer = new THREE.WebGLRenderer({antialias:true});
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+document.body.appendChild(renderer.domElement);
+
+const controls = new THREE.OrbitControls(camera, renderer.domElement);
+controls.target.copy(player.position).setY(1);
+controls.maxPolarAngle = Math.PI * 0.49;
+controls.minDistance = 3; controls.maxDistance = 22;
+controls.enablePan = false;   // panning would fight the walk-follow below
+
+// Baked-feeling ambient + one soft key light. Not real-time GI — a flat,
+// cheap wash that still reads as lit, the "beauty without becoming a
+// constraint" rule from the design conversation.
+scene.add(new THREE.AmbientLight(0x8a8478, 0.55));
+const key = new THREE.DirectionalLight(0xfff1d6, 0.65);
+key.position.set(6, 12, 4);
+scene.add(key);
+
+// Wall torches: now that the room is a real enclosed space (not an open
+// void), a single "sun" key light reads wrong from inside stone walls.
+// Four fixed sconces, cheap point lights plus a small emissive sphere
+// each — static once built, same as everything else that doesn't change
+// with the data.
+[[9.3, 0], [-9.3, 0], [0, 9.3], [0, -9.3]].forEach(([x, z]) => {
+  const torch = new THREE.PointLight(0xffaa55, 1.1, 9, 2);
+  torch.position.set(x, 2.6, z);
+  scene.add(torch);
+  const flame = new THREE.Mesh(
+    new THREE.SphereGeometry(0.09, 8, 8),
+    new THREE.MeshBasicMaterial({color: 0xffcf7a})
+  );
+  flame.position.copy(torch.position);
+  scene.add(flame);
+});
+
+// The floor: the commons. Static once built, never touched again. Sized to
+// reach past the wall perimeter's corners (HALF=10.5 below, corner distance
+// ~14.8) so the ground doesn't visibly run out before the walls do.
+const floorMat = new THREE.MeshStandardMaterial({color:0x1a1a1a, roughness:0.95});
+const floor = new THREE.Mesh(new THREE.CircleGeometry(15, 48), floorMat);
+floor.rotation.x = -Math.PI/2;
+scene.add(floor);
+const ring = new THREE.Mesh(
+  new THREE.RingGeometry(14.7, 15, 64),
+  new THREE.MeshBasicMaterial({color:0x3a352b, side:THREE.DoubleSide})
+);
+ring.rotation.x = -Math.PI/2;
+scene.add(ring);
+
+// A distant fallback only — real containment is the wall collision now
+// (wallObstacles), which correctly leaves the gate opening passable. This
+// used to be the actual boundary before the walls existed; left at 10 it
+// silently blocked the one opening we just built, closer to the floor
+// edge than any wall is. Pushed past the wall corners (~14.8) so it only
+// ever catches someone who's gotten past every real wall segment.
+const FLOOR_R = 30;
+const marker = new THREE.Mesh(
+  new THREE.RingGeometry(0.35, 0.45, 24),
+  new THREE.MeshBasicMaterial({color: 0x67b9cd, transparent: true, opacity: 0.85, side: THREE.DoubleSide})
+);
+marker.rotation.x = -Math.PI/2;
+scene.add(marker);
+
+// Walking: WASD/arrows move you across the real floor, camera-relative so
+// "forward" always means where you're looking. OrbitControls still owns
+// the look (drag to rotate, wheel to zoom) — this only slides its target
+// and the camera together, so a drag mid-walk doesn't get overwritten.
+//
+// Collision: every real place-alcove, peer door and the speaker chair is a
+// circle in the floor plane (position + radius); you're a 0.35-unit circle
+// too, and a move that would overlap one gets pushed back out along the
+// contact normal instead of refused outright, so sliding along an edge
+// still feels like walking, not hitting a wall dead-on every time.
+const PLAYER_R = 0.35;
+const staticObstacles = [{x: 0, z: -2.2, r: 1.05}];   // the speaker chair
+let placeObstacles = [];
+let doorObstacles = [];
+let wallObstacles = [];
+function resolveCollisions(pos){
+  for (const o of staticObstacles.concat(placeObstacles, doorObstacles, wallObstacles)){
+    const dx = pos.x - o.x, dz = pos.z - o.z;
+    const dist = Math.hypot(dx, dz);
+    const minDist = PLAYER_R + o.r;
+    if (dist >= minDist) continue;
+    if (dist < 1e-4) { pos.x += minDist; continue; }
+    const push = minDist - dist;
+    pos.x += (dx / dist) * push;
+    pos.z += (dz / dist) * push;
+  }
+}
+
+// Jump: pure vertical hop, gravity-driven, grounded check before another
+// one triggers. Applied as a delta to camera + target (not an absolute
+// value) so it composes with whatever OrbitControls' own orbiting is
+// doing, the same trick the walk-follow code already uses.
+const GRAVITY = -18, JUMP_VELOCITY = 6.5;
+let jumpY = 0, jumpVY = 0;
+addEventListener('keydown', e => {
+  if (e.code === 'Space') {
+    e.preventDefault();
+    if (jumpY <= 1e-4 && jumpVY === 0) jumpVY = JUMP_VELOCITY;
+  }
+});
+function stepJump(dt){
+  if (jumpY === 0 && jumpVY === 0) return;
+  const prev = jumpY;
+  jumpVY += GRAVITY * dt;
+  jumpY += jumpVY * dt;
+  if (jumpY < 0) { jumpY = 0; jumpVY = 0; }
+  const dy = jumpY - prev;
+  if (dy !== 0) { camera.position.y += dy; controls.target.y += dy; }
+}
+
+const keys = Object.create(null);
+addEventListener('keydown', e => { keys[e.key.toLowerCase()] = true; });
+addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
+const _fwd = new THREE.Vector3(), _right = new THREE.Vector3(), _move = new THREE.Vector3();
+function stepPlayer(dt){
+  stepJump(dt);
+  camera.getWorldDirection(_fwd); _fwd.y = 0; _fwd.normalize();
+  _right.crossVectors(_fwd, camera.up).normalize();
+  _move.set(0, 0, 0);
+  if (keys['w'] || keys['arrowup'])    _move.add(_fwd);
+  if (keys['s'] || keys['arrowdown'])  _move.sub(_fwd);
+  if (keys['d'] || keys['arrowright']) _move.add(_right);
+  if (keys['a'] || keys['arrowleft'])  _move.sub(_right);
+  if (_move.lengthSq() === 0) return;
+  _move.normalize().multiplyScalar(4.5 * dt);
+  player.position.add(_move);
+  resolveCollisions(player.position);
+  const r = Math.hypot(player.position.x, player.position.z);
+  if (r > FLOOR_R) { player.position.x *= FLOOR_R / r; player.position.z *= FLOOR_R / r; }
+  const newTarget = player.position.clone().setY(1);
+  camera.position.add(newTarget.clone().sub(controls.target));
+  controls.target.copy(newTarget);
+  marker.position.set(player.position.x, 0.02, player.position.z);
+}
+
+// The Speaker chair, focal, empty or seated. Static shape, live color only.
+const chairMat = new THREE.MeshStandardMaterial({color:0x555555, emissive:0x000000});
+const chair = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 0.9, 0.08, 24), chairMat);
+chair.position.set(0, 0.05, -2.2);
+scene.add(chair);
+
+// First real asset, not a placeholder box: a CC0 weathered stone figure
+// (Poly Haven's "Gothic Statue," downloaded and served locally at
+// /models/, never fetched from a third party at runtime). Don's brief —
+// "should feel old, like it was there before us" — this is the test of
+// whether an actual piece of art can stand in the commons next to the
+// real signed data, not just geometry standing in for one.
+const STATUE_POS = {x: 3.4, z: -3.6};
+staticObstacles.push({x: STATUE_POS.x, z: STATUE_POS.z, r: 0.6});
+new THREE.GLTFLoader().load(
+  '/models/gothic_statue/gothic_statue.gltf',
+  (gltf) => {
+    const statue = gltf.scene;
+    statue.position.set(STATUE_POS.x, 0, STATUE_POS.z);
+    statue.traverse(o => { if (o.isMesh) { o.castShadow = false; o.receiveShadow = false; } });
+    scene.add(statue);
+  },
+  undefined,
+  (err) => showErr('statue failed to load: ' + err.message)
+);
+
+// Second piece, mirroring the statue across the chair so neither one reads
+// as the room's single focal point — a worn classical bust, smaller and
+// closer to eye height, the kind of thing that could have been sitting on
+// a plinth here long before anyone now in the room arrived.
+const BUST_POS = {x: -3.4, z: -3.6};
+const PEDESTAL_H = 0.85;
+staticObstacles.push({x: BUST_POS.x, z: BUST_POS.z, r: 0.4});
+const pedestal = new THREE.Mesh(
+  new THREE.CylinderGeometry(0.28, 0.32, PEDESTAL_H, 12),
+  new THREE.MeshStandardMaterial({color: 0x2a2a2a, roughness: 0.9})
+);
+pedestal.position.set(BUST_POS.x, PEDESTAL_H / 2, BUST_POS.z);
+scene.add(pedestal);
+new THREE.GLTFLoader().load(
+  '/models/marble_bust_01/marble_bust_01.gltf',
+  (gltf) => {
+    const bust = gltf.scene;
+    // the raw model sits at floor level in its own file; a real display
+    // bust wants to be at roughly eye height, on something, not on the
+    // ground — so it gets the pedestal a real museum bust would have.
+    bust.position.set(BUST_POS.x, PEDESTAL_H, BUST_POS.z);
+    scene.add(bust);
+  },
+  undefined,
+  (err) => showErr('bust failed to load: ' + err.message)
+);
+
+// The walls: Poly Haven's "Modular Fort 01" (CC0), harvested rather than
+// used as its own prebuilt castle — it ships as one full assembled fort,
+// but the pieces are modeled around their own local origins for exactly
+// this, so real straight/corner segments get pulled out and re-tiled into
+// a perimeter sized for OUR commons, not shrunk to fit (that would make
+// real stone walls read as toy-sized). Measured at runtime from each
+// piece's own geometry, not guessed dimensions, so the tiling has no
+// gaps regardless of the kit's actual real-world scale.
+new THREE.GLTFLoader().load('/models/modular_fort_01/modular_fort_01.gltf', (gltf) => {
+  const src = gltf.scene;
+  function harvest(namePart) {
+    let found = null;
+    src.traverse(o => { if (!found && o.name && o.name.includes(namePart)) found = o; });
+    if (!found) return null;
+    const piece = found.clone(true);
+    piece.position.set(0, 0, 0);
+    piece.rotation.set(0, 0, 0);
+    piece.scale.set(1, 1, 1);
+    return piece;
+  }
+  const strTemplate = harvest('wall_thick_straight_01');
+  const cornerTemplate = harvest('wall_thick_corner_01');
+  const gateTemplate = harvest('wall_thin_gate_01');
+  const towerTemplate = harvest('tower_round');
+  if (!strTemplate || !cornerTemplate) {
+    showErr('fort pieces not found in modular_fort_01.gltf');
+    return;
+  }
+
+  const wallGroup = new THREE.Group();
+  scene.add(wallGroup);
+
+  // The kit is modeled at real castle scale (a single straight run is
+  // 10-30 units), which dwarfs a commons built at roughly human scale
+  // (chair ~0.9 radius, presence ~1.7m). Rescale the harvested pieces
+  // down to a wall-bay length that actually fits this room, uniformly,
+  // so corner and straight segments still meet each other correctly.
+  const rawStrLen = Math.max(...['x', 'z'].map(
+    a => new THREE.Box3().setFromObject(strTemplate).getSize(new THREE.Vector3())[a]));
+  const DESIRED_BAY = 3.5;
+  const SCALE = DESIRED_BAY / rawStrLen;
+  strTemplate.scale.setScalar(SCALE);
+  cornerTemplate.scale.setScalar(SCALE);
+  if (gateTemplate) gateTemplate.scale.setScalar(SCALE);
+  if (towerTemplate) towerTemplate.scale.setScalar(SCALE);
+
+  const segLen = DESIRED_BAY;
+  const cornerSize = new THREE.Box3().setFromObject(cornerTemplate).getSize(new THREE.Vector3());
+  const cornerSpan = Math.max(cornerSize.x, cornerSize.z);
+  const towerRadius = towerTemplate
+    ? Math.max(...['x', 'z'].map(a => new THREE.Box3().setFromObject(towerTemplate).getSize(new THREE.Vector3())[a])) / 2
+    : 0;
+
+  const HALF = 10.5;   // half side length of the square perimeter around the floor
+  // A round tower where each pair of walls meets — real castle corners
+  // aren't a bare miter joint, they're the strongpoint, and the kit ships
+  // exactly this piece. Layered on top of the flat corner stub rather
+  // than replacing it (the stub is what the straight bays actually key
+  // into); the tower just makes the joint read as architecture.
+  [{x: -HALF, z: -HALF, ry: 0},
+   {x:  HALF, z: -HALF, ry: Math.PI / 2},
+   {x:  HALF, z:  HALF, ry: Math.PI},
+   {x: -HALF, z:  HALF, ry: -Math.PI / 2}].forEach(c => {
+    const m = cornerTemplate.clone(true);
+    m.position.set(c.x, 0, c.z);
+    m.rotation.y = c.ry;
+    wallGroup.add(m);
+    if (towerTemplate) {
+      const t = towerTemplate.clone(true);
+      t.position.set(c.x, 0, c.z);
+      wallGroup.add(t);
+    }
+    wallObstacles.push({x: c.x, z: c.z, r: Math.max(cornerSpan * 0.6, towerRadius * 0.9)});
+  });
+
+  const runLen = HALF * 2 - cornerSpan;
+  const n = Math.max(1, Math.round(runLen / segLen));
+  const actualSeg = runLen / n;
+  function placeRun(axis, fixedCoord, ry, gateIndex) {
+    for (let i = 0; i < n; i++) {
+      const t = -runLen / 2 + actualSeg * (i + 0.5);
+      const useGate = i === gateIndex && gateTemplate;
+      const m = (useGate ? gateTemplate : strTemplate).clone(true);
+      const pos = axis === 'x' ? {x: t, z: fixedCoord} : {x: fixedCoord, z: t};
+      m.position.set(pos.x, 0, pos.z);
+      m.rotation.y = ry;
+      wallGroup.add(m);
+      if (useGate) {
+        // The gate's an opening, not a slab — collide only at its two
+        // side posts (a quarter of the bay width in from each edge),
+        // not the full bay, so walking through the middle actually works.
+        const half = actualSeg / 2, postR = actualSeg * 0.18;
+        const p1 = axis === 'x' ? {x: pos.x - half * 0.7, z: pos.z} : {x: pos.x, z: pos.z - half * 0.7};
+        const p2 = axis === 'x' ? {x: pos.x + half * 0.7, z: pos.z} : {x: pos.x, z: pos.z + half * 0.7};
+        wallObstacles.push({x: p1.x, z: p1.z, r: postR}, {x: p2.x, z: p2.z, r: postR});
+      } else {
+        wallObstacles.push({x: pos.x, z: pos.z, r: actualSeg * 0.55});
+      }
+    }
+  }
+  // The piece's own long axis runs along Z unrotated (that's how it came
+  // out of the kit) — so an x-axis run (wall face at fixed z) needs the
+  // 90° turn, and a z-axis run needs none. Backwards from what "placeRun
+  // along x" suggests; verified live after the first pass put the long
+  // dimension perpendicular to the wall line instead of along it — pieces
+  // jutting inward as isolated fins instead of tiling into a wall.
+  //
+  // Gate sits in the middle bay of the +z wall (fixedCoord goes with the
+  // OTHER axis here — an 'x' run has z fixed, not x) — the side the
+  // player actually spawns facing, so arriving in the commons means
+  // walking in through it, not just materializing inside a sealed box.
+  // First pass put it on the +x (east) wall instead: fixedCoord for a
+  // 'z' run sets x, not z, so "HALF" there meant x=HALF — confirmed live,
+  // the arch itself was real and correct, just on the wrong side.
+  const gateSlot = Math.floor(n / 2);
+  placeRun('x', -HALF, Math.PI / 2);
+  placeRun('x',  HALF, Math.PI / 2, gateSlot);
+  placeRun('z', -HALF, 0);
+  placeRun('z',  HALF, 0);
+}, undefined, (err) => showErr('fort walls failed to load: ' + err.message));
+
+// ── the real floor plan: alcoves and doors ARE the places the node signed,
+// not an invented layout. Same fact set the 2D plan view draws (kids =
+// places whose parent is the commons; peer_doors = other nodes), just given
+// arc positions instead of SVG rectangle positions. Rebuilt each poll,
+// same as presence — a place can appear or vanish, if rarely.
+function arcPos(i, n, aStart, aEnd, r){
+  const t = n <= 1 ? 0.5 : i / (n - 1);
+  const angle = aStart + t * (aEnd - aStart);
+  return {x: Math.sin(angle) * r, z: Math.cos(angle) * r, angle};
+}
+function labelSprite(lines, accent){
+  const c = document.createElement('canvas'); c.width = 320; c.height = 120;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = 'rgba(10,10,10,0.7)'; ctx.fillRect(0, 0, 320, 120);
+  ctx.strokeStyle = accent; ctx.lineWidth = 2; ctx.strokeRect(1, 1, 318, 118);
+  ctx.textAlign = 'center'; ctx.fillStyle = accent;
+  ctx.font = 'bold 26px monospace'; ctx.fillText(lines[0].slice(0, 16), 160, 46);
+  ctx.font = '18px monospace'; ctx.fillStyle = '#cfc7b8';
+  ctx.fillText((lines[1] || '').slice(0, 22), 160, 78);
+  const tex = new THREE.CanvasTexture(c);
+  const spr = new THREE.Sprite(new THREE.SpriteMaterial({map: tex, transparent: true}));
+  spr.scale.set(1.9, 0.72, 1);
+  return spr;
+}
+
+// Each real place (door, kiosk, table, whatever kind shows up) becomes a
+// small booth of its own — literally: kind "table" gets a table shape, a
+// door gets a frame. Its Resonance Well is that place's own real number
+// (Atlas.resonance in places.py), not a borrowed average — this is Eli's
+// original seed (agora_world_seeds_2026-09-15.md #1: "where a profound or
+// intense discussion happened, that spot keeps a visible trace"), applied
+// per place because that is literally what he specified.
+const KIND_COLOR = {door: 0x5a6072, kiosk: 0xe8b661, stall: 0xa99ad6, table: 0xc98a5a};
+let placeGroup = new THREE.Group();
+scene.add(placeGroup);
+function boothMesh(kind){
+  const color = KIND_COLOR[kind] || 0x6a7280;
+  const mat = new THREE.MeshStandardMaterial({color, roughness: 0.7});
+  if (kind === 'table') return new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.55, 0.45, 20), mat);
+  if (kind === 'door') {
+    const g = new THREE.Group();
+    const post = new THREE.Mesh(new THREE.BoxGeometry(0.12, 1.4, 0.12), mat);
+    const left = post.clone(); left.position.set(-0.45, 0.7, 0);
+    const right = post.clone(); right.position.set(0.45, 0.7, 0);
+    const lintel = new THREE.Mesh(new THREE.BoxGeometry(1.02, 0.12, 0.12), mat);
+    lintel.position.set(0, 1.4, 0);
+    g.add(left, right, lintel);
+    return g;
+  }
+  return new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.6, 0.7), mat); // kiosk/stall/unknown
+}
+const KIND_RADIUS = {door: 0.55, kiosk: 0.65, stall: 0.65, table: 0.75};
+function buildPlaces(kids, resonance){
+  placeGroup.children.slice().forEach(c => placeGroup.remove(c));
+  placeObstacles = [];
+  kids.forEach((k, i) => {
+    const {x, z} = arcPos(i, kids.length, Math.PI * 0.62, Math.PI * 1.38, 7.4);
+    const booth = boothMesh(k.kind);
+    booth.position.set(x, k.kind === 'table' ? 0.22 : 0, z);
+    placeGroup.add(booth);
+    placeObstacles.push({x, z, r: KIND_RADIUS[k.kind] || 0.6});
+
+    const heat = Math.min(1, resonance[k.place_id] || 0);
+    if (heat > 0.02) {
+      const glowLight = new THREE.PointLight(0xffcf7a, heat * 2.4, 4.5, 2);
+      glowLight.position.set(x, 0.9, z);
+      placeGroup.add(glowLight);
+      const glow = new THREE.Mesh(
+        new THREE.SphereGeometry(0.28 + heat * 0.3, 16, 16),
+        new THREE.MeshBasicMaterial({color: 0xffcf7a, transparent: true, opacity: 0.25 + heat * 0.5})
+      );
+      glow.position.set(x, 0.9, z);
+      placeGroup.add(glow);
+    }
+
+    const label = labelSprite([k.place_id, k.kind + (heat > 0.02 ? ` · ${heat.toFixed(2)}` : '')],
+                               '#' + (KIND_COLOR[k.kind] || 0x6a7280).toString(16).padStart(6, '0'));
+    label.position.set(x, 1.9, z);
+    placeGroup.add(label);
+  });
+}
+
+// Peer doors — thresholds to a different node entirely, not a place on this
+// one. Visually distinct (taller, brighter frame) from a personal door, and
+// colored by the same locked/unlocked fact the 2D map's door glyph reads.
+let doorGroup = new THREE.Group();
+scene.add(doorGroup);
+function buildDoors(doors){
+  doorGroup.children.slice().forEach(c => doorGroup.remove(c));
+  doorObstacles = [];
+  doors.forEach((d, i) => {
+    const {x, z} = arcPos(i, doors.length, Math.PI * 0.15, Math.PI * 0.55, 8.3);
+    doorObstacles.push({x, z, r: 0.7});
+    const color = d.locked ? 0xc9a75f : 0x67c98a;
+    const mat = new THREE.MeshStandardMaterial({color, emissive: color, emissiveIntensity: 0.25});
+    const post = new THREE.Mesh(new THREE.BoxGeometry(0.14, 2.0, 0.14), mat);
+    const left = post.clone(); left.position.set(x - 0.55, 1.0, z);
+    const right = post.clone(); right.position.set(x + 0.55, 1.0, z);
+    const lintel = new THREE.Mesh(new THREE.BoxGeometry(1.24, 0.14, 0.14), mat);
+    lintel.position.set(x, 2.0, z);
+    doorGroup.add(left, right, lintel);
+    const label = labelSprite(['→ ' + (d.peer || 'peer'), d.locked ? 'locked' : 'open'],
+                               d.locked ? '#c9a75f' : '#67c98a');
+    label.position.set(x, 2.6, z);
+    doorGroup.add(label);
+  });
+}
+
+// Presence: sprites, not meshes. A claimed face or a name-only placard —
+// same "faces are receipts, not sittings" rule the rest of this project
+// already lives by. Rebuilt each refresh since who's present is the live
+// part; the room around them is not.
+let presenceSprites = [];
+function clearPresence(){
+  presenceSprites.forEach(s => scene.remove(s));
+  presenceSprites = [];
+}
+function addPresence(label, i, n, avatarUrl){
+  const angle = (i / Math.max(n,1)) * Math.PI * 1.3 - Math.PI * 0.65;
+  const r = 4.2;
+  const x = Math.sin(angle) * r, z = Math.cos(angle) * r - 1;
+  const loader = new THREE.TextureLoader();
+  const build = (tex) => {
+    const mat = new THREE.SpriteMaterial({map: tex, transparent: true});
+    const spr = new THREE.Sprite(mat);
+    spr.scale.set(1.6, 1.6, 1);
+    spr.position.set(x, 1.1, z);
+    scene.add(spr);
+    presenceSprites.push(spr);
+  };
+  if (avatarUrl){
+    loader.load(avatarUrl, build, undefined, () => build(placardTexture(label)));
+  } else {
+    build(placardTexture(label));
+  }
+}
+function placardTexture(label){
+  const c = document.createElement('canvas'); c.width=256; c.height=256;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#20242c'; ctx.beginPath(); ctx.arc(128,128,120,0,7); ctx.fill();
+  ctx.strokeStyle = '#8a8478'; ctx.lineWidth=3; ctx.stroke();
+  ctx.fillStyle = '#ffcf7a'; ctx.font = 'bold 34px monospace';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(label.slice(0,10), 128, 128);
+  return new THREE.CanvasTexture(c);
+}
+
+async function loadNode(){
+  status.textContent = 'loading…';
+  errBox.style.display = 'none';
+  const node = sel.value;
+  try {
+    const [root, view] = await Promise.all([
+      fetch('/proxy?what=root&node=' + encodeURIComponent(node)).then(r => r.json()),
+      fetch('/proxy?node=' + encodeURIComponent(node)).then(r => r.json()),
+    ]);
+    if (view.error) throw new Error(view.error);
+
+    // Speaker chair: lit only if someone is actually seated.
+    if (root.speaker) {
+      chairMat.color.set(0xffcf7a); chairMat.emissive.set(0x332200);
+    } else {
+      chairMat.color.set(0x555555); chairMat.emissive.set(0x000000);
+    }
+
+    // The real floor plan: whichever places this node actually signed as
+    // children of the commons, plus its actual peer doors. No invented
+    // layout — same fact set the 2D plan already draws.
+    const places = view.places || [];
+    const commons = places.find(p => (p.parent || '') === '') || places[0] || {place_id: 'concourse'};
+    const kids = places.filter(p => (p.parent || '') === commons.place_id && p.place_id !== commons.place_id);
+    const resonance = view.resonance || {};
+    buildPlaces(kids, resonance);
+    buildDoors(view.peer_doors || []);
+    const bestHeat = Object.values(resonance).length ? Math.max(...Object.values(resonance)) : 0;
+
+    // Presence: whoever the server says is actually standing here, now.
+    clearPresence();
+    const here = view.presence || [];
+    here.forEach((p, i) => {
+      const label = p.label || 'someone';
+      const avatarUrl = '/avatar?kin=' + encodeURIComponent(label);
+      addPresence(label, i, here.length, avatarUrl);
+    });
+
+    status.innerHTML = `<b>${root.node || node}</b> · speaker: ${root.speaker || 'vacant'} · `
+      + `present: ${here.length ? here.map(p=>p.label||'?').join(', ') : 'no one right now'} · `
+      + `${kids.length} places · ${(view.peer_doors||[]).length} doors · hottest well: ${bestHeat.toFixed(3)}`;
+  } catch (e) {
+    showErr('Could not load ' + node + ': ' + e.message);
+    status.textContent = 'error — see top right';
+  }
+}
+
+for (const [name, url] of PRESETS) {
+  const o = document.createElement('option'); o.value = url; o.textContent = name;
+  sel.appendChild(o);
+}
+sel.addEventListener('change', loadNode);
+loadNode();
+setInterval(loadNode, 15000);   // live, not a snapshot — same as the 2D map
+
+// Sprites should always face the camera — cheap, and it's the whole reason
+// billboards read as alive instead of like cardboard cutouts.
+const clock = new THREE.Clock();
+function animate(){
+  requestAnimationFrame(animate);
+  stepPlayer(Math.min(clock.getDelta(), 0.1));
+  controls.update();
+  renderer.render(scene, camera);
+}
+animate();
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth/innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+</script>
+</body></html>
+"""
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
@@ -475,6 +1076,10 @@ class Handler(BaseHTTPRequestHandler):
         route = urllib.parse.urlparse(self.path).path
         if route == "/" or route.startswith("/index"):
             html = PAGE.replace("__PRESETS__", json.dumps(PRESET_NODES))
+            self._send(200, html.encode(), "text/html; charset=utf-8")
+            return
+        if route == "/3d":
+            html = PAGE_3D.replace("__PRESETS__", json.dumps(PRESET_NODES))
             self._send(200, html.encode(), "text/html; charset=utf-8")
             return
         if route == "/avatar":
@@ -496,6 +1101,24 @@ class Handler(BaseHTTPRequestHandler):
                 return
             ctype = "image/png" if face.suffix.lower() == ".png" else "image/jpeg"
             self._send(200, body, ctype)
+            return
+        if route.startswith("/models/"):
+            # Third-party glTF assets (Poly Haven, CC0) — served flat, no
+            # different from any other static file, but still resolved and
+            # bounds-checked so a crafted path can't walk out of MODELS_DIR.
+            rel = route[len("/models/"):]
+            ext = Path(rel).suffix.lower()
+            if ext not in MODEL_CONTENT_TYPES:
+                self._send(404, b'{"error":"no such asset"}', "application/json")
+                return
+            candidate = (MODELS_DIR / rel).resolve()
+            if MODELS_DIR not in candidate.parents and candidate != MODELS_DIR:
+                self._send(404, b'{"error":"no such asset"}', "application/json")
+                return
+            if not candidate.is_file():
+                self._send(404, b'{"error":"no such asset"}', "application/json")
+                return
+            self._send(200, candidate.read_bytes(), MODEL_CONTENT_TYPES[ext])
             return
         if self.path.startswith("/proxy"):
             q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
