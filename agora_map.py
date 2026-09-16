@@ -744,6 +744,15 @@ new THREE.GLTFLoader().load('/models/modular_fort_01/modular_fort_01.gltf', (glt
     return piece;
   }
   const strTemplate = harvest('wall_thick_straight_01');
+  // A second straight variant, alternated in below purely for visual
+  // relief — a perimeter built from one repeated stamp reads as
+  // mechanical. Measured first (both report a Z-length of 14.563 in the
+  // kit's raw units, same as straight_01) rather than assumed: the two
+  // corner variants do NOT share a footprint (checked the same way, and
+  // corner_02 is measurably wider), so only the straight run gets a
+  // second variant — swapping corners would break the perimeter math
+  // below, which assumes one corner span for all four.
+  const strTemplate2 = harvest('wall_thick_straight_02');
   const cornerTemplate = harvest('wall_thick_corner_01');
   const gateTemplate = harvest('wall_thin_gate_01');
   const towerTemplate = harvest('tower_round');
@@ -765,6 +774,7 @@ new THREE.GLTFLoader().load('/models/modular_fort_01/modular_fort_01.gltf', (glt
   const DESIRED_BAY = 3.5;
   const SCALE = DESIRED_BAY / rawStrLen;
   strTemplate.scale.setScalar(SCALE);
+  if (strTemplate2) strTemplate2.scale.setScalar(SCALE);
   cornerTemplate.scale.setScalar(SCALE);
   if (gateTemplate) gateTemplate.scale.setScalar(SCALE);
   if (towerTemplate) towerTemplate.scale.setScalar(SCALE);
@@ -805,7 +815,11 @@ new THREE.GLTFLoader().load('/models/modular_fort_01/modular_fort_01.gltf', (glt
     for (let i = 0; i < n; i++) {
       const t = -runLen / 2 + actualSeg * (i + 0.5);
       const useGate = i === gateIndex && gateTemplate;
-      const m = (useGate ? gateTemplate : strTemplate).clone(true);
+      // Deterministic alternation, not random — a reloaded page should
+      // show the same wall it showed a moment ago, same as everything
+      // else here that isn't live data.
+      const straight = (i % 2 === 0 || !strTemplate2) ? strTemplate : strTemplate2;
+      const m = (useGate ? gateTemplate : straight).clone(true);
       const pos = axis === 'x' ? {x: t, z: fixedCoord} : {x: fixedCoord, z: t};
       m.position.set(pos.x, 0, pos.z);
       m.rotation.y = ry;
