@@ -573,7 +573,7 @@ PAGE_3D = """<!doctype html>
   <div><b>Agora — 3D proof of pipeline</b></div>
   <div>node: <select id="node"></select></div>
   <div id="status">loading…</div>
-  <div style="margin-top:6px;opacity:.7">WASD / arrows to walk · space to jump · drag to look · scroll to zoom</div>
+  <div style="margin-top:6px;opacity:.7">WASD / arrows to walk · space to jump · climb stairs to rampart · drag to look · scroll to zoom</div>
   <div style="margin-top:2px;opacity:.7">Walk into a peer door to cross to that node.</div>
   <div style="margin-top:2px;opacity:.5">Same signed data as the 2D map, plus kin_commons' real board over each presence. Nothing here is invented.</div>
 </div>
@@ -683,7 +683,32 @@ const staticObstacles = [{x: 0, z: -2.2, r: 1.05}];   // the speaker chair
 let placeObstacles = [];
 let doorObstacles = [];
 let wallObstacles = [];
-function resolveCollisions(pos){
+
+// Rampart geometry constants:
+// West wall inner rampart deck: deck is at height ~1.70m.
+// Ramp width widened to [-9.70, -8.35] (1.35m band) so player diameter (0.7m)
+// has comfortable approach and entry margin from both south and courtyard sides.
+const RAMPART_DECK_H = 7.074 * (3.5 / 14.5626688); // 1.700m
+const RAMP_X_MIN = -9.70;
+const RAMP_X_MAX = -8.35;
+const RAMP_Z_START = 0.0;
+const RAMP_Z_STAIR_TOP = 3.266;
+const RAMP_Z_END = 9.80;
+
+function getGroundHeight(x, z){
+  if (x >= RAMP_X_MIN && x <= RAMP_X_MAX) {
+    if (z >= RAMP_Z_START && z <= RAMP_Z_STAIR_TOP) {
+      const t = (z - RAMP_Z_START) / (RAMP_Z_STAIR_TOP - RAMP_Z_START);
+      return Math.max(0, Math.min(RAMPART_DECK_H, t * RAMPART_DECK_H));
+    }
+    if (z > RAMP_Z_STAIR_TOP && z <= RAMP_Z_END) {
+      return RAMPART_DECK_H;
+    }
+  }
+  return 0; // Courtyard floor
+}
+
+function resolveCollisions(pos, prevX){
   for (const o of staticObstacles.concat(placeObstacles, doorObstacles, wallObstacles)){
     const dx = pos.x - o.x, dz = pos.z - o.z;
     const dist = Math.hypot(dx, dz);
@@ -694,36 +719,56 @@ function resolveCollisions(pos){
     pos.x += (dx / dist) * push;
     pos.z += (dz / dist) * push;
   }
+
+  // West wall rampart corridor & fortress boundaries:
+  if (pos.z >= RAMP_Z_START - 0.5 && pos.z <= RAMP_Z_END + 0.5) {
+    // 1. Outer curtain / battlement wall stops player from walking through the outer fort wall:
+    if (pos.x < RAMP_X_MIN + PLAYER_R) {
+      pos.x = RAMP_X_MIN + PLAYER_R;
+    }
+    // 2. South corner tower stops the end of the walkway:
+    if (pos.z > RAMP_Z_END) {
+      pos.z = RAMP_Z_END;
+    }
+    // 3. Rampart East flank (solid stone stair stringer & walkway foundation):
+    // From the courtyard side (prevX > RAMP_X_MAX), a player cannot cross into the
+    // rampart if the deck/stair surface is elevated above their feet. The foot of the
+    // stairs (z <= 0.1, ground height <= 0.15m) remains wide open to enter from both
+    // the south and the courtyard.
+    const gh = getGroundHeight(pos.x, pos.z);
+    const fromCourtyard = prevX !== undefined ? prevX > RAMP_X_MAX : pos.x > RAMP_X_MAX;
+    if (gh > 0.15 && fromCourtyard && pos.x <= RAMP_X_MAX) {
+      if (pos.y < gh) {
+        pos.x = RAMP_X_MAX + 0.01;
+      }
+    }
+  }
 }
 
-// Jump: pure vertical hop, gravity-driven, grounded check before another
-// one triggers. Applied as a delta to camera + target (not an absolute
-// value) so it composes with whatever OrbitControls' own orbiting is
-// doing, the same trick the walk-follow code already uses.
+// Vertical movement & gravity:
+// A real Y-coordinate for the player, unifying jump and elevation.
+// Walking onto the stairs ascends step-by-step; walking along the ramparts
+// holds deck height; stepping off drops with gravity back to the courtyard.
 const GRAVITY = -18, JUMP_VELOCITY = 6.5;
-let jumpY = 0, jumpVY = 0;
+let playerVY = 0;
+let isGrounded = true;
+
 addEventListener('keydown', e => {
   if (e.code === 'Space') {
     e.preventDefault();
-    if (jumpY <= 1e-4 && jumpVY === 0) jumpVY = JUMP_VELOCITY;
+    if (isGrounded) {
+      playerVY = JUMP_VELOCITY;
+      isGrounded = false;
+    }
   }
 });
-function stepJump(dt){
-  if (jumpY === 0 && jumpVY === 0) return;
-  const prev = jumpY;
-  jumpVY += GRAVITY * dt;
-  jumpY += jumpVY * dt;
-  if (jumpY < 0) { jumpY = 0; jumpVY = 0; }
-  const dy = jumpY - prev;
-  if (dy !== 0) { camera.position.y += dy; controls.target.y += dy; }
-}
 
 const keys = Object.create(null);
 addEventListener('keydown', e => { keys[e.key.toLowerCase()] = true; });
 addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
 const _fwd = new THREE.Vector3(), _right = new THREE.Vector3(), _move = new THREE.Vector3();
 function stepPlayer(dt){
-  stepJump(dt);
+  // 1. Horizontal movement
   camera.getWorldDirection(_fwd); _fwd.y = 0; _fwd.normalize();
   _right.crossVectors(_fwd, camera.up).normalize();
   _move.set(0, 0, 0);
@@ -731,16 +776,50 @@ function stepPlayer(dt){
   if (keys['s'] || keys['arrowdown'])  _move.sub(_fwd);
   if (keys['d'] || keys['arrowright']) _move.add(_right);
   if (keys['a'] || keys['arrowleft'])  _move.sub(_right);
-  if (_move.lengthSq() === 0) return;
-  _move.normalize().multiplyScalar(4.5 * dt);
-  player.position.add(_move);
-  resolveCollisions(player.position);
-  const r = Math.hypot(player.position.x, player.position.z);
-  if (r > FLOOR_R) { player.position.x *= FLOOR_R / r; player.position.z *= FLOOR_R / r; }
-  const newTarget = player.position.clone().setY(1);
+  if (_move.lengthSq() > 0) {
+    _move.normalize().multiplyScalar(4.5 * dt);
+    const prevX = player.position.x;
+    player.position.add(_move);
+    resolveCollisions(player.position, prevX);
+    const r = Math.hypot(player.position.x, player.position.z);
+    if (r > FLOOR_R) { player.position.x *= FLOOR_R / r; player.position.z *= FLOOR_R / r; }
+  }
+
+  // 2. Vertical elevation & gravity
+  const groundY = getGroundHeight(player.position.x, player.position.z);
+  if (isGrounded) {
+    if (groundY >= player.position.y) {
+      // Climbing up stairs or walking on flat deck
+      player.position.y = groundY;
+    } else {
+      // Ground dropped underneath player:
+      // If walking down stairs (small step-down), follow ground:
+      if (player.position.y - groundY <= 8.0 * dt + 0.05) {
+        player.position.y = groundY;
+      } else {
+        // Stepped off an elevated ledge / walkway into air
+        isGrounded = false;
+        playerVY = 0;
+      }
+    }
+  } else {
+    // Airborne (jumping or falling)
+    playerVY += GRAVITY * dt;
+    player.position.y += playerVY * dt;
+    if (player.position.y <= groundY) {
+      player.position.y = groundY;
+      playerVY = 0;
+      isGrounded = true;
+    }
+  }
+
+  // 3. Camera and controls tracking
+  const eyeHeight = 1.0;
+  const newTarget = new THREE.Vector3(player.position.x, player.position.y + eyeHeight, player.position.z);
   camera.position.add(newTarget.clone().sub(controls.target));
   controls.target.copy(newTarget);
-  marker.position.set(player.position.x, 0.02, player.position.z);
+  marker.position.set(player.position.x, player.position.y + 0.02, player.position.z);
+
   if (!traveling) {
     for (const t of doorTriggers) {
       if (Math.hypot(player.position.x - t.x, player.position.z - t.z) < t.r) { crossDoor(t); break; }
@@ -834,6 +913,8 @@ new THREE.GLTFLoader().load('/models/modular_fort_01/modular_fort_01.gltf', (glt
   const cornerTemplate = harvest('wall_thick_corner_01');
   const gateTemplate = harvest('wall_thin_gate_01');
   const towerTemplate = harvest('tower_round');
+  const stairsTemplate = harvest('wall_stairs_straight_01');
+  const walkwayTemplate = harvest('wall_walkway_straight_01');
   if (!strTemplate || !cornerTemplate) {
     showErr('fort pieces not found in modular_fort_01.gltf');
     return;
@@ -856,6 +937,8 @@ new THREE.GLTFLoader().load('/models/modular_fort_01/modular_fort_01.gltf', (glt
   cornerTemplate.scale.setScalar(SCALE);
   if (gateTemplate) gateTemplate.scale.setScalar(SCALE);
   if (towerTemplate) towerTemplate.scale.setScalar(SCALE);
+  if (stairsTemplate) stairsTemplate.scale.setScalar(SCALE);
+  if (walkwayTemplate) walkwayTemplate.scale.setScalar(SCALE);
 
   const segLen = DESIRED_BAY;
   const cornerSize = new THREE.Box3().setFromObject(cornerTemplate).getSize(new THREE.Vector3());
@@ -910,6 +993,18 @@ new THREE.GLTFLoader().load('/models/modular_fort_01/modular_fort_01.gltf', (glt
         const p1 = axis === 'x' ? {x: pos.x - half * 0.7, z: pos.z} : {x: pos.x, z: pos.z - half * 0.7};
         const p2 = axis === 'x' ? {x: pos.x + half * 0.7, z: pos.z} : {x: pos.x, z: pos.z + half * 0.7};
         wallObstacles.push({x: p1.x, z: p1.z, r: postR}, {x: p2.x, z: p2.z, r: postR});
+      } else if (axis === 'z' && fixedCoord === -HALF) {
+        if (i === 2) {
+          // Bay 2 approach: stops before stairs (z < 0) so southern approach corridor stays clear
+          wallObstacles.push({x: -HALF - 0.5, z: pos.z, r: actualSeg * 0.45});
+        } else if (i >= 3) {
+          // West wall rampart bays (stairs and elevated walkways, z >= 0):
+          // Outer curtain / battlement wall is handled by the exact linear plane boundary in resolveCollisions
+          // (pos.x < RAMP_X_MIN + PLAYER_R). No circular obstacles here, so nothing bulges into the
+          // walkway or pushes the player backward down the stairs.
+        } else {
+          wallObstacles.push({x: pos.x, z: pos.z, r: actualSeg * 0.55});
+        }
       } else {
         wallObstacles.push({x: pos.x, z: pos.z, r: actualSeg * 0.55});
       }
@@ -934,6 +1029,29 @@ new THREE.GLTFLoader().load('/models/modular_fort_01/modular_fort_01.gltf', (glt
   placeRun('x',  HALF, Math.PI / 2, gateSlot);
   placeRun('z', -HALF, 0);
   placeRun('z',  HALF, 0);
+
+  // The West wall rampart: stone stairs starting at ground level (Z = 0)
+  // climbing up to the elevated walkway deck (height ~1.70m), with
+  // continuous battlement walkways continuing south along the wall to
+  // the corner tower.
+  const rampartX = -HALF + 3.8 * SCALE;
+  if (stairsTemplate) {
+    const st = stairsTemplate.clone(true);
+    st.position.set(rampartX, 0, 0.0);
+    st.rotation.y = 0;
+    wallGroup.add(st);
+  }
+  if (walkwayTemplate) {
+    const w1 = walkwayTemplate.clone(true);
+    w1.position.set(rampartX, 0, actualSeg);
+    w1.rotation.y = 0;
+    wallGroup.add(w1);
+
+    const w2 = walkwayTemplate.clone(true);
+    w2.position.set(rampartX, 0, actualSeg * 2);
+    w2.rotation.y = 0;
+    wallGroup.add(w2);
+  }
 }, undefined, (err) => showErr('fort walls failed to load: ' + err.message));
 
 // ── the real floor plan: alcoves and doors ARE the places the node signed,
