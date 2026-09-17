@@ -1362,8 +1362,16 @@ class Handler(BaseHTTPRequestHandler):
 
 def main(argv):
     port = int(argv[1]) if len(argv) > 1 else DEFAULT_PORT
-    srv = ThreadingHTTPServer(("127.0.0.1", port), Handler)
-    print(f"Agora map on http://localhost:{port}  (nodes: "
+    # Loopback by default: this page has no auth of its own on who may
+    # VIEW it (only the outgoing /proxy calls are signed, with Marvin's
+    # key) — reachable-from-it is see-everything-it-sees. A third arg
+    # opts into a specific bind host explicitly; there is no LAN-wide
+    # (0.0.0.0) shortcut here on purpose, since Frosty runs no firewall
+    # at all — the systemd unit passes the Tailscale IP specifically, so
+    # only devices in Don's own tailnet can reach it, not the shop WiFi.
+    host = argv[2] if len(argv) > 2 else "127.0.0.1"
+    srv = ThreadingHTTPServer((host, port), Handler)
+    print(f"Agora map on http://{host}:{port}  (nodes: "
           + ", ".join(n for n, _ in PRESET_NODES) + ")")
     try:
         srv.serve_forever()
