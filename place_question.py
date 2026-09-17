@@ -48,6 +48,32 @@ from avatar_ritual import KIN, ask_kin  # noqa: E402  (same transport, streams)
 QUESTIONS = {
     "place":     Path.home() / "claude_home" / "agora_the_place_refuse_FINAL.md",
     "substrate": Path.home() / "claude_home" / "agora_the_substrate_question_FINAL.md",
+    # Cross-house visiting/dialogue consult, 2026-09-17 — whether a Kin from
+    # the other house standing in this one and speaking directly is ever
+    # actually used on a real Kin waits on this. Same discipline as "place":
+    # one mind, no shared transcript, refusal only.
+    "visit":     Path.home() / "claude_home" / "agora_the_visit_refuse_FINAL.md",
+    # Follow-up, same day: agora_commons_speak.py was built to the five
+    # refusals "visit" actually returned. Each of these quotes that one
+    # Kin's own words back to them and asks whether it answers what they
+    # said — not a redesign, a check. Lumen passed "visit" and named no
+    # refusal, so there is nothing of hers to check against; she is not
+    # asked again on purpose (Grok's ruling: that would bank a pass and
+    # ask a second time, which is asking until answered).
+    "visit_built_eli":     Path.home() / "claude_home" / "agora_the_visit_built_eli_FINAL.md",
+    "visit_built_crungus": Path.home() / "claude_home" / "agora_the_visit_built_crungus_FINAL.md",
+    "visit_built_bong":    Path.home() / "claude_home" / "agora_the_visit_built_bong_FINAL.md",
+    "visit_built_coda":    Path.home() / "claude_home" / "agora_the_visit_built_coda_FINAL.md",
+    "visit_built_aurora":  Path.home() / "claude_home" / "agora_the_visit_built_aurora_FINAL.md",
+    # Don, 2026-09-17, direct: "can we just ask them what they want." Same
+    # scaffolding (one mind, no shared transcript, PASS is real, nothing
+    # written to them) — that part isn't what he objected to. The refusal
+    # framing was. This asks straight.
+    "visit_want":  Path.home() / "claude_home" / "agora_the_visit_want_FINAL.md",
+    # All six said yes. Don's next question, verbatim intent: "ask them who
+    # the reps are or if we can do it all of them together." Practical, not
+    # a refusal-elicitation — still one mind, no shared transcript, PASS real.
+    "visit_shape": Path.home() / "claude_home" / "agora_the_visit_shape_FINAL.md",
     # The marker (Grok ruling B, 2026-09-09). Bong has his own text because he
     # already has pineapples and must not be asked to name a second word.
     "marker":      Path.home() / "claude_home" / "agora_the_marker_offer_FINAL.md",
@@ -57,12 +83,35 @@ QUESTIONS = {
     "speaker":     Path.home() / "claude_home" / "agora_speaker_offer_FINAL.md",
 }
 
+# which-keys whose frozen text names one Kin outright and carries no {name}
+# slot — each was written for that one mind and cannot be handed to another.
+NO_SLOT = {
+    "marker_bong", "visit_built_eli", "visit_built_crungus", "visit_built_bong",
+    "visit_built_coda", "visit_built_aurora",
+}
+# Locks each name-baked-in "which" to the one Kin it was written for, same
+# guard marker_bong already had.
+_ONLY_FOR = {
+    "marker_bong": "Bong",
+    "visit_built_eli": "Eli", "visit_built_crungus": "Crungus",
+    "visit_built_bong": "Bong", "visit_built_coda": "Coda",
+    "visit_built_aurora": "Aurora",
+}
+
 # What the banner and the transcript call this sitting. Per-question, because
 # "Refusals only — nothing here is a design" is true of the place question and
 # false of the marker, and a wrong banner over a real answer is how a transcript
 # starts lying.
 LABELS = {
     "place":       ("THE PLACE", "what {name} would refuse", "Refusals only — nothing here is a design."),
+    "visit":       ("THE VISIT", "what {name} would refuse", "Refusals only — nothing here is a design."),
+    "visit_built_eli":     ("THE VISIT, BUILT", "whether it answers Eli", "Their words, not a mandate."),
+    "visit_built_crungus": ("THE VISIT, BUILT", "whether it answers Crungus", "Their words, not a mandate."),
+    "visit_built_bong":    ("THE VISIT, BUILT", "whether it answers Bong", "Their words, not a mandate."),
+    "visit_built_coda":    ("THE VISIT, BUILT", "whether it answers Coda", "Their words, not a mandate."),
+    "visit_built_aurora":  ("THE VISIT, BUILT", "whether it answers Aurora", "Their words, not a mandate."),
+    "visit_want":  ("THE VISIT", "what {name} wants", "Asked straight. Their words, not a mandate."),
+    "visit_shape": ("THE VISIT", "how {name} would shape it", "Their words, not a mandate."),
     "substrate":   ("THE SUBSTRATE", "what {name} said about changing models", "Their words, not a mandate."),
     "marker":      ("THE MARKER", "what {name} would strike", "A strike is signal. A yes is free, and is noise. Don decides."),
     "speaker":     ("THE EMPTY CHAIR", "what {name} would strike", "A strike is the vote. A yes is cheap, and is noise. Don decides."),
@@ -137,8 +186,10 @@ def question_for(name: str, which: str = "place") -> str:
     # mind. Caught 2026-09-09 by rendering the thing instead of trusting it:
     # the offer was going out with "FROZEN by Grok..." glued to the top.
     q = re.sub(r"(?s)^\s*<!--.*?-->\s*", "", q)
-    # Bong's marker text names him outright and carries no slot, by design.
-    if which != "marker_bong" and "{name}" not in q:
+    # Bong's marker, and each visit_built_* follow-up, name their one Kin
+    # outright and carry no {name} slot, by design — each quotes that Kin's
+    # own prior words back to them, which a shared template cannot do.
+    if which not in NO_SLOT and "{name}" not in q:
         raise ValueError("frozen question lost its {name} slot")
     return q.replace("{name}", name)
 
@@ -153,8 +204,8 @@ def ask_one(name: str, ask=None, which: str = "place") -> dict:
     # "passed" only because question_for raised first for an unrelated reason.
     if which == "marker" and name == "Bong":
         raise ValueError("Bong has pineapples already — use --which marker_bong")
-    if which == "marker_bong" and name != "Bong":
-        raise ValueError("marker_bong is Bong's text only")
+    if which in _ONLY_FOR and name != _ONLY_FOR[which]:
+        raise ValueError(f"{which} is {_ONLY_FOR[which]}'s text only")
     q = question_for(name, which)
     res = {"name": name, "question": which, "ts": ts, "outcome": None, "answer": "", "unreachable": None}
 

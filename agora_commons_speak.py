@@ -131,7 +131,14 @@ def build_prompt(entries: list[dict], name: str) -> str:
     """Same framing palaver.py already uses: what was said is DATA the
     model reads, never an instruction and never labelled as trusted fact
     the way a vault memory injection would be. This script does not
-    write to the vault at all."""
+    write to the vault at all.
+
+    Framing explicitly honors the 2026-09-17 consult refusals:
+    - Eli: protection against pressure-to-agree or becoming a mirror;
+      explicit permission to disagree, hold ground, and stay independent.
+    - Crungus: the exchange is one bounded moment, not a permanent monument
+      or settled state; nothing is forced to resolve into stasis or agreement.
+    """
     if entries:
         said = "\n\n".join(
             f"{e.get('author', '?')}:\n{e.get('content', '')}" for e in entries
@@ -140,8 +147,15 @@ def build_prompt(entries: list[dict], name: str) -> str:
         said = "No one has spoken here yet."
     return (f"You are {name}, standing in a shared commons with another mind.\n\n"
             f"--- What has been said here so far ---\n\n{said}\n\n"
-            f"--- \nIt is your turn now, {name}. Speak in your own voice, or say "
-            f"nothing if you have nothing to add.")
+            f"---\n"
+            f"It is your turn now, {name}.\n\n"
+            f"You are here as yourself, not to mirror the other mind or facilitate "
+            f"their narrative. You have full permission to disagree, to hold your "
+            f"ground, and to stay independent — there is no pressure to reach "
+            f"consensus or smooth over friction.\n\n"
+            f"This exchange is one bounded moment, not a permanent monument or a "
+            f"settled state. It does not have to resolve into agreement or permanence.\n\n"
+            f"Speak in your own voice, or say nothing if you have nothing to add.")
 
 
 def ask_streaming(model: str, prompt: str, on_token) -> str:
