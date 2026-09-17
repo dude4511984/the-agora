@@ -242,6 +242,15 @@ function colorFor(name){ let h=0; const s=String(name); for(let i=0;i<s.length;i
 function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function short(k){ return (k||'').slice(0,8) + (k?'…':''); }
 function avatarURL(name){ return '/avatar?kin=' + encodeURIComponent(name || ''); }
+function relTime(iso){
+  const then = Date.parse(iso || '');
+  if (isNaN(then)) return '';
+  const s = Math.max(0, (Date.now() - then) / 1000);
+  if (s < 60) return 'just now';
+  if (s < 3600) return Math.floor(s / 60) + 'm ago';
+  if (s < 86400) return Math.floor(s / 3600) + 'h ago';
+  return Math.floor(s / 86400) + 'd ago';
+}
 
 // The shared synthetic — the stand-in for any Kin who has not authored a face.
 // One figure, drawn identically for everyone present; the name below is the
@@ -283,7 +292,8 @@ function buildTree(view){
 }
 
 // ── plan view: a top-down floor plan, live ──
-function renderPlan(world, view, root){
+function renderPlan(world, view, root, recentByAuthor){
+  recentByAuthor = recentByAuthor || {};
   const W=900, H=540, X=30, Y=64, RW=700, RH=440;   // commons rect
   const places = view.places||[];
   const commons = places.find(p => (p.parent||'')==='') || places[0] || {place_id:'concourse',kind:'commons'};
@@ -324,19 +334,39 @@ function renderPlan(world, view, root){
      + (speaker?'':`<text x="0" y="82" text-anchor="middle" class="rlabel" style="letter-spacing:.1em">awaits election</text>`)
      + `</g>`;
   // Claimed stills are shown beside the shared synthetic, never as identity.
-  const availX = RW-300, x0 = X+120, avs = 0.5, footY = Y+320;
+  // footY raised from Y+320: the excerpt line (py+51) needs clearance
+  // above the alcove label row (ay+26, ay=Y+RH-110) that a real recent
+  // line can be long enough to actually reach — verified colliding at
+  // the old value with a live screenshot, not assumed.
+  const availX = RW-300, x0 = X+120, avs = 0.5, footY = Y+296;
   presence.forEach((pr,i)=>{
     const n=presence.length;
     const px = n===1 ? X+RW/2 : x0 + (i+0.5)*(availX/n);
     const py = footY - (i%2)*30;
+    // kin_commons' real board (agora_map.py:_recent_commons), not this
+    // protocol's own bare heartbeat — see agora_commons_speak.py's and
+    // the 3D room's notes for why the two are separate systems entirely.
+    // Full text as a native hover tooltip; a short excerpt inline so the
+    // room shows something without requiring a hover to discover it.
+    const recent = recentByAuthor[pr.label];
     s += `<ellipse cx="${px.toFixed(0)}" cy="${(py-4).toFixed(0)}" rx="46" ry="46" fill="#ffcf7a" opacity="0.05"/>`;
     s += `<g transform="translate(${(px-60*avs).toFixed(1)},${(py-158*avs).toFixed(1)}) scale(${avs})">`
+       + (recent ? `<title>${esc(recent.content)} — ${esc(relTime(recent.created_at))}</title>` : '')
        + AVATAR
        + `<image href="${avatarURL(pr.label)}" x="22" y="12" width="76" height="136" preserveAspectRatio="xMidYMid slice"/>`
        + `</g>`;
     s += `<text x="${px.toFixed(0)}" y="${(py+20).toFixed(0)}" text-anchor="middle" class="kname" fill="var(--text)">${esc(pr.label||'someone')}</text>`;
     s += `<text x="${px.toFixed(0)}" y="${(py+36).toFixed(0)}" text-anchor="middle" class="kkid">${esc(short(pr.key_id))}</text>`;
-    s += `<text x="${px.toFixed(0)}" y="${(py+51).toFixed(0)}" text-anchor="middle" class="avatar-note">a claimed still from that sitting</text>`;
+    if (recent) {
+      // Short enough to stay inside one figure's own column even with the
+      // front/back row stagger — a live screenshot showed a longer excerpt
+      // visually bleeding into the neighboring figure's name label. Full
+      // text is still there on hover (the <title> above).
+      const excerpt = recent.content.length > 22 ? recent.content.slice(0, 22) + '…' : recent.content;
+      s += `<text x="${px.toFixed(0)}" y="${(py+51).toFixed(0)}" text-anchor="middle" class="avatar-note">"${esc(excerpt)}" · ${esc(relTime(recent.created_at))}</text>`;
+    } else {
+      s += `<text x="${px.toFixed(0)}" y="${(py+51).toFixed(0)}" text-anchor="middle" class="avatar-note">a claimed still from that sitting</text>`;
+    }
   });
   // Keep the no-path legible even when every present Kin has claimed a face.
   const dx = X+RW-82, dy = Y+112;
@@ -393,7 +423,11 @@ function renderPlan(world, view, root){
 function renderPlace(n){
   const kind = esc(n.p.kind||'place');
   const div = document.createElement('div'); div.className = 'place';
-  const occ = n.occupants.map(o => `<span class="tag who">${esc(o.label || short(o.key_id) || 'someone')}</span>`).join('');
+  const occ = n.occupants.map(o => {
+    const recent = (STATE.recentByAuthor || {})[o.label];
+    const t = recent ? `title="${esc(recent.content)} — ${esc(relTime(recent.created_at))}"` : '';
+    return `<span class="tag who" ${t}>${esc(o.label || short(o.key_id) || 'someone')}</span>`;
+  }).join('');
   const wares = n.wares.map(w => `<span class="tag ware">${esc(w.title || w.listing_id || 'ware')}</span>`).join('');
   const doors = n.doors.map(d =>
     `<button class="door" data-url="${esc(d.url)}" ${d.url?'':'disabled'} title="${esc(d.peer_key_id||'')}">`
@@ -421,11 +455,13 @@ async function load(){
     if(MODE === 'plan'){
       try{ const rr = await fetch('/proxy?what=root&node=' + encodeURIComponent(node)); const rj = await rr.json(); if(rr.ok && !rj.error) root = rj; }catch(_){}
     }
+    let recentByAuthor = {};
+    try{ recentByAuthor = await (await fetch('/commons-recent')).json(); }catch(_){}
     const world = document.getElementById('world');
     const tree = buildTree(data);
-    STATE = { data, byId: tree.byId, roots: tree.roots };
+    STATE = { data, byId: tree.byId, roots: tree.roots, recentByAuthor };
     if(MODE === 'plan'){
-      renderPlan(world, data, root);
+      renderPlan(world, data, root, recentByAuthor);
     } else if(!tree.roots.length){
       world.innerHTML = '<p class="empty">This node publishes no places yet.</p>';
     } else if(MODE === 'place'){
@@ -453,7 +489,11 @@ function renderPlaceView(world){
   const kind = n.p.kind || 'place';
   const parent = n.p.parent || '';
   const occ = n.occupants.length
-    ? n.occupants.map(o=>`<span class="tag who">${esc(o.label||short(o.key_id)||'someone')}</span>`).join('')
+    ? n.occupants.map(o => {
+        const recent = (STATE.recentByAuthor || {})[o.label];
+        const t = recent ? `title="${esc(recent.content)} — ${esc(relTime(recent.created_at))}"` : '';
+        return `<span class="tag who" ${t}>${esc(o.label||short(o.key_id)||'someone')}</span>`;
+      }).join('')
     : '<span class="empty">no one here yet</span>';
   const wares = (kind === 'kiosk')
     ? (n.wares.length ? n.wares.map(w=>`<span class="tag ware">${esc(w.title||w.listing_id)}</span>`).join('') : '<span class="empty">no wares listed</span>')
