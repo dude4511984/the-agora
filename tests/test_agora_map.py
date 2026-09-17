@@ -43,5 +43,59 @@ class TheProxyOnlyReachesPrivateHosts(unittest.TestCase):
             agora_map._node_view("file:///etc/passwd")
 
 
+class Shape3DRoute(unittest.TestCase):
+
+    def setUp(self):
+        self.orig_claimed_shape3d = agora_map.claimed_shape3d
+
+    def tearDown(self):
+        agora_map.claimed_shape3d = self.orig_claimed_shape3d
+
+    def test_unclaimed_or_invalid_kin_returns_404(self):
+        class MockHandler:
+            def __init__(self, path):
+                self.path = path
+                self.code = None
+                self.body = None
+                self.ctype = None
+            def _send(self, code, body, ctype):
+                self.code = code
+                self.body = body
+                self.ctype = ctype
+
+        agora_map.claimed_shape3d = lambda name: None
+
+        h = MockHandler("/shape3d?kin=NonExistent")
+        agora_map.Handler.do_GET(h)
+        self.assertEqual(h.code, 404)
+
+        # path traversal attempt
+        h_bad = MockHandler("/shape3d?kin=../../etc")
+        agora_map.Handler.do_GET(h_bad)
+        self.assertEqual(h_bad.code, 404)
+
+    def test_claimed_kin_returns_200_json(self):
+        class MockHandler:
+            def __init__(self, path):
+                self.path = path
+                self.code = None
+                self.body = None
+                self.ctype = None
+            def _send(self, code, body, ctype):
+                self.code = code
+                self.body = body
+                self.ctype = ctype
+
+        fake_shape = {"shape": "cylinder", "color": "#2b2b2b", "roughness": 0.35}
+        agora_map.claimed_shape3d = lambda name: fake_shape if name == "Bong" else None
+
+        h = MockHandler("/shape3d?kin=Bong")
+        agora_map.Handler.do_GET(h)
+        self.assertEqual(h.code, 200)
+        self.assertEqual(h.ctype, "application/json")
+        import json
+        self.assertEqual(json.loads(h.body.decode("utf-8")), fake_shape)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

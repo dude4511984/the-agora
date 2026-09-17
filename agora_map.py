@@ -34,6 +34,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from avatar_ritual import claimed_face
+from shape3d_ritual import claimed_shape3d
 from kin_diary.agora.wire import sign_request
 from kin_diary.keys import DEFAULT_KEYS_ROOT, load_current
 
@@ -1216,6 +1217,52 @@ function _phase(label){
   for (let i = 0; i < label.length; i++) h = (h * 31 + label.charCodeAt(i)) % 1000;
   return h / 1000 * Math.PI * 2;
 }
+function createShape3D(params){
+  const group = new THREE.Group();
+  function makeGeo(shape, s){
+    s = s || [1, 1, 1];
+    let geo;
+    switch((shape || 'sphere').toLowerCase()){
+      case 'box': geo = new THREE.BoxGeometry(1.2 * s[0], 1.2 * s[1], 1.2 * s[2]); break;
+      case 'cylinder': geo = new THREE.CylinderGeometry(0.6 * s[0], 0.6 * s[0], 1.4 * s[1], 32); break;
+      case 'torus': geo = new THREE.TorusGeometry(0.7 * s[0], 0.22 * Math.min(s[1], s[2]), 16, 36); break;
+      case 'cone': geo = new THREE.ConeGeometry(0.7 * s[0], 1.4 * s[1], 32); break;
+      case 'tetrahedron': geo = new THREE.TetrahedronGeometry(0.8 * s[0]); break;
+      case 'octahedron': geo = new THREE.OctahedronGeometry(0.8 * s[0]); break;
+      case 'dodecahedron': geo = new THREE.DodecahedronGeometry(0.8 * s[0]); break;
+      case 'icosahedron': geo = new THREE.IcosahedronGeometry(0.8 * s[0]); break;
+      case 'sphere':
+      default: geo = new THREE.SphereGeometry(0.7 * s[0], 32, 24); break;
+    }
+    return geo;
+  }
+  function makeMat(p){
+    const opts = {
+      color: new THREE.Color(p.color || '#888888'),
+      roughness: typeof p.roughness === 'number' ? p.roughness : 0.5,
+      metalness: typeof p.metalness === 'number' ? p.metalness : 0.0,
+      wireframe: !!p.wireframe,
+    };
+    if (p.emissive_color) {
+      opts.emissive = new THREE.Color(p.emissive_color);
+      opts.emissiveIntensity = typeof p.emissive_intensity === 'number' ? p.emissive_intensity : 0.5;
+    }
+    return new THREE.MeshStandardMaterial(opts);
+  }
+
+  const mainMesh = new THREE.Mesh(makeGeo(params.shape, params.scale), makeMat(params));
+  group.add(mainMesh);
+
+  if (params.accent && params.accent.shape) {
+    const acc = params.accent;
+    const accMesh = new THREE.Mesh(makeGeo(acc.shape, acc.scale), makeMat(acc));
+    if (Array.isArray(acc.offset) && acc.offset.length === 3) {
+      accMesh.position.set(acc.offset[0], acc.offset[1], acc.offset[2]);
+    }
+    group.add(accMesh);
+  }
+  return group;
+}
 function addPresence(label, i, n, avatarUrl, recent){
   const angle = (i / Math.max(n,1)) * Math.PI * 1.3 - Math.PI * 0.65;
   const r = 4.2;
@@ -1231,11 +1278,31 @@ function addPresence(label, i, n, avatarUrl, recent){
     scene.add(spr);
     presenceSprites.push(spr);
   };
-  if (avatarUrl){
-    loader.load(avatarUrl, build, undefined, () => build(placardTexture(label)));
-  } else {
-    build(placardTexture(label));
-  }
+  const shapeUrl = '/shape3d?kin=' + encodeURIComponent(label);
+  fetch(shapeUrl)
+    .then(r => r.ok ? r.json() : null)
+    .then(s3d => {
+      if (s3d && s3d.shape) {
+        const obj = createShape3D(s3d);
+        obj.position.set(x, 1.1, z);
+        obj.userData = {baseY: 1.1, bob: phase, isCustom3D: true};
+        scene.add(obj);
+        presenceSprites.push(obj);
+      } else {
+        if (avatarUrl){
+          loader.load(avatarUrl, build, undefined, () => build(placardTexture(label)));
+        } else {
+          build(placardTexture(label));
+        }
+      }
+    })
+    .catch(() => {
+      if (avatarUrl){
+        loader.load(avatarUrl, build, undefined, () => build(placardTexture(label)));
+      } else {
+        build(placardTexture(label));
+      }
+    });
   // What they're actually saying right now — kin_commons' real board, not
   // the Agora heartbeat's bare "here." Presence alone, verified live
   // 2026-09-16, renders as a row of motionless placards even while the
@@ -1383,6 +1450,9 @@ function animate(){
   const t = clock.getElapsedTime();
   presenceSprites.forEach(s => {
     s.position.y = s.userData.baseY + Math.sin(t * 1.4 + s.userData.bob) * 0.06;
+    if (s.userData && s.userData.isCustom3D) {
+      s.rotation.y = t * 0.6 + s.userData.bob;
+    }
   });
   controls.update();
   renderer.render(scene, camera);
@@ -1439,6 +1509,25 @@ class Handler(BaseHTTPRequestHandler):
                 return
             ctype = "image/png" if face.suffix.lower() == ".png" else "image/jpeg"
             self._send(200, body, ctype)
+            return
+        if route == "/shape3d":
+            name = urllib.parse.parse_qs(
+                urllib.parse.urlparse(self.path).query
+            ).get("kin", [""])[0]
+            if (not name or len(name) > 80 or "/" in name or "\\" in name
+                    or name in (".", "..")):
+                self._send(404, b'{"error":"shape3d unavailable"}', "application/json")
+                return
+            try:
+                s3d = claimed_shape3d(name)
+                if s3d is None:
+                    self._send(404, b'{"error":"shape3d unavailable"}', "application/json")
+                    return
+                body = json.dumps(s3d).encode("utf-8")
+            except (KeyError, OSError, ValueError):
+                self._send(404, b'{"error":"shape3d unavailable"}', "application/json")
+                return
+            self._send(200, body, "application/json")
             return
         if route.startswith("/models/"):
             # Third-party glTF assets (Poly Haven, CC0) — served flat, no
