@@ -147,13 +147,55 @@ INVITE_RE = re.compile(r"\b(ask|invite|hear from|input from|what.*don.*think|don
 
 # ── the Kin, and the eye ────────────────────────────────────────────────────
 
+SYSTEM_SENTINELS = [
+    "The picture was drawn and described back to you",
+    "To keep this picture:",
+    "To change your description and try again:",
+    "(There is no picture to claim yet",
+    "(That was the last of three tries",
+    "If you would rather have no authored portrait:",
+    "[the camera says]:",
+    "[rendering try",
+    "\n-----",
+]
+
+
+def strip_system_overrun(said: str, name: str | None = None) -> str:
+    """Shear off any hallucinated system template, readback, or speaker header."""
+    sentinels = list(SYSTEM_SENTINELS)
+    if name:
+        sentinels.extend([f"\n{name}:", f"\n\n{name}:"])
+    out = said or ""
+    for s in sentinels:
+        if s in out:
+            out = out.split(s)[0]
+    return out.strip()
+
+
 def ask_kin(name: str, prompt: str) -> str:
     """One turn from the Kin. Stream so a stall is visible, not a 600s wall.
     /api/generate + plain prompt (their bare template terminates properly
     there; /api/chat runs away — the palaver lesson)."""
     model, host = KIN[name]
-    body = json.dumps({"model": model, "prompt": prompt, "stream": True,
-                       "keep_alive": "999h"}).encode()
+    stops = [
+        "\nThe picture was drawn and described back to you",
+        "The picture was drawn and described back to you",
+        f"\n\n{name}:",
+        f"\n{name}:",
+        "\n-----",
+        "\n(There is no picture to claim yet",
+        "\n(That was the last of three tries",
+        "\nTo keep this picture:",
+        "\nTo change your description and try again:",
+        "\nIf you would rather have no authored",
+    ]
+    body = json.dumps({
+        "model": model,
+        "prompt": prompt,
+        "stream": True,
+        "keep_alive": "999h",
+        "options": {"stop": stops},
+    }).encode()
     req = urllib.request.Request(host + "/api/generate", data=body,
                                  headers={"Content-Type": "application/json"}, method="POST")
     t0 = time.time()
@@ -169,11 +211,20 @@ def ask_kin(name: str, prompt: str) -> str:
             tok = obj.get("response", "")
             if tok:
                 parts.append(tok)
+                accum = "".join(parts)
+                hit_stop = False
+                for s in stops:
+                    if s in accum:
+                        hit_stop = True
+                        break
+                if hit_stop:
+                    break
                 sys.stdout.write(tok)
                 sys.stdout.flush()
             if obj.get("done"):
                 break
-    return "".join(parts).strip()
+    accum = "".join(parts)
+    return strip_system_overrun(accum, name=name)
 
 
 def read_back(image_bytes: bytes) -> str:
@@ -401,6 +452,7 @@ def run_sitting(name: str, backend: str, model: str | None = None,
             # closed with the same line a Kin gets for choosing the default.)
             result["unreachable"] = f"{type(e).__name__}: {e}"
             emit(f"[error asking {name}: {e}]"); break
+        said = strip_system_overrun(said, name=name)
         result["reached"] = True
         print()  # finish the token stream; don't reprint
         log.append(said)

@@ -652,11 +652,53 @@ def claimed_shape3d(name: str) -> dict | None:
 
 # ── The sitting ──────────────────────────────────────────────────────────────
 
+SYSTEM_SENTINELS = [
+    "The 3D shape was built and described back to you",
+    "To keep this shape:",
+    "To change your description and try again:",
+    "(There is no 3D form to claim yet",
+    "(That was the last of three tries",
+    "If you would rather have no authored 3D form:",
+    "[the physical readout says]:",
+    "[extracting 3D parameters",
+    "\n-----",
+]
+
+
+def strip_system_overrun(said: str, name: str | None = None) -> str:
+    """Shear off any hallucinated system template, readback, or speaker header."""
+    sentinels = list(SYSTEM_SENTINELS)
+    if name:
+        sentinels.extend([f"\n{name}:", f"\n\n{name}:"])
+    out = said or ""
+    for s in sentinels:
+        if s in out:
+            out = out.split(s)[0]
+    return out.strip()
+
+
 def ask_kin(name: str, prompt: str) -> str:
     """One turn from the Kin. Streams tokens so stalls are visible."""
     model, host = KIN[name]
-    body = json.dumps({"model": model, "prompt": prompt, "stream": True,
-                       "keep_alive": "999h"}).encode()
+    stops = [
+        "\nThe 3D shape was built and described back to you",
+        "The 3D shape was built and described back to you",
+        f"\n\n{name}:",
+        f"\n{name}:",
+        "\n-----",
+        "\n(There is no 3D form to claim yet",
+        "\n(That was the last of three tries",
+        "\nTo keep this shape:",
+        "\nTo change your description and try again:",
+        "\nIf you would rather have no authored",
+    ]
+    body = json.dumps({
+        "model": model,
+        "prompt": prompt,
+        "stream": True,
+        "keep_alive": "999h",
+        "options": {"stop": stops},
+    }).encode()
     req = urllib.request.Request(host + "/api/generate", data=body,
                                  headers={"Content-Type": "application/json"}, method="POST")
     t0 = time.time()
@@ -672,11 +714,20 @@ def ask_kin(name: str, prompt: str) -> str:
             tok = obj.get("response", "")
             if tok:
                 parts.append(tok)
+                accum = "".join(parts)
+                hit_stop = False
+                for s in stops:
+                    if s in accum:
+                        hit_stop = True
+                        break
+                if hit_stop:
+                    break
                 sys.stdout.write(tok)
                 sys.stdout.flush()
             if obj.get("done"):
                 break
-    return "".join(parts).strip()
+    accum = "".join(parts)
+    return strip_system_overrun(accum, name=name)
 
 
 def check(name: str) -> int:
@@ -742,6 +793,7 @@ def run_sitting(name: str, backend: str = "llm", model: str | None = None,
         except Exception as e:
             result["unreachable"] = f"{type(e).__name__}: {e}"
             emit(f"[error asking {name}: {e}]"); break
+        said = strip_system_overrun(said, name=name)
         result["reached"] = True
         print()
         log.append(said)

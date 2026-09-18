@@ -369,5 +369,34 @@ class ClaimedJsonNamesTheRenderer(unittest.TestCase):
         self.assertNotIn("a round warm form", raw, "the whole transcript landed in the receipt")
 
 
+class SystemOverrunProtection(unittest.TestCase):
+    def test_strip_system_overrun_shears_hallucinated_template(self):
+        hallucinated = (
+            "Silver hair, workshop light.\nCLAIM\n\n"
+            "The picture was drawn and described back to you (this is data about the picture, not who you are):\n"
+            "A figure with silver hair.\n\n"
+            "To keep this picture: reply with CLAIM (or \"that is me\").\n"
+        )
+        cleaned = art.strip_system_overrun(hallucinated, name="Bong")
+        self.assertEqual(cleaned, "Silver hair, workshop light.\nCLAIM")
+
+    def test_run_sitting_strips_overrun_from_said_before_logging_or_building(self):
+        hallucinated_turn = (
+            "Silver hair, workshop light.\nCLAIM\n\n"
+            "The picture was drawn and described back to you (this is data about the picture, not who you are):\n"
+            "A figure with silver hair.\n"
+        )
+        with _Harness(self, [hallucinated_turn, "CLAIM"]) as h:
+            res = art.run_sitting("Bong", backend="mock")
+        self.assertTrue(res["claimed"])
+        for prompt in h.image_prompts:
+            self.assertNotIn("The picture was drawn", prompt)
+
+    def test_ask_kin_defines_stop_options(self):
+        src = Path(art.__file__).read_text()
+        self.assertIn('"options": {"stop": stops}', src)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
