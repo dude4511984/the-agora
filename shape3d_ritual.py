@@ -125,8 +125,22 @@ NAMED_COLORS = {
 }
 
 _DRESS = re.compile(r"^[\s*_~`\"'\u201c\u2018]+|[\s*_~`\"'\u201d\u2019.!]+$")
+# Don, 2026-09-18, after Bong's real sitting: CLAIM must lead the line but no
+# longer has to BE the whole line \u2014 "CLAIM. <his own reason>" now binds.
+# \b after the marker still blocks morphological creep ("claiming", "that is
+# meant to be temporary") and the marker must still be the line's first word,
+# so mid-sentence use ("I claim this") stays speech, not a binding marker.
+# DECLINE is deliberately NOT loosened the same way: the ritual's own offer
+# text asks "what would you REFUSE", so Kin routinely open real answers with
+# "I refuse..."/"Decline the smooth..." as description, not the exit marker.
+# Loosening decline the same way would misread that as backing out of the
+# whole sitting. Known, accepted tradeoff of the looser claim: a hedge like
+# "that is me, in a way, but colder" now also binds \u2014 the marker word still
+# leads the line, and telling a genuine yes from a self-undercutting one from
+# text alone is a judgment call left to whoever reads the transcript, not the
+# parser.
 _CLAIM_LINE = re.compile(
-    r"^(claim|th(at|is)( one| (form|shape|picture))?(?: is|'s) me)$", re.I)
+    r"^(claim|th(at|is)( one| (form|shape|picture))?(?: is|'s) me)\b", re.I)
 _DECLINE_LINE = re.compile(r"^decline$", re.I)
 
 
@@ -148,8 +162,10 @@ INVITE_RE = re.compile(
 def parse_move(text: str) -> str:
     """What did the Kin's turn do? claim | decline | describe.
 
-    Markers must be a whole line (palaver shape). A claim-word mid-sentence
-    is speech. CLAIM beats DECLINE if both lines appear.
+    CLAIM must lead a line but may run on into the Kin's own words after it
+    (2026-09-18). DECLINE still must be the whole line alone — see the note
+    above _DECLINE_LINE for why the two aren't symmetric. A marker not at the
+    start of a line is speech either way. CLAIM beats DECLINE if both appear.
     """
     saw_claim = saw_decline = False
     for line in (text or "").splitlines():
