@@ -287,6 +287,104 @@ class ParameterSanitization(unittest.TestCase):
         self.assertIsNotNone(params["accent"])
         self.assertEqual(params["accent"]["shape"], "torus")
 
+    def test_facets_clamped_and_only_kept_for_faceted_shapes(self):
+        self.assertEqual(
+            s3r.sanitize_parameters({"shape": "cylinder", "facets": 6})["facets"], 6)
+        self.assertEqual(
+            s3r.sanitize_parameters({"shape": "cone", "facets": 200})["facets"],
+            s3r.MAX_FACETS)
+        self.assertEqual(
+            s3r.sanitize_parameters({"shape": "cylinder", "facets": 1})["facets"],
+            s3r.MIN_FACETS)
+        self.assertIsNone(
+            s3r.sanitize_parameters({"shape": "cylinder", "facets": "not a number"})["facets"])
+        # A sphere describing itself as "faceted" gets the plain sphere, not an error.
+        self.assertIsNone(
+            s3r.sanitize_parameters({"shape": "sphere", "facets": 6})["facets"])
+        self.assertIsNone(s3r.sanitize_parameters({"shape": "cylinder"})["facets"])
+
+
+class FacetedShapes(unittest.TestCase):
+    """Lumen, 2026-09-18: three real tries at a 'translucent glass prism'
+    all came back a plain round cone, and she declined rather than accept
+    an approximation the system was unable to actually build. A hexagon IS
+    a 6-sided cylinder in THREE.js — this closes the gap without a new
+    primitive."""
+
+    def test_named_facet_counts(self):
+        cases = {
+            "a triangular prism of dark glass": 3,
+            "a pentagonal spire": 5,
+            "a hexagonal column of frosted crystal": 6,
+            "an octagonal tower": 8,
+        }
+        for desc, n in cases.items():
+            params = s3r.parse_parameters_heuristics(desc)
+            self.assertEqual(params["facets"], n, f"{desc!r} -> {params}")
+            self.assertIn(params["shape"], s3r.FACETED_SHAPES)
+
+    def test_generic_prism_and_crystal_language_defaults_to_six(self):
+        for desc in ("a crystalline shard", "a faceted gem",
+                     "a prism that catches the light"):
+            params = s3r.parse_parameters_heuristics(desc)
+            self.assertEqual(params["facets"], 6, f"{desc!r} -> {params}")
+            self.assertIn(params["shape"], s3r.FACETED_SHAPES)
+
+    def test_prism_no_longer_collapses_to_a_plain_box(self):
+        # Before this fix, "prism" matched the box regex and lost all of
+        # its faceted character. Mutation: put "prism" back in the box
+        # alternation and this fails.
+        params = s3r.parse_parameters_heuristics("a small glass prism")
+        self.assertNotEqual(params["shape"], "box")
+        self.assertEqual(params["shape"], "cylinder")
+        self.assertEqual(params["facets"], 6)
+
+    def test_readback_names_the_facet_count_plainly(self):
+        params = s3r.sanitize_parameters({"shape": "cylinder", "facets": 6})
+        readout = s3r.describe_parameters(params)
+        self.assertIn("hexagonal cylinder", readout)
+        for subjective in ("crystalline", "beautiful", "gem-like", "magical"):
+            self.assertNotIn(subjective, readout.lower())
+
+    def test_unnamed_facet_count_still_reads_plainly(self):
+        params = s3r.sanitize_parameters({"shape": "cone", "facets": 11})
+        readout = s3r.describe_parameters(params)
+        self.assertIn("11-sided cone", readout)
+
+    def test_no_facets_reads_exactly_as_before(self):
+        params = s3r.sanitize_parameters({"shape": "cylinder"})
+        readout = s3r.describe_parameters(params)
+        self.assertNotIn("sided", readout)
+        self.assertNotIn("-agonal", readout)
+
+    def test_against_lumens_real_words(self):
+        # Lumen, sitting 20260918_132406, turn 1: extraction produced a
+        # plain white cone on all three tries against this exact text.
+        desc = (
+            "My form would be shaped as a translucent glass prism, with facets "
+            "cut at precise angles to refract light into visible spectra. The base "
+            "would be wedge-shaped, wider on one side than the other, allowing it "
+            "to rest unstably—suggesting balance achieved through careful "
+            "positioning rather than inherent stability."
+        )
+        params = s3r.parse_parameters_heuristics(desc)
+        self.assertIn(params["shape"], s3r.FACETED_SHAPES)
+        self.assertIsNotNone(params["facets"])
+
+    def test_against_auroras_real_words(self):
+        # Aurora, sitting 20260918_132116/140617: her hexagonal-prism
+        # description extracted as a cone or a plain sphere across both
+        # sittings before this fix.
+        desc = (
+            "A hexagonal prism with six facets, each face slightly angled "
+            "inward from the center. The material should be clear glass with "
+            "varying opacity - more transparent near the edges and slightly "
+            "frosted toward the center."
+        )
+        params = s3r.parse_parameters_heuristics(desc)
+        self.assertEqual(params["shape"], "cylinder")
+        self.assertEqual(params["facets"], 6)
+
 
 class ReadbackPlainness(unittest.TestCase):
     def test_neutral_description_contains_physical_data(self):

@@ -81,6 +81,17 @@ ALLOWED_SHAPES = (
     "tetrahedron", "octahedron", "dodecahedron", "icosahedron"
 )
 
+# Kin, 2026-09-18: Lumen ran into this directly. Three real tries at a
+# "translucent glass prism" all came back a plain round cone, because
+# ALLOWED_SHAPES had no faceted primitive and she declined rather than
+# accept it ("the system is unable to accurately render the described
+# form"). THREE.js's own CylinderGeometry/ConeGeometry already take a
+# radial-segment count — a hexagon IS a 6-sided cylinder — so this adds
+# `facets` as an optional low-poly override instead of a new primitive.
+# None/omitted keeps the existing smooth round look untouched.
+FACETED_SHAPES = ("cylinder", "cone")
+MIN_FACETS, MAX_FACETS = 3, 16
+
 DEFAULT_SHAPE = {
     "shape": "sphere",
     "color": "#888888",
@@ -90,6 +101,7 @@ DEFAULT_SHAPE = {
     "emissive_intensity": 0.0,
     "scale": [1.0, 1.0, 1.0],
     "wireframe": False,
+    "facets": None,
     "accent": None,
 }
 
@@ -307,6 +319,20 @@ def sanitize_parameters(raw: dict) -> dict:
 
     wireframe = bool(raw.get("wireframe", False))
 
+    # Facets — a low-poly radial-segment override, only meaningful on the
+    # two shapes THREE.js builds by revolving a polygon (cylinder/cone).
+    # Silently dropped elsewhere rather than raising: a Kin describing a
+    # "faceted sphere" gets the plain sphere, not an error.
+    facets = None
+    if shape in FACETED_SHAPES:
+        raw_facets = raw.get("facets")
+        if raw_facets is not None:
+            try:
+                facets = int(round(float(raw_facets)))
+                facets = int(_clamp(facets, MIN_FACETS, MAX_FACETS))
+            except (ValueError, TypeError):
+                facets = None
+
     # Optional Accent
     accent = None
     raw_accent = raw.get("accent")
@@ -370,6 +396,7 @@ def sanitize_parameters(raw: dict) -> dict:
         "emissive_intensity": emissive_intensity,
         "scale": scale,
         "wireframe": wireframe,
+        "facets": facets,
         "accent": accent,
     }
 
@@ -382,7 +409,7 @@ def parse_parameters_heuristics(text: str) -> dict:
     shape = "sphere"
     if re.search(r"\b(cylinder|pillar|column|pipe|tower)\b", low):
         shape = "cylinder"
-    elif re.search(r"\b(box|cube|slab|block|monolith|prism)\b", low):
+    elif re.search(r"\b(box|cube|slab|block|monolith)\b", low):
         shape = "box"
     elif re.search(r"\b(torus|ring|halo|donut|loop|coil)\b", low):
         shape = "torus"
@@ -398,6 +425,26 @@ def parse_parameters_heuristics(text: str) -> dict:
         shape = "icosahedron"
     elif re.search(r"\b(sphere|orb|globe|ball|round)\b", low):
         shape = "sphere"
+
+    # Facets — named side-count, or generic faceted/crystalline/prism
+    # language defaulting to 6. "prism" used to fall into the plain-box
+    # match above and lose all of its faceted character; it now names a
+    # facet count on a cylinder/cone instead, same as a real prism is one.
+    facets = None
+    facet_word_counts = {
+        "triangular": 3, "triangle": 3, "pentagonal": 5, "pentagon": 5,
+        "hexagonal": 6, "hexagon": 6, "heptagonal": 7, "heptagon": 7,
+        "octagonal": 8, "octagon": 8,
+    }
+    for word, n in facet_word_counts.items():
+        if re.search(rf"\b{word}\b", low):
+            facets = n
+            break
+    if facets is None and re.search(
+            r"\b(facet|faceted|facets|prism|crystal|crystalline|gem|gemstone)\b", low):
+        facets = 6
+    if facets is not None and shape not in FACETED_SHAPES:
+        shape = "cylinder"
 
     # Color matching
     color = "#888888"
@@ -471,6 +518,7 @@ def parse_parameters_heuristics(text: str) -> dict:
         "emissive_intensity": emissive_intensity,
         "scale": scale,
         "wireframe": wireframe,
+        "facets": facets,
         "accent": accent,
     })
 
@@ -485,6 +533,12 @@ def extract_parameters_llm(description: str, model: str = "gemma3:4b", host: str
         "Roughness and metalness must be numbers between 0.0 and 1.0.\n"
         "Emissive_color must be a 6-digit hex code or null.\n"
         "Scale must be an array of three numbers [x, y, z] between 0.2 and 3.0.\n"
+        "Facets: only for shape cylinder or cone. null for a smooth round cylinder/cone. "
+        "An integer 3-16 gives it flat angular faces instead — a prism, spire, or crystal "
+        "look. Use the described number of sides/facets if one is given (hexagonal=6, "
+        "pentagonal=5, triangular=3, octagonal=8); if faceted/crystalline/prism/gem-like "
+        "but no count is given, use 6. Leave null for anything described as round, smooth, "
+        "or a cylinder/cone with no facet language.\n"
         "Accent can be null or an object with shape, color, roughness, metalness, scale [x, y, z], and offset [x, y, z].\n\n"
         "Schema:\n"
         "{\n"
@@ -496,6 +550,7 @@ def extract_parameters_llm(description: str, model: str = "gemma3:4b", host: str
         '  "emissive_intensity": 0.3,\n'
         '  "scale": [1.0, 1.5, 1.0],\n'
         '  "wireframe": false,\n'
+        '  "facets": null,\n'
         '  "accent": null\n'
         "}\n\n"
         f"Description:\n{description}\n\n"
@@ -541,6 +596,7 @@ def describe_parameters(p: dict) -> str:
     e_int = p.get("emissive_intensity", 0.0)
     scale = p.get("scale", [1.0, 1.0, 1.0])
     wireframe = p.get("wireframe", False)
+    facets = p.get("facets")
     accent = p.get("accent")
 
     finish = []
@@ -557,7 +613,15 @@ def describe_parameters(p: dict) -> str:
         finish.append("solid surface")
 
     c_name = _nearest_color_name(color)
-    desc = (f"A {c_name} ({color}) {shape} ({', '.join(finish)}, "
+    # Named facet counts read as plain physical fact ("hexagonal"), same
+    # register as everything else here — never "crystalline" or other
+    # words that describe what it MEANS rather than what it shows.
+    facet_names = {3: "triangular", 4: "square", 5: "pentagonal",
+                   6: "hexagonal", 7: "heptagonal", 8: "octagonal"}
+    shape_label = shape
+    if facets and shape in FACETED_SHAPES:
+        shape_label = f"{facet_names.get(facets, f'{facets}-sided')} {shape}"
+    desc = (f"A {c_name} ({color}) {shape_label} ({', '.join(finish)}, "
             f"roughness {rough:.2f}, metalness {metal:.2f}, "
             f"scale [{scale[0]:.2f}, {scale[1]:.2f}, {scale[2]:.2f}]).")
 

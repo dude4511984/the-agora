@@ -1219,14 +1219,18 @@ function _phase(label){
 }
 function createShape3D(params){
   const group = new THREE.Group();
-  function makeGeo(shape, s){
+  function makeGeo(shape, s, facets){
     s = s || [1, 1, 1];
+    // A named facet count gives a low-poly prism/spire look instead of the
+    // smooth default — a hexagon IS a 6-sided cylinder. Kin, 2026-09-18:
+    // Lumen wanted exactly this and there was no way to render it.
+    const radialSegments = (typeof facets === 'number' && facets >= 3) ? facets : 32;
     let geo;
     switch((shape || 'sphere').toLowerCase()){
       case 'box': geo = new THREE.BoxGeometry(1.2 * s[0], 1.2 * s[1], 1.2 * s[2]); break;
-      case 'cylinder': geo = new THREE.CylinderGeometry(0.6 * s[0], 0.6 * s[0], 1.4 * s[1], 32); break;
+      case 'cylinder': geo = new THREE.CylinderGeometry(0.6 * s[0], 0.6 * s[0], 1.4 * s[1], radialSegments); break;
       case 'torus': geo = new THREE.TorusGeometry(0.7 * s[0], 0.22 * Math.min(s[1], s[2]), 16, 36); break;
-      case 'cone': geo = new THREE.ConeGeometry(0.7 * s[0], 1.4 * s[1], 32); break;
+      case 'cone': geo = new THREE.ConeGeometry(0.7 * s[0], 1.4 * s[1], radialSegments); break;
       case 'tetrahedron': geo = new THREE.TetrahedronGeometry(0.8 * s[0]); break;
       case 'octahedron': geo = new THREE.OctahedronGeometry(0.8 * s[0]); break;
       case 'dodecahedron': geo = new THREE.DodecahedronGeometry(0.8 * s[0]); break;
@@ -1250,12 +1254,12 @@ function createShape3D(params){
     return new THREE.MeshStandardMaterial(opts);
   }
 
-  const mainMesh = new THREE.Mesh(makeGeo(params.shape, params.scale), makeMat(params));
+  const mainMesh = new THREE.Mesh(makeGeo(params.shape, params.scale, params.facets), makeMat(params));
   group.add(mainMesh);
 
   if (params.accent && params.accent.shape) {
     const acc = params.accent;
-    const accMesh = new THREE.Mesh(makeGeo(acc.shape, acc.scale), makeMat(acc));
+    const accMesh = new THREE.Mesh(makeGeo(acc.shape, acc.scale, acc.facets), makeMat(acc));
     if (Array.isArray(acc.offset) && acc.offset.length === 3) {
       accMesh.position.set(acc.offset[0], acc.offset[1], acc.offset[2]);
     }
