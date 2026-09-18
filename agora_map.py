@@ -610,7 +610,7 @@ renderer.setSize(innerWidth, innerHeight);
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.outputEncoding = THREE.sRGBEncoding;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.15;
+renderer.toneMappingExposure = 1.05;
 document.body.appendChild(renderer.domElement);
 
 const controls = new THREE.OrbitControls(camera, renderer.domElement);
@@ -618,22 +618,30 @@ controls.target.copy(player.position).setY(1);
 controls.maxPolarAngle = Math.PI * 0.49;
 controls.minDistance = 3; controls.maxDistance = 22;
 controls.enablePan = false;   // panning would fight the walk-follow below
+// ?view=inside — player at the courtyard center. The walk-follow owns
+// the camera every frame, so moving the camera here is a no-op; move
+// the player and let the existing offset sit inside the walls.
+if (new URLSearchParams(location.search).get('view') === 'inside') {
+  player.position.set(0, 0, 0);
+  camera.position.set(0, 4.4, 6.5);
+  controls.target.set(0, 1, 0);
+}
 
-// Hall lighting, not a cave. The first pass was a muddy ambient, a weak
-// key, and four torches whose distance=9 died before they reached the
-// center — Don's family saw it and the room read drab. Hemisphere for
-// sky/ground bounce, a real fill from the gate, torches that overlap in
-// the middle, one hanging lamp. No shadows, no GI.
-scene.add(new THREE.HemisphereLight(0xffe6c8, 0x3a3228, 0.55));
-scene.add(new THREE.AmbientLight(0xcbb89a, 0.28));
-const key = new THREE.DirectionalLight(0xfff4e0, 0.9);
+// Mix, not a wash. Live shot of the first lighting pass (range 22 + heavy
+// hemisphere) was a flat beige courtyard — dark-cave problem gone, torch
+// pools gone with it. Pull the global lights back so the sconces read.
+// Mid-wall + near-corner, range 12: covers past the center from 9.3 without
+// turning every surface the same color. Decay 2 kept (the original intent).
+scene.add(new THREE.HemisphereLight(0xffe6c8, 0x3a3228, 0.28));
+scene.add(new THREE.AmbientLight(0xcbb89a, 0.12));
+const key = new THREE.DirectionalLight(0xfff4e0, 0.5);
 key.position.set(6, 14, 4);
 scene.add(key);
-const fill = new THREE.DirectionalLight(0xffd9a8, 0.32);
+const fill = new THREE.DirectionalLight(0xffd9a8, 0.16);
 fill.position.set(0, 8, 12);
 scene.add(fill);
 
-const hall = new THREE.PointLight(0xffe0b0, 1.25, 20, 1.3);
+const hall = new THREE.PointLight(0xffe0b0, 0.7, 12, 1.8);
 hall.position.set(0, 5.2, 0);
 scene.add(hall);
 const lamp = new THREE.Mesh(
@@ -643,10 +651,9 @@ const lamp = new THREE.Mesh(
 lamp.position.copy(hall.position);
 scene.add(lamp);
 
-// Same four sconce positions as before — Gem owns wall/collision. Only
-// the reach changed: distance 22 so they actually light the floor.
-[[9.3, 0], [-9.3, 0], [0, 9.3], [0, -9.3]].forEach(([x, z]) => {
-  const torch = new THREE.PointLight(0xffb366, 1.55, 22, 1.3);
+[[9.3, 0], [-9.3, 0], [0, 9.3], [0, -9.3],
+ [7.4, 7.4], [7.4, -7.4], [-7.4, 7.4], [-7.4, -7.4]].forEach(([x, z]) => {
+  const torch = new THREE.PointLight(0xffb366, 2.2, 12, 2);
   torch.position.set(x, 2.6, z);
   scene.add(torch);
   const flame = new THREE.Mesh(
@@ -660,7 +667,7 @@ scene.add(lamp);
 // The floor: the commons. Static once built, never touched again. Sized to
 // reach past the wall perimeter's corners (HALF=10.5 below, corner distance
 // ~14.8) so the ground doesn't visibly run out before the walls do.
-const floorMat = new THREE.MeshStandardMaterial({color:0x2a241c, roughness:0.85});
+const floorMat = new THREE.MeshStandardMaterial({color:0x201b16, roughness:0.88});
 const floor = new THREE.Mesh(new THREE.CircleGeometry(15, 48), floorMat);
 floor.rotation.x = -Math.PI/2;
 scene.add(floor);
@@ -757,6 +764,31 @@ function resolveCollisions(pos, prevX){
     if (gh > 0.15 && fromCourtyard && pos.x <= RAMP_X_MAX) {
       if (pos.y < gh) {
         pos.x = RAMP_X_MAX + 0.01;
+      }
+    }
+  }
+
+  // South wall gate archway and fortress boundary (z ~ HALF = 10.5):
+  // The gate archway opening is between GATE_X_MIN (2.10) and GATE_X_MAX (2.95).
+  // Within the opening, the player walks freely through in Z between the commons
+  // and the abyssal plain, with lateral sliding against the stone doorposts.
+  // Outside the opening, the solid stone wall stops the player from penetrating.
+  const GATE_X_MIN = 2.10, GATE_X_MAX = 2.95;
+  if (pos.z >= 9.2 && pos.z <= 11.2 && pos.x >= 0.0 && pos.x <= 5.2) {
+    if (pos.x >= GATE_X_MIN && pos.x <= GATE_X_MAX) {
+      // Inside archway opening: slide laterally against stone jambs
+      const margin = 0.25;
+      if (pos.x < GATE_X_MIN + margin) pos.x = GATE_X_MIN + margin;
+      else if (pos.x > GATE_X_MAX - margin) pos.x = GATE_X_MAX - margin;
+      // Z passes freely through doorway
+    } else {
+      // Outside archway opening: solid stone wall
+      const wallInner = 10.5 - 0.613 - PLAYER_R; // ~9.537
+      const wallOuter = 10.5 + PLAYER_R;         // ~10.85
+      if (pos.z < 10.5) {
+        if (pos.z > wallInner) pos.z = wallInner;
+      } else {
+        if (pos.z < wallOuter) pos.z = wallOuter;
       }
     }
   }
@@ -929,6 +961,7 @@ new THREE.GLTFLoader().load('/models/modular_fort_01/modular_fort_01.gltf', (glt
   const strTemplate2 = harvest('wall_thick_straight_02');
   const cornerTemplate = harvest('wall_thick_corner_01');
   const gateTemplate = harvest('wall_thin_gate_01');
+  const thinStrTemplate = harvest('wall_thin_straight_04');
   const towerTemplate = harvest('tower_round');
   const stairsTemplate = harvest('wall_stairs_straight_01');
   const walkwayTemplate = harvest('wall_walkway_straight_01');
@@ -953,6 +986,7 @@ new THREE.GLTFLoader().load('/models/modular_fort_01/modular_fort_01.gltf', (glt
   if (strTemplate2) strTemplate2.scale.setScalar(SCALE);
   cornerTemplate.scale.setScalar(SCALE);
   if (gateTemplate) gateTemplate.scale.setScalar(SCALE);
+  if (thinStrTemplate) thinStrTemplate.scale.setScalar(SCALE);
   if (towerTemplate) towerTemplate.scale.setScalar(SCALE);
   if (stairsTemplate) stairsTemplate.scale.setScalar(SCALE);
   if (walkwayTemplate) walkwayTemplate.scale.setScalar(SCALE);
@@ -1003,13 +1037,26 @@ new THREE.GLTFLoader().load('/models/modular_fort_01/modular_fort_01.gltf', (glt
       m.rotation.y = ry;
       wallGroup.add(m);
       if (useGate) {
-        // The gate's an opening, not a slab — collide only at its two
-        // side posts (a quarter of the bay width in from each edge),
-        // not the full bay, so walking through the middle actually works.
-        const half = actualSeg / 2, postR = actualSeg * 0.18;
-        const p1 = axis === 'x' ? {x: pos.x - half * 0.7, z: pos.z} : {x: pos.x, z: pos.z - half * 0.7};
-        const p2 = axis === 'x' ? {x: pos.x + half * 0.7, z: pos.z} : {x: pos.x, z: pos.z + half * 0.7};
-        wallObstacles.push({x: p1.x, z: p1.z, r: postR}, {x: p2.x, z: p2.z, r: postR});
+        // The gate (wall_thin_gate_01) is a half-bay piece (7.41 units raw vs 14.56 full straight bay).
+        // Pair it with matching thin straight wall (wall_thin_straight_04, also 7.41 units raw)
+        // to fill the missing section of wall next to the archway and close the 1.485m gap.
+        const gateLen = 7.409695 * SCALE;
+        if (thinStrTemplate) {
+          const filler = thinStrTemplate.clone(true);
+          const fillerPos = axis === 'x'
+            ? {x: pos.x + gateLen, z: fixedCoord}
+            : {x: fixedCoord, z: pos.z + gateLen};
+          filler.position.set(fillerPos.x, 0, fillerPos.z);
+          filler.rotation.y = ry;
+          wallGroup.add(filler);
+        }
+        // Archway opening and South wall collision boundaries are handled by the exact
+        // linear plane in resolveCollisions, so no circular obstacles bulge into the doorway
+        // or push the player backward when walking through the archway.
+      } else if (axis === 'x' && fixedCoord === HALF && i === gateIndex + 1) {
+        // Bay 4 (immediately east of gate): shift obstacle center slightly east so its
+        // circular boundary doesn't bulge into the gate's eastern doorframe.
+        wallObstacles.push({x: pos.x + 0.5, z: pos.z, r: actualSeg * 0.45});
       } else if (axis === 'z' && fixedCoord === -HALF) {
         if (i === 2) {
           // Bay 2 approach: stops before stairs (z < 0) so southern approach corridor stays clear
