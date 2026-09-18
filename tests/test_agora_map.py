@@ -103,13 +103,15 @@ class Agora3DRoomWallAndArchway(unittest.TestCase):
         page = agora_map.PAGE_3D
         self.assertIn("harvest('wall_thin_straight_04')", page)
         self.assertIn("thinStrTemplate.scale.setScalar(SCALE)", page)
-        self.assertIn("fillerPos = axis === 'x'", page)
-        self.assertIn("{x: pos.x + gateLen, z: fixedCoord}", page)
+        self.assertIn("fillerLeft.scale.set(SCALE, SCALE, flankLen / rawThinStrLen)", page)
+        self.assertIn("fillerRight.scale.set(SCALE, SCALE, flankLen / rawThinStrLen)", page)
+        self.assertIn("fLeftPos = axis === 'x' ? {x: -actualSeg / 2, z: fixedCoord}", page)
+        self.assertIn("fRightPos = axis === 'x' ? {x: gateLen / 2, z: fixedCoord}", page)
 
     def test_page_3d_linear_archway_corridor_and_wall_boundaries(self):
         page = agora_map.PAGE_3D
-        self.assertIn("GATE_X_MIN = 2.10", page)
-        self.assertIn("GATE_X_MAX = 2.95", page)
+        self.assertIn("GATE_X_MIN = -0.45", page)
+        self.assertIn("GATE_X_MAX = 0.45", page)
         self.assertIn("wallInner = 10.5 - 0.613 - PLAYER_R", page)
         self.assertIn("wallOuter = 10.5 + PLAYER_R", page)
 
@@ -120,12 +122,12 @@ class Agora3DRoomWallAndArchway(unittest.TestCase):
         WALL_THICK_THIN = 0.613
         wallInner = GATE_Z_WALL - WALL_THICK_THIN - PLAYER_R  # ~9.537
         wallOuter = GATE_Z_WALL + PLAYER_R                    # ~10.85
-        GATE_X_MIN = 2.10
-        GATE_X_MAX = 2.95
+        GATE_X_MIN = -0.45
+        GATE_X_MAX = 0.45
         margin = 0.25
 
         def resolve(pos):
-            if 9.2 <= pos[1] <= 11.2 and 0.0 <= pos[0] <= 5.2:
+            if 9.2 <= pos[1] <= 11.2 and -2.5 <= pos[0] <= 2.5:
                 if GATE_X_MIN <= pos[0] <= GATE_X_MAX:
                     if pos[0] < GATE_X_MIN + margin:
                         pos[0] = GATE_X_MIN + margin
@@ -140,7 +142,7 @@ class Agora3DRoomWallAndArchway(unittest.TestCase):
                             pos[1] = wallOuter
 
         # Traversal through archway outward (commons -> plain)
-        for x in [2.15, 2.30, 2.50, 2.70, 2.90]:
+        for x in [-0.35, -0.20, 0.0, 0.20, 0.35]:
             pos = [x, 9.0]
             while pos[1] < 11.5:
                 pos[1] += 0.08
@@ -149,7 +151,7 @@ class Agora3DRoomWallAndArchway(unittest.TestCase):
             self.assertTrue(GATE_X_MIN <= pos[0] <= GATE_X_MAX)
 
         # Traversal through archway inward (plain -> commons)
-        for x in [2.15, 2.30, 2.50, 2.70, 2.90]:
+        for x in [-0.35, -0.20, 0.0, 0.20, 0.35]:
             pos = [x, 11.5]
             while pos[1] > 9.0:
                 pos[1] -= 0.08
@@ -157,8 +159,8 @@ class Agora3DRoomWallAndArchway(unittest.TestCase):
             self.assertLessEqual(pos[1], 9.0)
             self.assertTrue(GATE_X_MIN <= pos[0] <= GATE_X_MAX)
 
-        # Solid wall stops penetration at newly filled section (x in [3.4, 4.8])
-        for x in [3.5, 3.8, 4.1, 4.5]:
+        # Solid wall stops penetration at filled flank sections (e.g. x in [-2.0, -1.0] and [1.0, 2.0])
+        for x in [-2.0, -1.5, -1.0, 1.0, 1.5, 2.0]:
             pos = [x, 9.0]
             for _ in range(40):
                 pos[1] += 0.08

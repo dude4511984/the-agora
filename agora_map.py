@@ -735,7 +735,7 @@ const RAMPART_DECK_H = 7.074 * (3.5 / 14.5626688); // 1.700m
 const RAMP_X_MIN = -9.70;
 const RAMP_X_MAX = -8.35;
 const RAMP_Z_START = 0.0;
-const RAMP_Z_STAIR_TOP = 3.266;
+const RAMP_Z_STAIR_TOP = 3.62;
 const RAMP_Z_END = 9.80;
 
 function getGroundHeight(x, z){
@@ -788,12 +788,12 @@ function resolveCollisions(pos, prevX){
   }
 
   // South wall gate archway and fortress boundary (z ~ HALF = 10.5):
-  // The gate archway opening is between GATE_X_MIN (2.10) and GATE_X_MAX (2.95).
+  // The gate archway opening is between GATE_X_MIN (-0.45) and GATE_X_MAX (0.45).
   // Within the opening, the player walks freely through in Z between the commons
   // and the abyssal plain, with lateral sliding against the stone doorposts.
   // Outside the opening, the solid stone wall stops the player from penetrating.
-  const GATE_X_MIN = 2.10, GATE_X_MAX = 2.95;
-  if (pos.z >= 9.2 && pos.z <= 11.2 && pos.x >= 0.0 && pos.x <= 5.2) {
+  const GATE_X_MIN = -0.45, GATE_X_MAX = 0.45;
+  if (pos.z >= 9.2 && pos.z <= 11.2 && pos.x >= -2.5 && pos.x <= 2.5) {
     if (pos.x >= GATE_X_MIN && pos.x <= GATE_X_MAX) {
       // Inside archway opening: slide laterally against stone jambs
       const margin = 0.25;
@@ -997,10 +997,16 @@ new THREE.GLTFLoader().load('/models/modular_fort_01/modular_fort_01.gltf', (glt
   // (chair ~0.9 radius, presence ~1.7m). Rescale the harvested pieces
   // down to a wall-bay length that actually fits this room, uniformly,
   // so corner and straight segments still meet each other correctly.
-  const rawStrLen = Math.max(...['x', 'z'].map(
-    a => new THREE.Box3().setFromObject(strTemplate).getSize(new THREE.Vector3())[a]));
-  const DESIRED_BAY = 3.5;
-  const SCALE = DESIRED_BAY / rawStrLen;
+  const rawStrLen = 14.5626688;
+  const rawCornerSpan = 5.837701;
+  const rawGateLen = 7.409695;
+  const rawThinStrLen = 7.4096965;
+
+  const HALF = 10.5;   // half side length of the square perimeter around the floor
+  const n = 5;         // 5 bays: middle bay (i=2) is centered at 0 on the main axis
+  // Analytical scale so n straight bays and two corner spans tile the perimeter exactly:
+  // 2 * (rawCornerSpan * SCALE) + n * (rawStrLen * SCALE) = HALF * 2
+  const SCALE = (HALF * 2) / (2 * rawCornerSpan + n * rawStrLen);
   strTemplate.scale.setScalar(SCALE);
   if (strTemplate2) strTemplate2.scale.setScalar(SCALE);
   cornerTemplate.scale.setScalar(SCALE);
@@ -1010,23 +1016,20 @@ new THREE.GLTFLoader().load('/models/modular_fort_01/modular_fort_01.gltf', (glt
   if (stairsTemplate) stairsTemplate.scale.setScalar(SCALE);
   if (walkwayTemplate) walkwayTemplate.scale.setScalar(SCALE);
 
-  const segLen = DESIRED_BAY;
-  const cornerSize = new THREE.Box3().setFromObject(cornerTemplate).getSize(new THREE.Vector3());
-  const cornerSpan = Math.max(cornerSize.x, cornerSize.z);
+  const cornerSpan = rawCornerSpan * SCALE;
   const towerRadius = towerTemplate
     ? Math.max(...['x', 'z'].map(a => new THREE.Box3().setFromObject(towerTemplate).getSize(new THREE.Vector3())[a])) / 2
     : 0;
 
-  const HALF = 10.5;   // half side length of the square perimeter around the floor
   // A round tower where each pair of walls meets — real castle corners
   // aren't a bare miter joint, they're the strongpoint, and the kit ships
   // exactly this piece. Layered on top of the flat corner stub rather
   // than replacing it (the stub is what the straight bays actually key
   // into); the tower just makes the joint read as architecture.
   [{x: -HALF, z: -HALF, ry: 0},
-   {x:  HALF, z: -HALF, ry: Math.PI / 2},
+   {x:  HALF, z: -HALF, ry: -Math.PI / 2},
    {x:  HALF, z:  HALF, ry: Math.PI},
-   {x: -HALF, z:  HALF, ry: -Math.PI / 2}].forEach(c => {
+   {x: -HALF, z:  HALF, ry: Math.PI / 2}].forEach(c => {
     const m = cornerTemplate.clone(true);
     m.position.set(c.x, 0, c.z);
     m.rotation.y = c.ry;
@@ -1039,57 +1042,73 @@ new THREE.GLTFLoader().load('/models/modular_fort_01/modular_fort_01.gltf', (glt
     wallObstacles.push({x: c.x, z: c.z, r: Math.max(cornerSpan * 0.6, towerRadius * 0.9)});
   });
 
-  const runLen = HALF * 2 - cornerSpan;
-  const n = Math.max(1, Math.round(runLen / segLen));
-  const actualSeg = runLen / n;
+  const wallSpan = HALF - cornerSpan;
+  const wallRun = wallSpan * 2;
+  const actualSeg = wallRun / n;
+  const segLen = rawStrLen * SCALE;
+  const gateLen = rawGateLen * SCALE;
+  const flankLen = (actualSeg - gateLen) / 2;
   function placeRun(axis, fixedCoord, ry, gateIndex) {
     for (let i = 0; i < n; i++) {
-      const t = -runLen / 2 + actualSeg * (i + 0.5);
+      const t = -wallSpan + i * actualSeg;
       const useGate = i === gateIndex && gateTemplate;
-      // Deterministic alternation, not random — a reloaded page should
-      // show the same wall it showed a moment ago, same as everything
-      // else here that isn't live data.
       const straight = (i % 2 === 0 || !strTemplate2) ? strTemplate : strTemplate2;
-      const m = (useGate ? gateTemplate : straight).clone(true);
       const pos = axis === 'x' ? {x: t, z: fixedCoord} : {x: fixedCoord, z: t};
-      m.position.set(pos.x, 0, pos.z);
-      m.rotation.y = ry;
-      wallGroup.add(m);
       if (useGate) {
-        // The gate (wall_thin_gate_01) is a half-bay piece (7.41 units raw vs 14.56 full straight bay).
-        // Pair it with matching thin straight wall (wall_thin_straight_04, also 7.41 units raw)
-        // to fill the missing section of wall next to the archway and close the 1.485m gap.
-        const gateLen = 7.409695 * SCALE;
+        // The gate (wall_thin_gate_01) is centered on the South wall at X=0,
+        // flanked on BOTH sides by matching thin straight wall fillers (wall_thin_straight_04)
+        // so the gate bay is completely closed with zero gaps, symmetric crenellations,
+        // and an unobstructed central doorway opening.
+        const gatePos = axis === 'x'
+          ? {x: -gateLen / 2, z: fixedCoord}
+          : {x: fixedCoord, z: -gateLen / 2};
+        const m = gateTemplate.clone(true);
+        m.position.set(gatePos.x, 0, gatePos.z);
+        m.rotation.y = ry;
+        wallGroup.add(m);
+
         if (thinStrTemplate) {
-          const filler = thinStrTemplate.clone(true);
-          const fillerPos = axis === 'x'
-            ? {x: pos.x + gateLen, z: fixedCoord}
-            : {x: fixedCoord, z: pos.z + gateLen};
-          filler.position.set(fillerPos.x, 0, fillerPos.z);
-          filler.rotation.y = ry;
-          wallGroup.add(filler);
-        }
-        // Archway opening and South wall collision boundaries are handled by the exact
-        // linear plane in resolveCollisions, so no circular obstacles bulge into the doorway
-        // or push the player backward when walking through the archway.
-      } else if (axis === 'x' && fixedCoord === HALF && i === gateIndex + 1) {
-        // Bay 4 (immediately east of gate): shift obstacle center slightly east so its
-        // circular boundary doesn't bulge into the gate's eastern doorframe.
-        wallObstacles.push({x: pos.x + 0.5, z: pos.z, r: actualSeg * 0.45});
-      } else if (axis === 'z' && fixedCoord === -HALF) {
-        if (i === 2) {
-          // Bay 2 approach: stops before stairs (z < 0) so southern approach corridor stays clear
-          wallObstacles.push({x: -HALF - 0.5, z: pos.z, r: actualSeg * 0.45});
-        } else if (i >= 3) {
-          // West wall rampart bays (stairs and elevated walkways, z >= 0):
-          // Outer curtain / battlement wall is handled by the exact linear plane boundary in resolveCollisions
-          // (pos.x < RAMP_X_MIN + PLAYER_R). No circular obstacles here, so nothing bulges into the
-          // walkway or pushes the player backward down the stairs.
-        } else {
-          wallObstacles.push({x: pos.x, z: pos.z, r: actualSeg * 0.55});
+          // Left filler (bridges Bay 1 to gate):
+          const fillerLeft = thinStrTemplate.clone(true);
+          fillerLeft.scale.set(SCALE, SCALE, flankLen / rawThinStrLen);
+          const fLeftPos = axis === 'x' ? {x: -actualSeg / 2, z: fixedCoord} : {x: fixedCoord, z: -actualSeg / 2};
+          fillerLeft.position.set(fLeftPos.x, 0, fLeftPos.z);
+          fillerLeft.rotation.y = ry;
+          wallGroup.add(fillerLeft);
+
+          // Right filler (bridges gate to Bay 3):
+          const fillerRight = thinStrTemplate.clone(true);
+          fillerRight.scale.set(SCALE, SCALE, flankLen / rawThinStrLen);
+          const fRightPos = axis === 'x' ? {x: gateLen / 2, z: fixedCoord} : {x: fixedCoord, z: gateLen / 2};
+          fillerRight.position.set(fRightPos.x, 0, fRightPos.z);
+          fillerRight.rotation.y = ry;
+          wallGroup.add(fillerRight);
         }
       } else {
-        wallObstacles.push({x: pos.x, z: pos.z, r: actualSeg * 0.55});
+        const m = straight.clone(true);
+        m.position.set(pos.x, 0, pos.z);
+        m.rotation.y = ry;
+        wallGroup.add(m);
+
+        if (axis === 'x' && fixedCoord === HALF) {
+          if (i === gateIndex - 1) {
+            wallObstacles.push({x: t + actualSeg * 0.35, z: pos.z, r: actualSeg * 0.45});
+          } else if (i === gateIndex + 1) {
+            wallObstacles.push({x: t + actualSeg * 0.65, z: pos.z, r: actualSeg * 0.45});
+          } else {
+            wallObstacles.push({x: t + actualSeg * 0.5, z: pos.z, r: actualSeg * 0.55});
+          }
+        } else if (axis === 'z' && fixedCoord === -HALF) {
+          if (i < 2) {
+            wallObstacles.push({x: pos.x, z: t + actualSeg * 0.5, r: actualSeg * 0.55});
+          } else if (i === 2) {
+            wallObstacles.push({x: -HALF - 0.5, z: t + actualSeg * 0.5, r: actualSeg * 0.45});
+          }
+        } else {
+          const obsX = axis === 'x' ? t + actualSeg * 0.5 : pos.x;
+          const obsZ = axis === 'x' ? pos.z : t + actualSeg * 0.5;
+          wallObstacles.push({x: obsX, z: obsZ, r: actualSeg * 0.55});
+        }
       }
     }
   }
