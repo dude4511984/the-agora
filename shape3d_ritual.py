@@ -798,13 +798,13 @@ def run_sitting(name: str, backend: str = "llm", model: str | None = None,
         last_params = params
         last_description = shape_prompt
         last_read_back = seen
-
         emit(f"\n[the physical readout says]:\n{seen}\n")
         transcript += (
             f"\nThe 3D shape was built and described back to you (this is data about "
             f"the shape, not who you are):\n{seen}\n\n"
-            f"You may change your description and try again, say CLAIM (or \"that is me\") "
-            f"to keep it, or DECLINE.\n"
+            f"To keep this shape: reply with CLAIM (or \"that is me\").\n"
+            f"To change your description and try again: describe the new shape (do not say CLAIM until you have seen it).\n"
+            f"If you would rather have no authored 3D form: reply with DECLINE.\n"
         )
     else:
         emit("\n[the sitting reached its end without a claim — the default stands]\n")

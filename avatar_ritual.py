@@ -480,9 +480,9 @@ def run_sitting(name: str, backend: str, model: str | None = None,
             break
         emit(f"\n[the camera says]:\n{seen}\n")
         transcript += (f"\nThe picture was drawn and described back to you (this is data about "
-                       f"the picture, not who you are):\n{seen}\n\n"
-                       f"You may change your description and try again, say CLAIM (or \"that is me\") "
-                       f"to keep it, or DECLINE.\n")
+                       f"To keep this picture: reply with CLAIM (or \"that is me\").\n"
+                       f"To change your description and try again: describe the new picture (do not say CLAIM until you have seen it).\n"
+                       f"If you would rather have no authored portrait: reply with DECLINE.\n")
     else:
         emit("\n[the sitting reached its end without a claim — the default stands]\n")
 
