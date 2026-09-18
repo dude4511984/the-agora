@@ -664,11 +664,30 @@ scene.add(lamp);
   scene.add(flame);
 });
 
-// The floor: the commons. Static once built, never touched again. Sized to
-// reach past the wall perimeter's corners (HALF=10.5 below, corner distance
-// ~14.8) so the ground doesn't visibly run out before the walls do.
-const floorMat = new THREE.MeshStandardMaterial({color:0x201b16, roughness:0.88});
-const floor = new THREE.Mesh(new THREE.CircleGeometry(15, 48), floorMat);
+// The floor: the commons. Poly Haven "Cobblestone Pavement" (CC0), 1k
+// jpg maps served from /models/ same as the fort walls — never fetched
+// at runtime. CircleGeometry UVs are planar 0–1 across the disk, so
+// RepeatWrapping tiles in world XY (local, pre-rotation) instead of
+// radiating from the center. 12 repeats over diameter 30 ≈ the asset's
+// own 2.5m tile.
+function floorTex(url, srgb){
+  const t = new THREE.TextureLoader().load(url, undefined, undefined, (err) => {
+    showErr('floor texture failed: ' + (err && err.message ? err.message : url));
+  });
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.repeat.set(12, 12);
+  t.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+  if (srgb) t.encoding = THREE.sRGBEncoding;
+  return t;
+}
+const floorMat = new THREE.MeshStandardMaterial({
+  map: floorTex('/models/cobblestone_pavement/cobblestone_pavement_diff_1k.jpg', true),
+  normalMap: floorTex('/models/cobblestone_pavement/cobblestone_pavement_nor_gl_1k.jpg', false),
+  roughnessMap: floorTex('/models/cobblestone_pavement/cobblestone_pavement_rough_1k.jpg', false),
+  roughness: 1,
+  metalness: 0,
+});
+const floor = new THREE.Mesh(new THREE.CircleGeometry(15, 64), floorMat);
 floor.rotation.x = -Math.PI/2;
 scene.add(floor);
 const ring = new THREE.Mesh(
