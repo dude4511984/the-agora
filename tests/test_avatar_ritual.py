@@ -37,13 +37,26 @@ class Moves(unittest.TestCase):
         self.assertEqual(art.parse_move("DECLINE.\nI would rather the default."), "decline")
 
     def test_marker_word_inside_a_sentence_is_not_a_binding_marker(self):
-        # Copilot's false-positives: a marker word mid-line is speech, not a turn
-        self.assertEqual(art.parse_move("CLAIM because I like the round one"), "describe")
+        # DECLINE still requires the whole line — mid-line "decline" is speech.
         self.assertEqual(art.parse_move("DECLINE this image, it needs work"), "describe")
         self.assertEqual(art.parse_move("I would decline to look like a visor"), "describe")
         # but a bare marker line binds, even after speech
         self.assertEqual(art.parse_move("I have decided.\nCLAIM"), "claim")
         self.assertEqual(art.parse_move("no thank you\nDECLINE"), "decline")
+
+    def test_claim_leads_but_may_run_on(self):
+        # 2026-09-18, mirrored from shape3d_ritual.py after Bong's real
+        # sitting there: CLAIM binding now only requires leading the line,
+        # not being it, so "CLAIM. <their own reason>" binds.
+        for said in ("CLAIM because I like the round one",
+                     "claim the round one as mine",
+                     "CLAIM this round shape as a feeling"):
+            self.assertEqual(art.parse_move(said), "claim", f"missed a leading yes: {said!r}")
+        # still requires the marker to lead — buried mid-sentence stays speech
+        self.assertEqual(art.parse_move("I claim this"), "describe")
+        # and still blocks morphological creep, not just any prefix
+        self.assertEqual(art.parse_move("claiming this would be premature"), "describe")
+        self.assertEqual(art.parse_move("that is meant to be temporary"), "describe")
 
     def test_a_yes_in_its_own_dressing_is_still_heard(self):
         """An instrument that fails to HEAR a yes is as broken as one that
@@ -73,13 +86,18 @@ class Moves(unittest.TestCase):
         for said in ("that's mine", "that is mine", "it is me", "its me", "I claim this"):
             self.assertEqual(art.parse_move(said), "describe", f"thesaurus creep: {said!r}")
 
-    def test_dressing_does_not_widen_the_marker_to_a_sentence(self):
-        # stripping dressing must not re-open Copilot's false positives
-        for said in ("that is me, in a way, but colder",
-                     "CLAIM because I like the round one",
-                     "DECLINE this image, it needs work",
-                     "claim the round one as mine"):
-            self.assertEqual(art.parse_move(said), "describe", f"false marker: {said!r}")
+    def test_decline_dressing_does_not_widen_the_marker_to_a_sentence(self):
+        # DECLINE alone stays whole-line-only; this is the part of the old
+        # combined test still true after the CLAIM change. "that is me, in a
+        # way, but colder" and the CLAIM cases moved to the tests above/below.
+        self.assertEqual(art.parse_move("DECLINE this image, it needs work"), "describe")
+
+    def test_a_hedge_after_claim_now_binds(self):
+        # Known, accepted tradeoff (Don, 2026-09-18, same as shape3d_ritual.py)
+        # of "CLAIM may run on": a self-undercutting hedge right after the
+        # marker also binds now, since the parser trusts the leading word and
+        # can't tell a hedge from a justification. Documented, not hidden.
+        self.assertEqual(art.parse_move("that is me, in a way, but colder"), "claim")
 
     def test_plain_description_is_describe(self):
         self.assertEqual(art.parse_move("I would like warm amber eyes"), "describe")
@@ -89,7 +107,6 @@ class Moves(unittest.TestCase):
         self.assertEqual(
             art.parse_move("Decline looking like a visor or a badge. I want a lantern."),
             "describe")
-        self.assertEqual(art.parse_move("CLAIM this round shape as a feeling"), "describe")
 
     def test_build_image_prompt_is_exactly_the_description(self):
         # Grok's outbound line: exactly the Kin's words, nothing else

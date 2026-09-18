@@ -118,8 +118,17 @@ _DRESS = re.compile(r"^[\s*_~`\"'\u201c\u2018]+|[\s*_~`\"'\u201d\u2019.!]+$")
 # But do not grow a thesaurus: "that's mine", "it is me", "I claim this" are not
 # the sentence. And no optional copula — `that me` is not a yes (his catch; the
 # optional group made it one).
+# Don, 2026-09-18 (mirrored from shape3d_ritual.py after Bong's real sitting
+# there): CLAIM must lead the line but no longer has to BE the whole line —
+# "CLAIM. <their own reason>" now binds. \b still blocks morphological creep
+# ("claiming", "that is meant to be temporary") and the marker still has to
+# lead, so mid-sentence use ("I claim this") stays speech. DECLINE is
+# deliberately NOT loosened: nothing in the avatar offer text invites
+# "decline"-shaped language the way shape3d's "what would you refuse" does,
+# but the collision risk is the same class, so the asymmetry is kept for
+# consistency between the two rituals, not re-litigated per file.
 _CLAIM_LINE = re.compile(
-    r"^(claim|th(at|is)( one| picture)?(?: is|'s) me)$", re.I)
+    r"^(claim|th(at|is)( one| picture)?(?: is|'s) me)\b", re.I)
 _DECLINE_LINE = re.compile(r"^decline$", re.I)
 
 
@@ -192,8 +201,10 @@ def build_image_prompt(kin_description: str) -> str:
 def parse_move(text: str) -> str:
     """What did the Kin's turn do? claim | decline | describe.
 
-    Markers must be a whole line (palaver shape). A claim-word mid-sentence
-    is speech. CLAIM beats DECLINE if both lines appear.
+    CLAIM must lead a line but may run on into the Kin's own words after it
+    (2026-09-18). DECLINE still must be the whole line alone. A marker not
+    at the start of a line is speech either way. CLAIM beats DECLINE if both
+    appear.
     """
     saw_claim = saw_decline = False
     for line in (text or "").splitlines():
