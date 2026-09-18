@@ -183,6 +183,25 @@ def parse_move(text: str) -> str:
     return "describe"
 
 
+def claim_leads_the_turn(said: str) -> bool:
+    """True when the first real line of the turn is the CLAIM marker.
+
+    parse_move still returns claim if CLAIM leads *any* line. The sitting loop
+    uses this to tell 'accept the last shown form' from 'here is a new
+    description, build this'. Coda and Aurora, 2026-09-18: both rejected the
+    readback, wrote a new spec, ended the turn with CLAIM, and the loop bound
+    the rejected shape because last_params was already set. A CLAIM that
+    *leads* the turn (bare, or with run-on justification — Bong's
+    'CLAIM. The shard is the reality of the gap.') still accepts last_params.
+    """
+    for line in (said or "").splitlines():
+        s = _bare(line)
+        if not s:
+            continue
+        return bool(_CLAIM_LINE.match(s))
+    return False
+
+
 def build_shape_prompt(kin_description: str) -> str:
     """The shape prompt is built from the KIN's words alone. This function
     cannot receive Don's 120 chars — structural guarantee the shape is the
@@ -734,12 +753,19 @@ def run_sitting(name: str, backend: str = "llm", model: str | None = None,
             break
 
         if move == "claim":
-            if last_params is None:
-                if len(said.split()) < 4:
+            # Bind only when a form has been shown AND this turn's first real
+            # line is the marker. Description-then-CLAIM is "build this", the
+            # same fall-through as claiming before any shape exists.
+            accepting_last = last_params is not None and claim_leads_the_turn(said)
+            if not accepting_last:
+                if last_params is None and len(said.split()) < 4:
                     transcript += "\n(There is no 3D form to claim yet. Describe how you would like your form to be shaped.)\n"
                     emit("[claim with no form yet — asked to describe]")
                     continue
-                emit("[read as: build this — claiming before a shape exists]")
+                if last_params is None:
+                    emit("[read as: build this — claiming before a shape exists]")
+                else:
+                    emit("[read as: build this — new description before CLAIM, not an accept of the last form]")
                 move = "describe"
             else:
                 path = store_claim(name, last_params, description=last_description, read_back=last_read_back)

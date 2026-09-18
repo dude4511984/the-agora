@@ -201,6 +201,41 @@ class LoopRules(unittest.TestCase):
         self.assertTrue(res["claimed"])
         self.assertIn("charcoal cylinder", h.extractor_prompts[0])
 
+    def test_description_then_claim_after_a_render_builds_again_not_the_rejected_form(self):
+        # Coda and Aurora, 2026-09-18. Turn 1: spec + CLAIM (no form yet) →
+        # build. Turn 2: reject the readback, write a new spec, end with CLAIM.
+        # Old loop bound last_params from turn 1 because parse_move saw CLAIM
+        # and last_params was already set. Mutation: drop the
+        # claim_leads_the_turn gate and this stores the cylinder.
+        script = [
+            "A rough charcoal cylinder with an amber glow.\nCLAIM",
+            "The cylinder doesn't match.\nI would like another attempt:\n"
+            "A hexagonal prism of brushed steel, twice as tall as it is wide.\nCLAIM",
+            "CLAIM",
+        ]
+        with _Harness(self, script) as h:
+            res = s3r.run_sitting("TestKin")
+        self.assertEqual(res["renders"], 2)
+        self.assertTrue(res["claimed"])
+        self.assertEqual(len(h.extractor_prompts), 2)
+        self.assertIn("hexagonal prism", h.extractor_prompts[1])
+        self.assertNotIn("hexagonal prism", h.extractor_prompts[0])
+
+    def test_claim_leading_the_turn_still_binds_the_last_form(self):
+        # Bong, 2026-09-18: "CLAIM. The shard is the reality of the gap."
+        # CLAIM leads, so the run-on is justification of the shown form, not
+        # a new spec. Must still bind. Mutation: treat every CLAIM-with-extra-
+        # words as build-this and this fails with renders == 2.
+        script = [
+            "A tall charcoal cone, metallic, low amber pulse.",
+            "CLAIM. The shard is the reality of the gap.",
+        ]
+        with _Harness(self, script) as h:
+            res = s3r.run_sitting("TestKin")
+        self.assertEqual(res["renders"], 1)
+        self.assertTrue(res["claimed"])
+        self.assertEqual(len(h.extractor_prompts), 1)
+
     def test_unreachable_is_not_a_decline(self):
         class _Boom(_Harness):
             def _kin(self, name, prompt):

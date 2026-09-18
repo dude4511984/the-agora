@@ -255,6 +255,35 @@ class LoopRules(unittest.TestCase):
         self.assertEqual(res["renders"], 1)
         self.assertNotIn("CLAIM", h.image_prompts[0])
 
+    def test_description_then_claim_after_a_render_draws_again_not_the_rejected_picture(self):
+        # Mirrored from shape3d after Coda and Aurora, 2026-09-18: reject the
+        # readback, write a new spec, end with CLAIM — that is "draw this",
+        # not an accept of the last picture. Mutation: drop the
+        # claim_leads_the_turn gate and this stores the first prompt.
+        script = [
+            "dark hair pulled back, a scar below one eye.\nCLAIM",
+            "That picture doesn't match.\nI would like another attempt:\n"
+            "silver hair, a long coat, workshop light.\nCLAIM",
+            "CLAIM",
+        ]
+        with _Harness(self, script) as h:
+            res = art.run_sitting("Bong", backend="mock")
+        self.assertEqual(res["renders"], 2)
+        self.assertTrue(res["claimed"])
+        self.assertEqual(len(h.image_prompts), 2)
+        self.assertIn("long coat", h.image_prompts[1])
+
+    def test_claim_leading_the_turn_still_binds_the_last_picture(self):
+        script = [
+            "a round warm form",
+            "CLAIM. That is me.",
+        ]
+        with _Harness(self, script) as h:
+            res = art.run_sitting("Bong", backend="mock")
+        self.assertEqual(res["renders"], 1)
+        self.assertTrue(res["claimed"])
+        self.assertEqual(len(h.image_prompts), 1)
+
     def test_never_more_than_three_renders(self):
         # keeps describing forever; instrument must cap renders at three
         with _Harness(self, ["desc a", "desc b", "desc c", "desc d", "desc e", "desc f"]) as h:

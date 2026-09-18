@@ -222,6 +222,22 @@ def parse_move(text: str) -> str:
     return "describe"
 
 
+def claim_leads_the_turn(said: str) -> bool:
+    """True when the first real line of the turn is the CLAIM marker.
+
+    parse_move still returns claim if CLAIM leads *any* line. The sitting loop
+    uses this to tell 'accept the last shown picture' from 'here is a new
+    description, draw this'. Mirrored from shape3d_ritual.py after Coda and
+    Aurora's 2026-09-18 sittings bound the form they had just rejected.
+    """
+    for line in (said or "").splitlines():
+        s = _bare(line)
+        if not s:
+            continue
+        return bool(_CLAIM_LINE.match(s))
+    return False
+
+
 # ── storage: the face lives in the Kin's space, not the log ─────────────────
 
 # The council sits too (Don, 2026-09-08: "I want you and grok to do it too").
@@ -396,7 +412,13 @@ def run_sitting(name: str, backend: str, model: str | None = None,
             break
 
         if move == "claim":
-            if last_image is None:
+            # Bind only when a picture has been shown AND this turn's first
+            # real line is the marker. Description-then-CLAIM is "draw this",
+            # the same fall-through as claiming before any picture exists.
+            # Mirrored from shape3d_ritual.py after Coda and Aurora's 2026-09-18
+            # sittings bound the form they had just rejected.
+            accepting_last = last_image is not None and claim_leads_the_turn(said)
+            if not accepting_last:
                 # A claim with no picture is not a claim of a picture — but it is
                 # not nothing either. Coda, 2026-09-08: she wrote REFUSE, then a
                 # full description, then a bare CLAIM line, five turns running,
@@ -405,11 +427,14 @@ def run_sitting(name: str, backend: str, model: str | None = None,
                 # turns, then filed her as choosing the default. She was asking
                 # us to draw. So: if the turn carries words, they ARE the
                 # description; fall through and render them.
-                if len(said.split()) < 4:
+                if last_image is None and len(said.split()) < 4:
                     transcript += "\n(There is no picture to claim yet. Describe how you would like to look.)\n"
                     emit("[claim with no render yet — asked to describe]")
                     continue
-                emit("[read as: draw this — claiming before a picture exists]")
+                if last_image is None:
+                    emit("[read as: draw this — claiming before a picture exists]")
+                else:
+                    emit("[read as: draw this — new description before CLAIM, not an accept of the last picture]")
                 move = "describe"          # fall through to the render below
             else:
                 path = store_claim(name, *last_image, description=last_description)
