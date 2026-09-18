@@ -43,6 +43,7 @@ MODELS_DIR = (Path(__file__).parent / "static" / "models").resolve()
 MODEL_CONTENT_TYPES = {
     ".gltf": "model/gltf+json", ".bin": "application/octet-stream",
     ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png",
+    ".hdr": "image/vnd.radiance",
 }
 # kin_commons_runner.py's real board — one process, both hosts, one local
 # file (see its own docstring). Presence in the Agora protocol is a bare
@@ -582,6 +583,7 @@ PAGE_3D = """<!doctype html>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/RGBELoader.js"></script>
 <script>
 const PRESETS = __PRESETS__;
 const sel = document.getElementById('node');
@@ -592,8 +594,12 @@ function showErr(msg){ errBox.style.display='block'; errBox.textContent = msg; }
 
 // ── scene: precomputed once, static geometry never rebuilt per frame ──────
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x1a1612);
-scene.fog = new THREE.FogExp2(0x1a1612, 0.01);
+// Dusk void, not a black cutout. Poly Haven Qwantani Dusk 1 Pure Sky (CC0),
+// 1k HDR served from /models/ — never fetched at runtime. Fog matches the
+// horizon so the floor edge dissolves into the sky instead of #1a1612.
+const DUSK_FOG = 0x6a5e68;
+scene.background = new THREE.Color(DUSK_FOG);
+scene.fog = new THREE.FogExp2(DUSK_FOG, 0.008);
 
 // You: a position on the floor, not a body — same "sprites, not sittings"
 // discipline the presence figures already follow, just for a visitor who
@@ -612,6 +618,16 @@ renderer.outputEncoding = THREE.sRGBEncoding;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.05;
 document.body.appendChild(renderer.domElement);
+new THREE.RGBELoader().load(
+  '/models/qwantani_dusk_1_puresky/qwantani_dusk_1_puresky_1k.hdr',
+  (hdr) => {
+    hdr.mapping = THREE.EquirectangularReflectionMapping;
+    scene.background = hdr;
+    scene.environment = hdr;
+  },
+  undefined,
+  (err) => showErr('sky failed to load: ' + (err && err.message ? err.message : 'hdr'))
+);
 
 const controls = new THREE.OrbitControls(camera, renderer.domElement);
 controls.target.copy(player.position).setY(1);
