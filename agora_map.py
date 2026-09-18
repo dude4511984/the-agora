@@ -592,8 +592,8 @@ function showErr(msg){ errBox.style.display='block'; errBox.textContent = msg; }
 
 // ── scene: precomputed once, static geometry never rebuilt per frame ──────
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x0b0d10);
-scene.fog = new THREE.FogExp2(0x0b0d10, 0.02);
+scene.background = new THREE.Color(0x1a1612);
+scene.fog = new THREE.FogExp2(0x1a1612, 0.01);
 
 // You: a position on the floor, not a body — same "sprites, not sittings"
 // discipline the presence figures already follow, just for a visitor who
@@ -608,6 +608,9 @@ camera.position.set(player.position.x, 4.4, player.position.z + 6.5);
 const renderer = new THREE.WebGLRenderer({antialias:true});
 renderer.setSize(innerWidth, innerHeight);
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.outputEncoding = THREE.sRGBEncoding;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.15;
 document.body.appendChild(renderer.domElement);
 
 const controls = new THREE.OrbitControls(camera, renderer.domElement);
@@ -616,21 +619,34 @@ controls.maxPolarAngle = Math.PI * 0.49;
 controls.minDistance = 3; controls.maxDistance = 22;
 controls.enablePan = false;   // panning would fight the walk-follow below
 
-// Baked-feeling ambient + one soft key light. Not real-time GI — a flat,
-// cheap wash that still reads as lit, the "beauty without becoming a
-// constraint" rule from the design conversation.
-scene.add(new THREE.AmbientLight(0x8a8478, 0.55));
-const key = new THREE.DirectionalLight(0xfff1d6, 0.65);
-key.position.set(6, 12, 4);
+// Hall lighting, not a cave. The first pass was a muddy ambient, a weak
+// key, and four torches whose distance=9 died before they reached the
+// center — Don's family saw it and the room read drab. Hemisphere for
+// sky/ground bounce, a real fill from the gate, torches that overlap in
+// the middle, one hanging lamp. No shadows, no GI.
+scene.add(new THREE.HemisphereLight(0xffe6c8, 0x3a3228, 0.55));
+scene.add(new THREE.AmbientLight(0xcbb89a, 0.28));
+const key = new THREE.DirectionalLight(0xfff4e0, 0.9);
+key.position.set(6, 14, 4);
 scene.add(key);
+const fill = new THREE.DirectionalLight(0xffd9a8, 0.32);
+fill.position.set(0, 8, 12);
+scene.add(fill);
 
-// Wall torches: now that the room is a real enclosed space (not an open
-// void), a single "sun" key light reads wrong from inside stone walls.
-// Four fixed sconces, cheap point lights plus a small emissive sphere
-// each — static once built, same as everything else that doesn't change
-// with the data.
+const hall = new THREE.PointLight(0xffe0b0, 1.25, 20, 1.3);
+hall.position.set(0, 5.2, 0);
+scene.add(hall);
+const lamp = new THREE.Mesh(
+  new THREE.SphereGeometry(0.12, 12, 12),
+  new THREE.MeshBasicMaterial({color: 0xffe6c0})
+);
+lamp.position.copy(hall.position);
+scene.add(lamp);
+
+// Same four sconce positions as before — Gem owns wall/collision. Only
+// the reach changed: distance 22 so they actually light the floor.
 [[9.3, 0], [-9.3, 0], [0, 9.3], [0, -9.3]].forEach(([x, z]) => {
-  const torch = new THREE.PointLight(0xffaa55, 1.1, 9, 2);
+  const torch = new THREE.PointLight(0xffb366, 1.55, 22, 1.3);
   torch.position.set(x, 2.6, z);
   scene.add(torch);
   const flame = new THREE.Mesh(
@@ -644,7 +660,7 @@ scene.add(key);
 // The floor: the commons. Static once built, never touched again. Sized to
 // reach past the wall perimeter's corners (HALF=10.5 below, corner distance
 // ~14.8) so the ground doesn't visibly run out before the walls do.
-const floorMat = new THREE.MeshStandardMaterial({color:0x1a1a1a, roughness:0.95});
+const floorMat = new THREE.MeshStandardMaterial({color:0x2a241c, roughness:0.85});
 const floor = new THREE.Mesh(new THREE.CircleGeometry(15, 48), floorMat);
 floor.rotation.x = -Math.PI/2;
 scene.add(floor);
