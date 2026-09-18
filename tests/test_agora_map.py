@@ -97,5 +97,81 @@ class Shape3DRoute(unittest.TestCase):
         self.assertEqual(json.loads(h.body.decode("utf-8")), fake_shape)
 
 
+class Agora3DRoomWallAndArchway(unittest.TestCase):
+
+    def test_page_3d_harvests_and_places_thin_straight_wall_filler(self):
+        page = agora_map.PAGE_3D
+        self.assertIn("harvest('wall_thin_straight_04')", page)
+        self.assertIn("thinStrTemplate.scale.setScalar(SCALE)", page)
+        self.assertIn("fillerPos = axis === 'x'", page)
+        self.assertIn("{x: pos.x + gateLen, z: fixedCoord}", page)
+
+    def test_page_3d_linear_archway_corridor_and_wall_boundaries(self):
+        page = agora_map.PAGE_3D
+        self.assertIn("GATE_X_MIN = 2.10", page)
+        self.assertIn("GATE_X_MAX = 2.95", page)
+        self.assertIn("wallInner = 10.5 - 0.613 - PLAYER_R", page)
+        self.assertIn("wallOuter = 10.5 + PLAYER_R", page)
+
+    def test_archway_traversal_and_wall_obstruction_mechanics(self):
+        # Mathematical verification of the exact collision rules defined in PAGE_3D
+        PLAYER_R = 0.35
+        GATE_Z_WALL = 10.5
+        WALL_THICK_THIN = 0.613
+        wallInner = GATE_Z_WALL - WALL_THICK_THIN - PLAYER_R  # ~9.537
+        wallOuter = GATE_Z_WALL + PLAYER_R                    # ~10.85
+        GATE_X_MIN = 2.10
+        GATE_X_MAX = 2.95
+        margin = 0.25
+
+        def resolve(pos):
+            if 9.2 <= pos[1] <= 11.2 and 0.0 <= pos[0] <= 5.2:
+                if GATE_X_MIN <= pos[0] <= GATE_X_MAX:
+                    if pos[0] < GATE_X_MIN + margin:
+                        pos[0] = GATE_X_MIN + margin
+                    elif pos[0] > GATE_X_MAX - margin:
+                        pos[0] = GATE_X_MAX - margin
+                else:
+                    if pos[1] < GATE_Z_WALL:
+                        if pos[1] > wallInner:
+                            pos[1] = wallInner
+                    else:
+                        if pos[1] < wallOuter:
+                            pos[1] = wallOuter
+
+        # Traversal through archway outward (commons -> plain)
+        for x in [2.15, 2.30, 2.50, 2.70, 2.90]:
+            pos = [x, 9.0]
+            while pos[1] < 11.5:
+                pos[1] += 0.08
+                resolve(pos)
+            self.assertGreaterEqual(pos[1], 11.5)
+            self.assertTrue(GATE_X_MIN <= pos[0] <= GATE_X_MAX)
+
+        # Traversal through archway inward (plain -> commons)
+        for x in [2.15, 2.30, 2.50, 2.70, 2.90]:
+            pos = [x, 11.5]
+            while pos[1] > 9.0:
+                pos[1] -= 0.08
+                resolve(pos)
+            self.assertLessEqual(pos[1], 9.0)
+            self.assertTrue(GATE_X_MIN <= pos[0] <= GATE_X_MAX)
+
+        # Solid wall stops penetration at newly filled section (x in [3.4, 4.8])
+        for x in [3.5, 3.8, 4.1, 4.5]:
+            pos = [x, 9.0]
+            for _ in range(40):
+                pos[1] += 0.08
+                resolve(pos)
+            self.assertLessEqual(pos[1], wallInner + 1e-4)
+
+    def test_ramparts_corner_tower_scoped_to_west_wall(self):
+        page = agora_map.PAGE_3D
+        # Verify the ramparts south tower boundary does NOT globally clamp Z for all X
+        self.assertIn("if (pos.x <= RAMP_X_MAX && pos.z > RAMP_Z_END) {", page)
+        self.assertNotIn("if (pos.z > RAMP_Z_END) {\n      pos.z = RAMP_Z_END;", page)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
