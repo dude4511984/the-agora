@@ -770,7 +770,7 @@ function resolveCollisions(pos, prevX){
       pos.x = RAMP_X_MIN + PLAYER_R;
     }
     // 2. South corner tower stops the end of the walkway:
-    if (pos.z > RAMP_Z_END) {
+    if (pos.x <= RAMP_X_MAX && pos.z > RAMP_Z_END) {
       pos.z = RAMP_Z_END;
     }
     // 3. Rampart East flank (solid stone stair stringer & walkway foundation):
@@ -1283,10 +1283,10 @@ function crossDoor(t){
   loadNode().finally(() => { traveling = false; });
 }
 
-// Presence: sprites, not meshes. A claimed face or a name-only placard —
-// same "faces are receipts, not sittings" rule the rest of this project
-// already lives by. Rebuilt each refresh since who's present is the live
-// part; the room around them is not.
+// Presence: a claimed 3D form is the body; a claimed portrait is the
+// skin on that body, not a second object that replaces it. No form →
+// the old sprite (face, or a name placard). Rebuilt each refresh since
+// who's present is the live part; the room around them is not.
 let presenceSprites = [];
 function clearPresence(){
   presenceSprites.forEach(s => scene.remove(s));
@@ -1299,7 +1299,7 @@ function _phase(label){
   for (let i = 0; i < label.length; i++) h = (h * 31 + label.charCodeAt(i)) % 1000;
   return h / 1000 * Math.PI * 2;
 }
-function createShape3D(params){
+function createShape3D(params, portraitTex){
   const group = new THREE.Group();
   function makeGeo(shape, s, facets){
     s = s || [1, 1, 1];
@@ -1322,21 +1322,30 @@ function createShape3D(params){
     }
     return geo;
   }
-  function makeMat(p){
+  function makeMat(p, portraitTex){
     const opts = {
-      color: new THREE.Color(p.color || '#888888'),
+      // Portrait is the albedo. Claimed color would multiply it into
+      // sludge (Bong's charcoal cone * a dark lattice = a black blob).
+      // Geometry, roughness, metalness, emissive stay theirs.
+      color: new THREE.Color((portraitTex && !p.wireframe) ? '#ffffff' : (p.color || '#888888')),
       roughness: typeof p.roughness === 'number' ? p.roughness : 0.5,
       metalness: typeof p.metalness === 'number' ? p.metalness : 0.0,
       wireframe: !!p.wireframe,
     };
+    if (portraitTex && !opts.wireframe) {
+      portraitTex.encoding = THREE.sRGBEncoding;
+      opts.map = portraitTex;
+    }
     if (p.emissive_color) {
       opts.emissive = new THREE.Color(p.emissive_color);
       opts.emissiveIntensity = typeof p.emissive_intensity === 'number' ? p.emissive_intensity : 0.5;
+      // Pulse through the portrait, not as a flat wash that hides it.
+      if (portraitTex && !opts.wireframe) opts.emissiveMap = portraitTex;
     }
     return new THREE.MeshStandardMaterial(opts);
   }
 
-  const mainMesh = new THREE.Mesh(makeGeo(params.shape, params.scale, params.facets), makeMat(params));
+  const mainMesh = new THREE.Mesh(makeGeo(params.shape, params.scale, params.facets), makeMat(params, portraitTex));
   group.add(mainMesh);
 
   if (params.accent && params.accent.shape) {
@@ -1364,16 +1373,25 @@ function addPresence(label, i, n, avatarUrl, recent){
     scene.add(spr);
     presenceSprites.push(spr);
   };
+  const placeShape = (s3d, tex) => {
+    const obj = createShape3D(s3d, tex || null);
+    obj.position.set(x, 1.1, z);
+    obj.userData = {baseY: 1.1, bob: phase, isCustom3D: true};
+    scene.add(obj);
+    presenceSprites.push(obj);
+  };
   const shapeUrl = '/shape3d?kin=' + encodeURIComponent(label);
   fetch(shapeUrl)
     .then(r => r.ok ? r.json() : null)
     .then(s3d => {
       if (s3d && s3d.shape) {
-        const obj = createShape3D(s3d);
-        obj.position.set(x, 1.1, z);
-        obj.userData = {baseY: 1.1, bob: phase, isCustom3D: true};
-        scene.add(obj);
-        presenceSprites.push(obj);
+        // Form first. Portrait wraps it if we have one; a missing face
+        // must not delete the form they claimed.
+        if (avatarUrl) {
+          loader.load(avatarUrl, (tex) => placeShape(s3d, tex), undefined, () => placeShape(s3d, null));
+        } else {
+          placeShape(s3d, null);
+        }
       } else {
         if (avatarUrl){
           loader.load(avatarUrl, build, undefined, () => build(placardTexture(label)));
