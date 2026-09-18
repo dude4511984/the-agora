@@ -1181,21 +1181,52 @@ function labelSprite(lines, accent){
   return spr;
 }
 
-// Each real place (door, kiosk, table, whatever kind shows up) becomes a
-// small booth of its own — literally: kind "table" gets a table shape, a
-// door gets a frame. Its Resonance Well is that place's own real number
-// (Atlas.resonance in places.py), not a borrowed average — this is Eli's
-// original seed (agora_world_seeds_2026-09-15.md #1: "where a profound or
-// intense discussion happened, that spot keeps a visible trace"), applied
-// per place because that is literally what he specified.
-const KIND_COLOR = {door: 0x5a6072, kiosk: 0xe8b661, stall: 0xa99ad6, table: 0xc98a5a};
+// Each real place (door, kiosk, table, bench, whatever kind shows up) becomes a
+// small booth or feature in the commons. Doors use real CC0 Large Castle Door assets
+// (Poly Haven, weathered wood and iron hardware), and tables/benches use real CC0
+// Painted Wooden Bench assets (Poly Haven, dark worn wood).
+// Its Resonance Well is that place's own real number (Atlas.resonance in places.py).
+const KIND_COLOR = {door: 0x5a6072, kiosk: 0xe8b661, stall: 0xa99ad6, table: 0xc98a5a, bench: 0xc98a5a};
 let placeGroup = new THREE.Group();
 scene.add(placeGroup);
+
+let doorTemplate = null;
+new THREE.GLTFLoader().load(
+  '/models/large_castle_door/large_castle_door.gltf',
+  (gltf) => {
+    doorTemplate = gltf.scene;
+    // The raw model is 2.965m tall. Scale down to personal booth door scale (~1.60m)
+    // so it fits comfortably within the commons booths without towering over adjacent stalls.
+    const rawH = new THREE.Box3().setFromObject(doorTemplate).getSize(new THREE.Vector3()).y;
+    doorTemplate.scale.setScalar(1.60 / rawH);
+    if (currentKids) buildPlaces(currentKids, currentResonance);
+  },
+  undefined,
+  (err) => console.warn('door asset load error:', err)
+);
+
+let benchTemplate = null;
+new THREE.GLTFLoader().load(
+  '/models/painted_wooden_bench/painted_wooden_bench.gltf',
+  (gltf) => {
+    benchTemplate = gltf.scene;
+    // Bench is modeled at realistic human scale: length 1.16m, height 0.89m, depth 0.50m
+    benchTemplate.scale.setScalar(0.95);
+    if (currentKids) buildPlaces(currentKids, currentResonance);
+  },
+  undefined,
+  (err) => console.warn('bench asset load error:', err)
+);
+
 function boothMesh(kind){
   const color = KIND_COLOR[kind] || 0x6a7280;
   const mat = new THREE.MeshStandardMaterial({color, roughness: 0.7});
-  if (kind === 'table') return new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.55, 0.45, 20), mat);
+  if (kind === 'table' || kind === 'bench') {
+    if (benchTemplate) return benchTemplate.clone(true);
+    return new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.55, 0.45, 20), mat);
+  }
   if (kind === 'door') {
+    if (doorTemplate) return doorTemplate.clone(true);
     const g = new THREE.Group();
     const post = new THREE.Mesh(new THREE.BoxGeometry(0.12, 1.4, 0.12), mat);
     const left = post.clone(); left.position.set(-0.45, 0.7, 0);
@@ -1207,14 +1238,18 @@ function boothMesh(kind){
   }
   return new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.6, 0.7), mat); // kiosk/stall/unknown
 }
-const KIND_RADIUS = {door: 0.55, kiosk: 0.65, stall: 0.65, table: 0.75};
+const KIND_RADIUS = {door: 0.55, kiosk: 0.65, stall: 0.65, table: 0.75, bench: 0.75};
+let currentKids = null, currentResonance = null;
 function buildPlaces(kids, resonance){
+  currentKids = kids; currentResonance = resonance;
   placeGroup.children.slice().forEach(c => placeGroup.remove(c));
   placeObstacles = [];
   kids.forEach((k, i) => {
     const {x, z} = arcPos(i, kids.length, Math.PI * 0.62, Math.PI * 1.38, 7.4);
     const booth = boothMesh(k.kind);
-    booth.position.set(x, k.kind === 'table' ? 0.22 : 0, z);
+    const yOff = (k.kind === 'table' && !benchTemplate) ? 0.22 : 0;
+    booth.position.set(x, yOff, z);
+    booth.rotation.y = Math.atan2(-x, -z);
     placeGroup.add(booth);
     placeObstacles.push({x, z, r: KIND_RADIUS[k.kind] || 0.6});
 

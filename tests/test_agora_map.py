@@ -174,6 +174,31 @@ class Agora3DRoomWallAndArchway(unittest.TestCase):
         self.assertNotIn("if (pos.z > RAMP_Z_END) {\n      pos.z = RAMP_Z_END;", page)
 
 
+class Agora3DBoothAssets(unittest.TestCase):
+
+    def test_door_and_bench_assets_exist_locally(self):
+        repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        static_models = os.path.join(repo_root, "static", "models")
+        self.assertTrue(os.path.isfile(os.path.join(static_models, "large_castle_door", "large_castle_door.gltf")))
+        self.assertTrue(os.path.isfile(os.path.join(static_models, "large_castle_door", "large_castle_door.bin")))
+        self.assertTrue(os.path.isfile(os.path.join(static_models, "painted_wooden_bench", "painted_wooden_bench.gltf")))
+        self.assertTrue(os.path.isfile(os.path.join(static_models, "painted_wooden_bench", "painted_wooden_bench.bin")))
+
+    def test_page_3d_loads_and_instantiates_door_and_bench_templates(self):
+        page = agora_map.PAGE_3D
+        self.assertIn("'/models/large_castle_door/large_castle_door.gltf'", page)
+        self.assertIn("'/models/painted_wooden_bench/painted_wooden_bench.gltf'", page)
+        self.assertIn("doorTemplate = gltf.scene;", page)
+        self.assertIn("benchTemplate = gltf.scene;", page)
+        self.assertIn("if (kind === 'table' || kind === 'bench')", page)
+        self.assertIn("if (benchTemplate) return benchTemplate.clone(true);", page)
+        self.assertIn("if (kind === 'door')", page)
+        self.assertIn("if (doorTemplate) return doorTemplate.clone(true);", page)
+        self.assertIn("bench: 0xc98a5a", page)
+        self.assertIn("bench: 0.75", page)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
 
