@@ -1633,6 +1633,8 @@ function buildRoom(mode){
   updateFloor(isHome ? 9.8 : 15, isHome ? 9.5 : 14.7, isHome ? 9.8 : 15, isHome ? 8 : 12);
   updateLighting(isHome);
   buildGateThreshold(isHome);
+  controls.minDistance = isHome ? 1.5 : 3.0;
+  controls.maxDistance = isHome ? 14.0 : 22.0;
 
   if (!fortTemplates) return;
 
@@ -1936,21 +1938,29 @@ function buildDoors(doors){
   const aEnd = isHome ? Math.PI * 0.35 : Math.PI * 0.55;
   doors.forEach((d, i) => {
     const {x, z} = arcPos(i, doors.length, aStart, aEnd, doorR);
-    const postR = 0.14;
-    doorObstacles.push({x: x - 0.55, z, r: postR}, {x: x + 0.55, z, r: postR});
-    if (d.url) doorTriggers.push({x, z, r: 0.8, url: d.url, peer: d.peer || 'peer'});
+    if (d.url) doorTriggers.push({x, z, r: 1.0, url: d.url, peer: d.peer || 'peer'});
     const color = d.locked ? 0xc9a75f : 0x67c98a;
     const mat = new THREE.MeshStandardMaterial({color, emissive: color, emissiveIntensity: 0.25});
+    const frame = new THREE.Group();
+    frame.position.set(x, 0, z);
+    frame.rotation.y = Math.atan2(-x, -z);
     const post = new THREE.Mesh(new THREE.BoxGeometry(0.14, 2.0, 0.14), mat);
-    const left = post.clone(); left.position.set(x - 0.55, 1.0, z);
-    const right = post.clone(); right.position.set(x + 0.55, 1.0, z);
+    const left = post.clone(); left.position.set(-0.55, 1.0, 0);
+    const right = post.clone(); right.position.set(0.55, 1.0, 0);
     const lintel = new THREE.Mesh(new THREE.BoxGeometry(1.24, 0.14, 0.14), mat);
-    lintel.position.set(x, 2.0, z);
-    doorGroup.add(left, right, lintel);
+    lintel.position.set(0, 2.0, 0);
+    frame.add(left, right, lintel);
     const label = labelSprite(['→ ' + (d.peer || 'peer'), d.locked ? 'locked' : 'open'],
                                d.locked ? '#c9a75f' : '#67c98a');
-    label.position.set(x, 2.6, z);
-    doorGroup.add(label);
+    label.position.set(0, 2.6, 0);
+    frame.add(label);
+    doorGroup.add(frame);
+
+    frame.updateMatrixWorld(true);
+    const leftPos = new THREE.Vector3(); left.getWorldPosition(leftPos);
+    const rightPos = new THREE.Vector3(); right.getWorldPosition(rightPos);
+    const postR = 0.14;
+    doorObstacles.push({x: leftPos.x, z: leftPos.z, r: postR}, {x: rightPos.x, z: rightPos.z, r: postR});
   });
 }
 
@@ -1959,13 +1969,16 @@ function buildDoors(doors){
 // back at the same fixed spawn point every arrival starts from — chosen
 // because it's far from every door's arc position on either node's floor
 // plan, so arriving never immediately re-triggers a crossing back out.
-function teleportPlayer(x, z){
+function teleportPlayer(x, z, targetMode){
   player.position.set(x, player.position.y, z);
-  const isHome = currentRoomMode === 'Home' || z < 5.0;
-  const camDist = isHome ? 2.0 : 5.5;
-  const camH = isHome ? 1.6 : 3.6;
+  const isHome = targetMode ? (targetMode === 'Home') : (currentRoomMode === 'Home' || z < 4.0);
+  controls.minDistance = isHome ? 1.5 : 3.0;
+  controls.maxDistance = isHome ? 14.0 : 22.0;
+  const camDist = isHome ? 2.2 : 5.0;
+  const camH = isHome ? 2.0 : 3.2;
   camera.position.set(x, player.position.y + camH, z + camDist);
   controls.target.set(x, player.position.y + 1.0, z);
+  controls.update();
   // lantern follows player in animate()
 }
 function wait(ms){ return new Promise(r => setTimeout(r, ms)); }
@@ -1988,7 +2001,7 @@ async function crossDoor(t){
   }
   sel.value = opt.value;
   const isDestHome = (t.peer && t.peer.toLowerCase().includes('home')) || (t.url && t.url.includes('120'));
-  teleportPlayer(0, isDestHome ? 4.2 : 6);
+  teleportPlayer(0, isDestHome ? 2.8 : 6, isDestHome ? 'Home' : 'Frosty');
   try {
     await loadNode();
   } finally {
@@ -2281,7 +2294,7 @@ if (qNode) {
   }
   sel.value = opt.value;
   if (qNode.includes('120') || (opt.textContent && opt.textContent.includes('Home'))) {
-    teleportPlayer(0, 4.2);
+    teleportPlayer(0, 2.8, 'Home');
   }
 }
 sel.addEventListener('change', loadNode);

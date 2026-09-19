@@ -294,7 +294,14 @@ class Agora3DHomeRoomCharacter(unittest.TestCase):
 
     def test_page_3d_home_door_teleport_position(self):
         page = agora_map.PAGE_3D
-        self.assertIn("isDestHome ? 4.2 : 6", page)
+        self.assertIn("isDestHome ? 2.8 : 6", page)
+
+    def test_page_3d_peer_door_rotated_and_obstacles_aligned(self):
+        page = agora_map.PAGE_3D
+        self.assertIn("frame.rotation.y = Math.atan2(-x, -z);", page)
+        self.assertIn("left.getWorldPosition(leftPos)", page)
+        self.assertIn("right.getWorldPosition(rightPos)", page)
+        self.assertIn("controls.minDistance = isHome ? 1.5 : 3.0;", page)
 
     def test_page_3d_home_scales_claimed_shapes_proportionally(self):
         page = agora_map.PAGE_3D
