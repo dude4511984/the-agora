@@ -572,6 +572,12 @@ PAGE_3D = """<!doctype html>
   #err{position:fixed;top:10px;right:10px;color:#ff9a7a;font-size:12px;z-index:2;
        background:rgba(10,10,10,.6);padding:6px 10px;border-radius:8px;display:none}
   select{background:#151515;color:#cfc7b8;border:1px solid #333;padding:2px 6px;font-family:inherit}
+  #cross{position:fixed;inset:0;z-index:8;background:#0b0d10;opacity:0;pointer-events:none;
+         display:flex;align-items:center;justify-content:center;
+         color:#cfc7b8;font-size:18px;letter-spacing:.08em;
+         transition:opacity .7s ease}
+  #cross.on{opacity:1;pointer-events:auto}
+  #cross b{color:#ffcf7a}
 </style>
 </head><body>
 <div id="hud">
@@ -588,6 +594,7 @@ PAGE_3D = """<!doctype html>
   </div>
 </div>
 <div id="err"></div>
+<div id="cross"><span id="cross-label">crossing…</span></div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
@@ -1811,9 +1818,17 @@ function teleportPlayer(x, z){
   controls.target.add(delta);
   // lantern follows player in animate()
 }
-function crossDoor(t){
+function wait(ms){ return new Promise(r => setTimeout(r, ms)); }
+async function crossDoor(t){
+  if (traveling) return;
   traveling = true;
-  status.textContent = 'crossing to ' + t.peer + '…';
+  const veil = document.getElementById('cross');
+  const lab = document.getElementById('cross-label');
+  const line = 'crossing to ' + t.peer + '…';
+  if (lab) lab.innerHTML = 'crossing to <b>' + t.peer + '</b>…';
+  status.textContent = line;
+  if (veil) veil.classList.add('on');
+  await wait(750);
   let opt = [...sel.options].find(o => o.value.replace(/\/$/, '') === t.url.replace(/\/$/, ''));
   if (!opt) {
     opt = document.createElement('option');
@@ -1823,7 +1838,14 @@ function crossDoor(t){
   }
   sel.value = opt.value;
   teleportPlayer(0, 6);
-  loadNode().finally(() => { traveling = false; });
+  try {
+    await loadNode();
+  } finally {
+    await wait(400);
+    if (veil) veil.classList.remove('on');
+    await wait(700);
+    traveling = false;
+  }
 }
 
 // Presence: a claimed 3D form is the body; a claimed portrait is the
@@ -2085,7 +2107,14 @@ for (const [name, url] of PRESETS) {
 }
 sel.addEventListener('change', loadNode);
 loadNode();
-setInterval(loadNode, 15000);   // live, not a snapshot — same as the 2D map
+setInterval(() => { if (!traveling) loadNode(); }, 15000);
+const _autoCross = new URLSearchParams(location.search).get('cross');
+if (_autoCross) {
+  setTimeout(() => {
+    const hit = PRESETS.find(p => String(p[0]).toLowerCase() === _autoCross.toLowerCase());
+    if (hit) crossDoor({url: hit[1], peer: hit[0]});
+  }, 2000);
+}
 
 // ── Proximity Voice Chat (Push-To-Talk) ───────────────────────────────────────
 const VOICE_ENDPOINT = '/voice_chat';
