@@ -320,9 +320,18 @@ class Agora3DHomeRoomCharacter(unittest.TestCase):
         self.assertIn("'/models/lantern_01/lantern_01.gltf'", page)
         self.assertIn("gateThresholdRevision", page)
 
+    def test_page_3d_threshold_wayfinder_uses_local_cc0_chalkboard(self):
+        page = agora_map.PAGE_3D
+        asset = os.path.expanduser(
+            "~/kin_diary/static/models/standing_chalkboard_01/standing_chalkboard_01.gltf"
+        )
+        self.assertTrue(os.path.isfile(asset))
+        self.assertIn("'/models/standing_chalkboard_01/standing_chalkboard_01.gltf'", page)
+        self.assertIn("thresholdWayfinderTemplate", page)
+        self.assertIn("['HOME →', 'way under survey']", page)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
-
 
 
