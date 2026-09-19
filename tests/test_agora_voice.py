@@ -119,3 +119,8 @@ class KinTalkReuse(unittest.TestCase):
         self.assertIn("text = ask_kin_reply(kin, user_text, vision_desc, web_context)", src)
         self.assertIn("def piper_wav_bytes(", src)
         self.assertIn("def load_whisper(", src)
+
+
+if __name__ == "__main__":
+    unittest.main()
+

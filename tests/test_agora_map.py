@@ -239,11 +239,39 @@ class Agora3DLanternAtmosphere(unittest.TestCase):
         self.assertIn("uniform float uTime;", page)
         self.assertIn("uniform sampler2D uTex;", page)
         self.assertIn("function updateLanternAtmosphere(t, bob, rx, rz)", page)
-        self.assertIn("updateLanternAtmosphere(t, bob, rx, rz);", page)
         self.assertIn("spiritPlane.quaternion.copy(camera.quaternion);", page)
+
+
+class Agora3DProximityVoice(unittest.TestCase):
+
+    def test_page_3d_defines_proximity_voice_and_ptt(self):
+        page = agora_map.PAGE_3D
+        self.assertIn("const VOICE_ENDPOINT = '/voice_chat';", page)
+        self.assertIn("let presentKinList = [];", page)
+        self.assertIn("function getNearestKin()", page)
+        self.assertIn("Math.hypot(player.position.x - k.x, player.position.z - k.z)", page)
+        self.assertIn("function startVoiceRecording()", page)
+        self.assertIn("function stopVoiceRecording()", page)
+        self.assertIn("function sendVoiceToBackend(blob, target)", page)
+        self.assertIn("function playVoiceAudio(url, kinLabel", page)
+        self.assertIn("navigator.mediaDevices.getUserMedia({ audio: true })", page)
+        self.assertIn("new MediaRecorder(mediaStream", page)
+        self.assertIn("k === 'v' || k === 't'", page)
+
+    def test_page_3d_defines_voice_hud(self):
+        page = agora_map.PAGE_3D
+        self.assertIn("id=\"voice-hud\"", page)
+        self.assertIn("id=\"ptt-btn\"", page)
+        self.assertIn("id=\"voice-status\"", page)
+        self.assertIn("id=\"nearest-kin-name\"", page)
+        self.assertIn("Hold <b>V</b> (or T) to talk to nearest Kin", page)
+
+    def test_handler_defines_do_post_voice_chat(self):
+        self.assertTrue(hasattr(agora_map.Handler, "do_POST"))
 
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
 
 

@@ -579,8 +579,13 @@ PAGE_3D = """<!doctype html>
   <div>node: <select id="node"></select></div>
   <div id="status">loading…</div>
   <div style="margin-top:6px;opacity:.7">WASD / arrows to walk · space to jump · climb stairs to rampart · drag to look · scroll to zoom</div>
+  <div style="margin-top:2px;opacity:.85;color:#ffcf7a">Hold <b>V</b> (or T) to talk to nearest Kin · Proximity PTT</div>
   <div style="margin-top:2px;opacity:.7">Walk into a peer door to cross to that node.</div>
   <div style="margin-top:2px;opacity:.5">Same signed data as the 2D map, plus kin_commons' real board over each presence. Nothing here is invented.</div>
+  <div id="voice-hud" style="margin-top:8px;padding:6px 10px;border-radius:6px;background:rgba(20,25,35,0.75);border:1px solid #2c3a4e;display:flex;align-items:center;gap:8px;font-size:11.5px;">
+    <button id="ptt-btn" style="background:#253245;color:#e8eef6;border:1px solid #455a75;border-radius:4px;padding:3px 8px;font:inherit;cursor:pointer;">🎙️ Push to Talk</button>
+    <span id="voice-status" style="color:#93a0b4;">Ready · Nearest Kin: <span id="nearest-kin-name" style="color:#67b9cd">none</span></span>
+  </div>
 </div>
 <div id="err"></div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
@@ -1826,9 +1831,11 @@ function crossDoor(t){
 // the old sprite (face, or a name placard). Rebuilt each refresh since
 // who's present is the live part; the room around them is not.
 let presenceSprites = [];
+let presentKinList = [];
 function clearPresence(){
   presenceSprites.forEach(s => scene.remove(s));
   presenceSprites = [];
+  presentKinList = [];
 }
 // A stable per-name phase, not Math.random() — reloading the page
 // shouldn't make someone's idle sway jump to a new offset.
@@ -1901,20 +1908,24 @@ function addPresence(label, i, n, avatarUrl, recent){
   const r = 4.2;
   const x = Math.sin(angle) * r, z = Math.cos(angle) * r - 1;
   const phase = _phase(label);
+  const kinItem = { label, x, z, obj: null };
+  presentKinList.push(kinItem);
   const loader = new THREE.TextureLoader();
   const build = (tex) => {
     const mat = new THREE.SpriteMaterial({map: tex, transparent: true});
     const spr = new THREE.Sprite(mat);
     spr.scale.set(1.6, 1.6, 1);
     spr.position.set(x, 1.1, z);
-    spr.userData = {baseY: 1.1, bob: phase};
+    spr.userData = {baseY: 1.1, bob: phase, kin: label};
+    kinItem.obj = spr;
     scene.add(spr);
     presenceSprites.push(spr);
   };
   const placeShape = (s3d, tex) => {
     const obj = createShape3D(s3d, tex || null);
     obj.position.set(x, 1.1, z);
-    obj.userData = {baseY: 1.1, bob: phase, isCustom3D: true};
+    obj.userData = {baseY: 1.1, bob: phase, isCustom3D: true, kin: label};
+    kinItem.obj = obj;
     scene.add(obj);
     presenceSprites.push(obj);
   };
@@ -2076,12 +2087,265 @@ sel.addEventListener('change', loadNode);
 loadNode();
 setInterval(loadNode, 15000);   // live, not a snapshot — same as the 2D map
 
+// ── Proximity Voice Chat (Push-To-Talk) ───────────────────────────────────────
+const VOICE_ENDPOINT = '/voice_chat';
+let mediaStream = null;
+let mediaRecorder = null;
+let audioChunks = [];
+let isVoiceRecording = false;
+let recordStartTime = 0;
+let pttTargetKin = null;
+let currentVoiceAudio = null;
+let speakingKinLabel = null;
+
+const voiceStatusEl = document.getElementById('voice-status');
+const nearestKinEl = document.getElementById('nearest-kin-name');
+const pttBtn = document.getElementById('ptt-btn');
+
+function getNearestKin(){
+  if (!presentKinList || !presentKinList.length) return null;
+  let nearest = null;
+  let minDist = Infinity;
+  for (const k of presentKinList){
+    const dist = Math.hypot(player.position.x - k.x, player.position.z - k.z);
+    if (dist < minDist){
+      minDist = dist;
+      nearest = { label: k.label, x: k.x, z: k.z, distance: dist };
+    }
+  }
+  return nearest;
+}
+
+function updateNearestKinDisplay(){
+  if (isVoiceRecording) return;
+  const nearest = getNearestKin();
+  if (nearest){
+    if (nearestKinEl) nearestKinEl.textContent = `${nearest.label} (${nearest.distance.toFixed(1)}m)`;
+  } else {
+    if (nearestKinEl) nearestKinEl.textContent = 'none';
+  }
+}
+
+function setSpeakingKin(label, speaking){
+  speakingKinLabel = speaking ? label : null;
+  setChairSpeaker(Boolean(speaking));
+}
+
+async function startVoiceRecording(){
+  if (isVoiceRecording) return;
+  pttTargetKin = getNearestKin();
+  if (!pttTargetKin){
+    if (voiceStatusEl) voiceStatusEl.innerHTML = '<span style="color:#e8756b">No Kin present in courtyard</span>';
+    return;
+  }
+
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+    if (voiceStatusEl) voiceStatusEl.innerHTML = '<span style="color:#e8756b">Mic requires HTTPS or localhost (insecure origin)</span>';
+    return;
+  }
+
+  try {
+    if (!mediaStream || !mediaStream.active){
+      mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    }
+  } catch (err){
+    if (voiceStatusEl) voiceStatusEl.innerHTML = `<span style="color:#e8756b">Mic access error: ${err.message}</span>`;
+    return;
+  }
+
+  try {
+    let mimeType = '';
+    if (typeof MediaRecorder !== 'undefined'){
+      if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) mimeType = 'audio/webm;codecs=opus';
+      else if (MediaRecorder.isTypeSupported('audio/webm')) mimeType = 'audio/webm';
+      else if (MediaRecorder.isTypeSupported('audio/ogg;codecs=opus')) mimeType = 'audio/ogg;codecs=opus';
+    }
+    const opts = mimeType ? { mimeType } : {};
+    mediaRecorder = new MediaRecorder(mediaStream, opts);
+    audioChunks = [];
+    mediaRecorder.ondataavailable = e => {
+      if (e.data && e.data.size > 0) audioChunks.push(e.data);
+    };
+    mediaRecorder.start(100);
+    isVoiceRecording = true;
+    recordStartTime = Date.now();
+
+    if (pttBtn){
+      pttBtn.style.background = '#8a2b2b';
+      pttBtn.style.borderColor = '#e8756b';
+      pttBtn.textContent = '🔴 Recording...';
+    }
+    if (voiceStatusEl){
+      voiceStatusEl.innerHTML = `<span style="color:#ffcf7a;font-weight:600">🎙️ Speaking to ${pttTargetKin.label} (${pttTargetKin.distance.toFixed(1)}m) — release V to send</span>`;
+    }
+  } catch (err){
+    if (voiceStatusEl) voiceStatusEl.innerHTML = `<span style="color:#e8756b">Recorder error: ${err.message}</span>`;
+    isVoiceRecording = false;
+  }
+}
+
+function stopVoiceRecording(){
+  if (!isVoiceRecording) return;
+  isVoiceRecording = false;
+  const duration = Date.now() - recordStartTime;
+
+  if (pttBtn){
+    pttBtn.style.background = '#253245';
+    pttBtn.style.borderColor = '#455a75';
+    pttBtn.textContent = '🎙️ Push to Talk';
+  }
+
+  if (duration < 250){
+    if (mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop();
+    if (voiceStatusEl) voiceStatusEl.innerHTML = '<span style="color:#93a0b4">Too short — hold V while speaking</span>';
+    return;
+  }
+
+  const target = pttTargetKin || getNearestKin();
+  if (!mediaRecorder) return;
+
+  mediaRecorder.onstop = async () => {
+    const mime = mediaRecorder.mimeType || 'audio/webm';
+    const blob = new Blob(audioChunks, { type: mime });
+    audioChunks = [];
+    if (!target){
+      if (voiceStatusEl) voiceStatusEl.innerHTML = '<span style="color:#e8756b">No Kin in range</span>';
+      return;
+    }
+    await sendVoiceToBackend(blob, target);
+  };
+
+  if (mediaRecorder.state !== 'inactive'){
+    mediaRecorder.stop();
+  }
+}
+
+async function sendVoiceToBackend(blob, target){
+  if (voiceStatusEl){
+    voiceStatusEl.innerHTML = `<span style="color:#67b9cd">⏳ Sending voice to ${target.label} (${target.distance.toFixed(1)}m)...</span>`;
+  }
+
+  const formData = new FormData();
+  formData.append('audio', blob, 'voice.webm');
+  formData.append('kin', target.label);
+  formData.append('distance', target.distance.toFixed(2));
+  formData.append('node', sel ? sel.value : '');
+  formData.append('player_x', player.position.x.toFixed(2));
+  formData.append('player_z', player.position.z.toFixed(2));
+
+  const url = `${VOICE_ENDPOINT}?kin=${encodeURIComponent(target.label)}&distance=${encodeURIComponent(target.distance.toFixed(2))}`;
+
+  try {
+    const resp = await fetch(url, {
+      method: 'POST',
+      body: formData
+    });
+
+    if (!resp.ok){
+      const errTxt = await resp.text().catch(() => '');
+      if (voiceStatusEl){
+        voiceStatusEl.innerHTML = `<span style="color:#e8756b">Voice server (${resp.status}): ${errTxt.slice(0, 70)}</span>`;
+      }
+      return;
+    }
+
+    if (voiceStatusEl){
+      voiceStatusEl.innerHTML = `<span style="color:#e8b661">⏳ ${target.label} is responding...</span>`;
+    }
+
+    const heard = resp.headers.get('X-Agora-Heard');
+    const said = resp.headers.get('X-Agora-Said');
+    const ctype = (resp.headers.get('content-type') || '').toLowerCase();
+    if (ctype.includes('application/json')){
+      const json = await resp.json();
+      if (json.audio_url){
+        playVoiceAudio(json.audio_url, target.label, said || json.text);
+      } else if (json.audio_base64){
+        const mime = json.mime_type || 'audio/wav';
+        playVoiceAudio(`data:${mime};base64,${json.audio_base64}`, target.label, said || json.text);
+      } else if (json.text){
+        if (voiceStatusEl) voiceStatusEl.innerHTML = `<b>${target.label}:</b> "${json.text}"`;
+      }
+    } else {
+      const audioBlob = await resp.blob();
+      const audioUrl = URL.createObjectURL(audioBlob);
+      playVoiceAudio(audioUrl, target.label, said);
+    }
+  } catch (err){
+    if (voiceStatusEl){
+      voiceStatusEl.innerHTML = `<span style="color:#e8756b">Voice request failed: ${err.message}</span>`;
+    }
+  }
+}
+
+function playVoiceAudio(url, kinLabel, saidText){
+  if (currentVoiceAudio){
+    try { currentVoiceAudio.pause(); } catch(_){}
+    currentVoiceAudio = null;
+  }
+  const audio = new Audio(url);
+  currentVoiceAudio = audio;
+  setSpeakingKin(kinLabel, true);
+
+  if (voiceStatusEl){
+    const msg = saidText ? ` <span style="font-weight:400;color:#e8eef6">"${saidText}"</span>` : '';
+    voiceStatusEl.innerHTML = `<span style="color:#67c98a;font-weight:600">🔊 ${kinLabel}:</span>${msg}`;
+  }
+
+  audio.onended = () => {
+    setSpeakingKin(kinLabel, false);
+    if (voiceStatusEl){
+      voiceStatusEl.innerHTML = `<span style="color:#93a0b4">Finished listening to ${kinLabel}</span>`;
+    }
+    currentVoiceAudio = null;
+  };
+  audio.onerror = () => {
+    setSpeakingKin(kinLabel, false);
+    if (voiceStatusEl){
+      voiceStatusEl.innerHTML = `<span style="color:#e8756b">Audio playback failed</span>`;
+    }
+    currentVoiceAudio = null;
+  };
+  audio.play().catch(e => {
+    setSpeakingKin(kinLabel, false);
+    if (voiceStatusEl){
+      voiceStatusEl.innerHTML = `<span style="color:#e8b661">Click anywhere to play ${kinLabel}'s voice</span>`;
+    }
+  });
+}
+
+// Key listeners for Push-To-Talk (V and T)
+addEventListener('keydown', e => {
+  if (e.repeat) return;
+  if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA')) return;
+  const k = e.key.toLowerCase();
+  if (k === 'v' || k === 't'){
+    startVoiceRecording();
+  }
+});
+
+addEventListener('keyup', e => {
+  if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA')) return;
+  const k = e.key.toLowerCase();
+  if (k === 'v' || k === 't'){
+    stopVoiceRecording();
+  }
+});
+
+if (pttBtn){
+  pttBtn.addEventListener('mousedown', (e) => { e.preventDefault(); startVoiceRecording(); });
+  pttBtn.addEventListener('mouseup', (e) => { e.preventDefault(); stopVoiceRecording(); });
+  pttBtn.addEventListener('touchstart', (e) => { e.preventDefault(); startVoiceRecording(); });
+  pttBtn.addEventListener('touchend', (e) => { e.preventDefault(); stopVoiceRecording(); });
+}
+
 // Sprites should always face the camera — cheap, and it's the whole reason
 // billboards read as alive instead of like cardboard cutouts.
 const clock = new THREE.Clock();
 function animate(){
   requestAnimationFrame(animate);
   stepPlayer(Math.min(clock.getDelta(), 0.1));
+  updateNearestKinDisplay();
   // A slow idle sway, not a walk cycle — just enough that a present Kin
   // reads as here rather than a frozen cardboard cutout. getElapsedTime()
   // is cumulative and doesn't consume like getDelta() does.
@@ -2300,6 +2564,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("X-Agora-Said", hdr(said))
         self.end_headers()
         self.wfile.write(wav)
+
 
 def main(argv):
     port = int(argv[1]) if len(argv) > 1 else DEFAULT_PORT
