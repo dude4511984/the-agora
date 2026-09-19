@@ -1460,7 +1460,20 @@ function stepPlayer(dt){
 
   if (!traveling) {
     for (const t of doorTriggers) {
-      if (Math.hypot(player.position.x - t.x, player.position.z - t.z) < t.r) { crossDoor(t); break; }
+      if (t.rotY !== undefined) {
+        const dx = player.position.x - t.x;
+        const dz = player.position.z - t.z;
+        const locX = dx * Math.cos(t.rotY) - dz * Math.sin(t.rotY);
+        const locZ = dx * Math.sin(t.rotY) + dz * Math.cos(t.rotY);
+        const halfW = t.halfWidth || 0.85;
+        const depth = t.thresholdDepth || 0.75;
+        if (Math.abs(locX) <= halfW && Math.abs(locZ) <= depth) {
+          crossDoor(t);
+          break;
+        }
+      } else {
+        if (Math.hypot(player.position.x - t.x, player.position.z - t.z) < t.r) { crossDoor(t); break; }
+      }
     }
   }
 }
@@ -1921,7 +1934,17 @@ function buildPlaces(kids, resonance){
     booth.position.set(x, yOff, z);
     booth.rotation.y = Math.atan2(-x, -z);
     placeGroup.add(booth);
-    placeObstacles.push({x, z, r: KIND_RADIUS[k.kind] || 0.6});
+    if (k.kind === 'door') {
+      const ry = Math.atan2(-x, -z);
+      const postSpan = 0.60;
+      const postR = 0.10;
+      placeObstacles.push(
+        {x: x - postSpan * Math.cos(ry), z: z + postSpan * Math.sin(ry), r: postR},
+        {x: x + postSpan * Math.cos(ry), z: z - postSpan * Math.sin(ry), r: postR}
+      );
+    } else {
+      placeObstacles.push({x, z, r: KIND_RADIUS[k.kind] || 0.6});
+    }
 
     const heat = Math.min(1, resonance[k.place_id] || 0);
     if (heat > 0.02) {
@@ -1966,16 +1989,27 @@ function buildDoors(doors){
   const aEnd = isHome ? Math.PI * 0.35 : Math.PI * 0.55;
   doors.forEach((d, i) => {
     const {x, z} = arcPos(i, doors.length, aStart, aEnd, doorR);
-    if (d.url) doorTriggers.push({x, z, r: 1.0, url: d.url, peer: d.peer || 'peer'});
+    const ry = Math.atan2(-x, -z);
+    if (d.url) {
+      doorTriggers.push({
+        x, z,
+        rotY: ry,
+        halfWidth: 0.85,
+        thresholdDepth: 0.75,
+        r: 1.0,
+        url: d.url,
+        peer: d.peer || 'peer'
+      });
+    }
     const color = d.locked ? 0xc9a75f : 0x67c98a;
     const mat = new THREE.MeshStandardMaterial({color, emissive: color, emissiveIntensity: 0.25});
     const frame = new THREE.Group();
     frame.position.set(x, 0, z);
     frame.rotation.y = Math.atan2(-x, -z);
     const post = new THREE.Mesh(new THREE.BoxGeometry(0.14, 2.0, 0.14), mat);
-    const left = post.clone(); left.position.set(-0.55, 1.0, 0);
-    const right = post.clone(); right.position.set(0.55, 1.0, 0);
-    const lintel = new THREE.Mesh(new THREE.BoxGeometry(1.24, 0.14, 0.14), mat);
+    const left = post.clone(); left.position.set(-0.85, 1.0, 0);
+    const right = post.clone(); right.position.set(0.85, 1.0, 0);
+    const lintel = new THREE.Mesh(new THREE.BoxGeometry(1.84, 0.14, 0.14), mat);
     lintel.position.set(0, 2.0, 0);
     frame.add(left, right, lintel);
     const label = labelSprite(['→ ' + (d.peer || 'peer'), d.locked ? 'locked' : 'open'],
@@ -1987,7 +2021,7 @@ function buildDoors(doors){
     frame.updateMatrixWorld(true);
     const leftPos = new THREE.Vector3(); left.getWorldPosition(leftPos);
     const rightPos = new THREE.Vector3(); right.getWorldPosition(rightPos);
-    const postR = 0.14;
+    const postR = 0.08;
     doorObstacles.push({x: leftPos.x, z: leftPos.z, r: postR}, {x: rightPos.x, z: rightPos.z, r: postR});
   });
 }
