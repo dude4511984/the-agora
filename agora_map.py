@@ -805,9 +805,9 @@ function makeSpiritTexture() {
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
 
-  // --- Layer 1: Flowing Robe Silhouette ---
+  // --- Layer 1: Flowing Robe Silhouette (Feathered, Soft Boundary) ---
   ctx.save();
-  ctx.filter = 'blur(10px)';
+  ctx.filter = 'blur(22px)';
   ctx.beginPath();
   ctx.moveTo(85, 250);
   ctx.bezierCurveTo(45, 450, 55, 750, 65, 940);
@@ -816,13 +816,15 @@ function makeSpiritTexture() {
   ctx.bezierCurveTo(235, 260, 205, 230, 175, 230);
   ctx.bezierCurveTo(130, 230, 100, 240, 85, 250);
   ctx.closePath();
-  ctx.fillStyle = 'rgba(255, 210, 140, 0.25)';
+  ctx.fillStyle = 'rgba(255, 210, 140, 0.28)';
   ctx.fill();
   ctx.restore();
 
+  ctx.save();
+  ctx.filter = 'blur(10px)';
   const bodyGrad = ctx.createLinearGradient(0, 180, 0, 960);
-  bodyGrad.addColorStop(0.0, 'rgba(255, 220, 150, 0.30)');
-  bodyGrad.addColorStop(0.4, 'rgba(240, 195, 130, 0.20)');
+  bodyGrad.addColorStop(0.0, 'rgba(255, 220, 150, 0.35)');
+  bodyGrad.addColorStop(0.4, 'rgba(240, 195, 130, 0.22)');
   bodyGrad.addColorStop(0.75, 'rgba(210, 160, 100, 0.10)');
   bodyGrad.addColorStop(1.0, 'rgba(180, 130, 70, 0.0)');
   ctx.beginPath();
@@ -835,17 +837,24 @@ function makeSpiritTexture() {
   ctx.closePath();
   ctx.fillStyle = bodyGrad;
   ctx.fill();
+  ctx.restore();
 
+  // Drapery fold glow
   ctx.save();
-  ctx.filter = 'blur(4px)';
-  ctx.lineWidth = 6;
-  ctx.strokeStyle = 'rgba(255, 235, 175, 0.50)';
+  ctx.filter = 'blur(8px)';
+  ctx.beginPath();
+  ctx.moveTo(175, 260);
+  ctx.bezierCurveTo(160, 450, 150, 700, 140, 900);
+  ctx.moveTo(215, 280);
+  ctx.bezierCurveTo(205, 480, 195, 720, 190, 900);
+  ctx.lineWidth = 14;
+  ctx.strokeStyle = 'rgba(255, 230, 165, 0.16)';
   ctx.stroke();
   ctx.restore();
 
-  // --- Layer 2: Hooded Cowl / Head ---
+  // --- Layer 2: Hooded Cowl / Head (Soft Ethereal Mirage) ---
   ctx.save();
-  ctx.filter = 'blur(8px)';
+  ctx.filter = 'blur(16px)';
   ctx.beginPath();
   ctx.moveTo(175, 55);
   ctx.bezierCurveTo(220, 65, 230, 120, 220, 175);
@@ -858,6 +867,8 @@ function makeSpiritTexture() {
   ctx.fill();
   ctx.restore();
 
+  ctx.save();
+  ctx.filter = 'blur(7px)';
   ctx.beginPath();
   ctx.moveTo(175, 58);
   ctx.bezierCurveTo(218, 68, 226, 120, 218, 175);
@@ -866,33 +877,28 @@ function makeSpiritTexture() {
   ctx.bezierCurveTo(90, 220, 120, 180, 120, 150);
   ctx.bezierCurveTo(120, 88, 140, 63, 175, 58);
   ctx.closePath();
-  const hoodGrad = ctx.createRadialGradient(175, 135, 15, 175, 135, 70);
+  const hoodGrad = ctx.createRadialGradient(175, 135, 15, 175, 135, 75);
   hoodGrad.addColorStop(0.0, 'rgba(0, 0, 0, 0.0)');
-  hoodGrad.addColorStop(0.55, 'rgba(255, 210, 140, 0.20)');
-  hoodGrad.addColorStop(0.9, 'rgba(255, 225, 165, 0.48)');
-  hoodGrad.addColorStop(1.0, 'rgba(255, 240, 195, 0.70)');
+  hoodGrad.addColorStop(0.55, 'rgba(255, 210, 140, 0.18)');
+  hoodGrad.addColorStop(0.85, 'rgba(255, 225, 160, 0.42)');
+  hoodGrad.addColorStop(1.0, 'rgba(255, 240, 185, 0.60)');
   ctx.fillStyle = hoodGrad;
   ctx.fill();
-
-  ctx.save();
-  ctx.filter = 'blur(2px)';
-  ctx.lineWidth = 4;
-  ctx.strokeStyle = 'rgba(255, 235, 185, 0.65)';
-  ctx.stroke();
   ctx.restore();
 
+  // Cowl opening rim
   ctx.save();
-  ctx.filter = 'blur(2px)';
+  ctx.filter = 'blur(5px)';
   ctx.beginPath();
   ctx.ellipse(172, 145, 26, 40, 0.08, 0, Math.PI * 2);
-  ctx.lineWidth = 3.5;
-  ctx.strokeStyle = 'rgba(255, 225, 160, 0.50)';
+  ctx.lineWidth = 6;
+  ctx.strokeStyle = 'rgba(255, 225, 160, 0.35)';
   ctx.stroke();
   ctx.restore();
 
   // --- Layer 3: Arm Reaching to Lantern ---
   ctx.save();
-  ctx.filter = 'blur(3px)';
+  ctx.filter = 'blur(8px)';
   ctx.beginPath();
   ctx.moveTo(195, 225);
   ctx.bezierCurveTo(235, 230, 265, 245, 295, 265);
@@ -901,28 +907,33 @@ function makeSpiritTexture() {
   ctx.bezierCurveTo(342, 288, 315, 310, 275, 305);
   ctx.bezierCurveTo(240, 305, 210, 265, 195, 250);
   ctx.closePath();
-  ctx.fillStyle = 'rgba(255, 210, 135, 0.30)';
+  ctx.fillStyle = 'rgba(255, 210, 135, 0.32)';
   ctx.fill();
-  ctx.lineWidth = 4;
-  ctx.strokeStyle = 'rgba(255, 230, 165, 0.65)';
-  ctx.stroke();
   ctx.restore();
 
   // --- Layer 4: Anatomical Hand Gripping Lantern Bail Wire ---
-  // Forearm & Wrist tapering into hand
+  ctx.save();
+  ctx.filter = 'blur(10px)';
+  ctx.beginPath();
+  ctx.arc(380, 246, 28, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(255, 190, 80, 0.45)';
+  ctx.fill();
+  ctx.restore();
+
+  ctx.save();
+  ctx.filter = 'blur(2px)';
   ctx.beginPath();
   ctx.moveTo(344, 255);
   ctx.lineTo(362, 244);
   ctx.lineTo(365, 255);
   ctx.lineTo(346, 268);
   ctx.closePath();
-  ctx.fillStyle = 'rgba(255, 205, 110, 0.70)';
+  ctx.fillStyle = 'rgba(255, 205, 110, 0.65)';
   ctx.fill();
-  ctx.lineWidth = 2.0;
-  ctx.strokeStyle = 'rgba(255, 235, 160, 0.90)';
-  ctx.stroke();
+  ctx.restore();
 
-  // Palm / Knuckle Arch directly resting on wire apex (380, 246)
+  ctx.save();
+  ctx.filter = 'blur(1.5px)';
   ctx.beginPath();
   ctx.moveTo(360, 248);
   ctx.bezierCurveTo(365, 238, 374, 235, 381, 235);
@@ -930,17 +941,14 @@ function makeSpiritTexture() {
   ctx.bezierCurveTo(397, 254, 388, 252, 381, 252);
   ctx.bezierCurveTo(372, 252, 365, 253, 360, 248);
   ctx.closePath();
-  ctx.fillStyle = 'rgba(255, 215, 120, 0.85)';
+  ctx.fillStyle = 'rgba(255, 215, 120, 0.80)';
   ctx.fill();
-  ctx.lineWidth = 2.5;
-  ctx.strokeStyle = 'rgba(255, 248, 190, 0.98)';
-  ctx.stroke();
 
   // Knuckle highlights
   [368, 375, 383, 393].forEach(kx => {
     ctx.beginPath();
     ctx.arc(kx, 237, 2.5, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(255, 255, 220, 0.98)';
+    ctx.fillStyle = 'rgba(255, 255, 220, 0.95)';
     ctx.fill();
   });
 
@@ -957,7 +965,7 @@ function makeSpiritTexture() {
     ctx.bezierCurveTo(f.x + 1.5, 244, f.x + 2.0, 252, f.x + 0.5, 238 + f.len);
     ctx.bezierCurveTo(f.x - 1.5, 238 + f.len + 3, f.x - 5.0, 238 + f.len + 1, f.x - 5.0, 238 + f.len - 4);
     ctx.lineWidth = f.w;
-    ctx.strokeStyle = 'rgba(255, 220, 130, 0.95)';
+    ctx.strokeStyle = 'rgba(255, 220, 130, 0.92)';
     ctx.stroke();
 
     ctx.beginPath();
@@ -970,7 +978,7 @@ function makeSpiritTexture() {
       ctx.moveTo(f.x - f.w * 0.5 - 0.5, 238);
       ctx.lineTo(f.x - f.w * 0.5 - 0.5, 260);
       ctx.lineWidth = 1.6;
-      ctx.strokeStyle = 'rgba(60, 35, 15, 0.60)';
+      ctx.strokeStyle = 'rgba(60, 35, 15, 0.50)';
       ctx.stroke();
     }
   });
@@ -981,8 +989,9 @@ function makeSpiritTexture() {
   ctx.bezierCurveTo(356, 252, 358, 262, 366, 262);
   ctx.bezierCurveTo(372, 262, 374, 256, 370, 250);
   ctx.lineWidth = 5.2;
-  ctx.strokeStyle = 'rgba(255, 215, 125, 0.92)';
+  ctx.strokeStyle = 'rgba(255, 215, 125, 0.90)';
   ctx.stroke();
+  ctx.restore();
 
   const tex = new THREE.CanvasTexture(c);
   tex.minFilter = THREE.LinearFilter;
@@ -1010,27 +1019,42 @@ const spiritFrag = `
 
   void main() {
     vec2 uv = vUv;
-    float waveX = sin(uv.y * 14.0 - uTime * 3.0) * 0.003;
-    float waveY = cos(uv.x * 8.0 - uTime * 2.2) * 0.002;
+
+    // Multi-octave convective heat-haze turbulence
+    float n1 = sin(uv.y * 20.0 - uTime * 3.8 + sin(uv.x * 12.0));
+    float n2 = cos(uv.y * 32.0 - uTime * 5.2 + uv.x * 16.0);
+    float turbulence = n1 * 0.6 + n2 * 0.4;
+
+    // Convective rising wave displacement along silhouette boundary
+    // Wavy Schlieren eddies break up any clean geometric edge
+    float waveX = sin(uv.y * 14.0 - uTime * 3.0 + n2 * 0.6) * 0.008;
+    float waveY = cos(uv.x * 8.0 - uTime * 2.2 + n1 * 0.6) * 0.006;
     vec2 distortedUV = uv + vec2(waveX, waveY);
 
     vec4 tex = texture2D(uTex, distortedUV);
-    if (tex.a < 0.005) discard;
+    if (tex.a < 0.003) discard;
 
+    // Vertical heat-shimmer caustic ripples
     float ripple = sin(vWorldPos.y * 12.0 - uTime * 3.5 + uv.x * 6.0);
     float shimmer = 0.5 + 0.5 * sin(ripple * 3.14159);
 
+    // Warm firelight on hand / lantern proximity
     float handProx = smoothstep(0.40, 0.75, uv.x) * smoothstep(0.45, 0.75, uv.y);
 
     vec3 bodyColor = vec3(0.93, 0.83, 0.66);
     vec3 amberFire = vec3(1.0, 0.72, 0.28);
 
     vec3 col = mix(bodyColor, amberFire, handProx * 0.65);
-    col += vec3(0.12, 0.09, 0.03) * shimmer;
+    col += vec3(0.10, 0.08, 0.02) * shimmer;
 
-    float alpha = tex.a * (0.60 + 0.20 * shimmer);
+    // Soft feathered alpha: boundary dissolves into heat eddies
+    float edgeFray = 1.0 + 0.35 * turbulence;
+    float alpha = smoothstep(0.01, 0.35, tex.a) * (0.38 + 0.18 * shimmer) * edgeFray;
 
-    gl_FragColor = vec4(col, clamp(alpha, 0.0, 0.88));
+    // Hand remains slightly more defined so fingers read cleanly
+    alpha = mix(alpha, tex.a * 0.80, handProx * 0.75);
+
+    gl_FragColor = vec4(col, clamp(alpha, 0.0, 0.80));
   }
 `;
 
