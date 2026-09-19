@@ -233,10 +233,11 @@ class Agora3DLanternAtmosphere(unittest.TestCase):
 
     def test_page_3d_defines_spirit_shimmer_shader_and_billboard(self):
         page = agora_map.PAGE_3D
+        self.assertIn("function makeSpiritTexture()", page)
         self.assertIn("const spiritPlane = new THREE.Mesh(", page)
         self.assertIn("const spiritMat = new THREE.ShaderMaterial({", page)
         self.assertIn("uniform float uTime;", page)
-        self.assertIn("uniform float uBob;", page)
+        self.assertIn("uniform sampler2D uTex;", page)
         self.assertIn("function updateLanternAtmosphere(t, bob, rx, rz)", page)
         self.assertIn("updateLanternAtmosphere(t, bob, rx, rz);", page)
         self.assertIn("spiritPlane.quaternion.copy(camera.quaternion);", page)

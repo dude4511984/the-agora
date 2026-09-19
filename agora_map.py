@@ -794,90 +794,262 @@ for (let i = 0; i < SMOKE_PUFF_COUNT; i++) {
 }
 
 // ── Atmospheric effect 2: faint man-shaped shimmer / heat-distortion spirit ──
+function makeSpiritTexture() {
+  const W = 512, H = 1024;
+  const c = document.createElement('canvas');
+  c.width = W; c.height = H;
+  const ctx = c.getContext('2d');
+  ctx.clearRect(0, 0, W, H);
+
+  // Wire bail apex of lantern is at (380, 246) in canvas coordinates
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+
+  // --- Layer 1: Flowing Robe Silhouette ---
+  ctx.save();
+  ctx.filter = 'blur(10px)';
+  ctx.beginPath();
+  ctx.moveTo(85, 250);
+  ctx.bezierCurveTo(45, 450, 55, 750, 65, 940);
+  ctx.bezierCurveTo(150, 960, 210, 960, 280, 940);
+  ctx.bezierCurveTo(270, 750, 255, 480, 235, 340);
+  ctx.bezierCurveTo(235, 260, 205, 230, 175, 230);
+  ctx.bezierCurveTo(130, 230, 100, 240, 85, 250);
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(255, 210, 140, 0.25)';
+  ctx.fill();
+  ctx.restore();
+
+  const bodyGrad = ctx.createLinearGradient(0, 180, 0, 960);
+  bodyGrad.addColorStop(0.0, 'rgba(255, 220, 150, 0.30)');
+  bodyGrad.addColorStop(0.4, 'rgba(240, 195, 130, 0.20)');
+  bodyGrad.addColorStop(0.75, 'rgba(210, 160, 100, 0.10)');
+  bodyGrad.addColorStop(1.0, 'rgba(180, 130, 70, 0.0)');
+  ctx.beginPath();
+  ctx.moveTo(85, 250);
+  ctx.bezierCurveTo(45, 450, 55, 750, 65, 940);
+  ctx.bezierCurveTo(150, 960, 210, 960, 280, 940);
+  ctx.bezierCurveTo(270, 750, 255, 480, 235, 340);
+  ctx.bezierCurveTo(235, 260, 205, 230, 175, 230);
+  ctx.bezierCurveTo(130, 230, 100, 240, 85, 250);
+  ctx.closePath();
+  ctx.fillStyle = bodyGrad;
+  ctx.fill();
+
+  ctx.save();
+  ctx.filter = 'blur(4px)';
+  ctx.lineWidth = 6;
+  ctx.strokeStyle = 'rgba(255, 235, 175, 0.50)';
+  ctx.stroke();
+  ctx.restore();
+
+  // --- Layer 2: Hooded Cowl / Head ---
+  ctx.save();
+  ctx.filter = 'blur(8px)';
+  ctx.beginPath();
+  ctx.moveTo(175, 55);
+  ctx.bezierCurveTo(220, 65, 230, 120, 220, 175);
+  ctx.bezierCurveTo(215, 205, 225, 225, 235, 250);
+  ctx.bezierCurveTo(185, 265, 145, 265, 110, 255);
+  ctx.bezierCurveTo(90, 220, 120, 180, 120, 150);
+  ctx.bezierCurveTo(120, 85, 140, 60, 175, 55);
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(255, 215, 145, 0.35)';
+  ctx.fill();
+  ctx.restore();
+
+  ctx.beginPath();
+  ctx.moveTo(175, 58);
+  ctx.bezierCurveTo(218, 68, 226, 120, 218, 175);
+  ctx.bezierCurveTo(212, 205, 225, 225, 235, 250);
+  ctx.bezierCurveTo(185, 265, 145, 265, 110, 255);
+  ctx.bezierCurveTo(90, 220, 120, 180, 120, 150);
+  ctx.bezierCurveTo(120, 88, 140, 63, 175, 58);
+  ctx.closePath();
+  const hoodGrad = ctx.createRadialGradient(175, 135, 15, 175, 135, 70);
+  hoodGrad.addColorStop(0.0, 'rgba(0, 0, 0, 0.0)');
+  hoodGrad.addColorStop(0.55, 'rgba(255, 210, 140, 0.20)');
+  hoodGrad.addColorStop(0.9, 'rgba(255, 225, 165, 0.48)');
+  hoodGrad.addColorStop(1.0, 'rgba(255, 240, 195, 0.70)');
+  ctx.fillStyle = hoodGrad;
+  ctx.fill();
+
+  ctx.save();
+  ctx.filter = 'blur(2px)';
+  ctx.lineWidth = 4;
+  ctx.strokeStyle = 'rgba(255, 235, 185, 0.65)';
+  ctx.stroke();
+  ctx.restore();
+
+  ctx.save();
+  ctx.filter = 'blur(2px)';
+  ctx.beginPath();
+  ctx.ellipse(172, 145, 26, 40, 0.08, 0, Math.PI * 2);
+  ctx.lineWidth = 3.5;
+  ctx.strokeStyle = 'rgba(255, 225, 160, 0.50)';
+  ctx.stroke();
+  ctx.restore();
+
+  // --- Layer 3: Arm Reaching to Lantern ---
+  ctx.save();
+  ctx.filter = 'blur(3px)';
+  ctx.beginPath();
+  ctx.moveTo(195, 225);
+  ctx.bezierCurveTo(235, 230, 265, 245, 295, 265);
+  ctx.bezierCurveTo(325, 280, 338, 270, 350, 252);
+  ctx.lineTo(358, 248);
+  ctx.bezierCurveTo(342, 288, 315, 310, 275, 305);
+  ctx.bezierCurveTo(240, 305, 210, 265, 195, 250);
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(255, 210, 135, 0.30)';
+  ctx.fill();
+  ctx.lineWidth = 4;
+  ctx.strokeStyle = 'rgba(255, 230, 165, 0.65)';
+  ctx.stroke();
+  ctx.restore();
+
+  // --- Layer 4: Anatomical Hand Gripping Lantern Bail Wire ---
+  // Forearm & Wrist tapering into hand
+  ctx.beginPath();
+  ctx.moveTo(344, 255);
+  ctx.lineTo(362, 244);
+  ctx.lineTo(365, 255);
+  ctx.lineTo(346, 268);
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(255, 205, 110, 0.70)';
+  ctx.fill();
+  ctx.lineWidth = 2.0;
+  ctx.strokeStyle = 'rgba(255, 235, 160, 0.90)';
+  ctx.stroke();
+
+  // Palm / Knuckle Arch directly resting on wire apex (380, 246)
+  ctx.beginPath();
+  ctx.moveTo(360, 248);
+  ctx.bezierCurveTo(365, 238, 374, 235, 381, 235);
+  ctx.bezierCurveTo(390, 235, 398, 240, 403, 249);
+  ctx.bezierCurveTo(397, 254, 388, 252, 381, 252);
+  ctx.bezierCurveTo(372, 252, 365, 253, 360, 248);
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(255, 215, 120, 0.85)';
+  ctx.fill();
+  ctx.lineWidth = 2.5;
+  ctx.strokeStyle = 'rgba(255, 248, 190, 0.98)';
+  ctx.stroke();
+
+  // Knuckle highlights
+  [368, 375, 383, 393].forEach(kx => {
+    ctx.beginPath();
+    ctx.arc(kx, 237, 2.5, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255, 255, 220, 0.98)';
+    ctx.fill();
+  });
+
+  // 4 Full Curled Fingers Wrapping DOWN and UNDER the Bail Wire
+  const fingers = [
+    { x: 368, len: 30, w: 5.4 },
+    { x: 375, len: 34, w: 5.8 },
+    { x: 383, len: 32, w: 5.6 },
+    { x: 392, len: 26, w: 5.0 }
+  ];
+  fingers.forEach((f, idx) => {
+    ctx.beginPath();
+    ctx.moveTo(f.x, 238);
+    ctx.bezierCurveTo(f.x + 1.5, 244, f.x + 2.0, 252, f.x + 0.5, 238 + f.len);
+    ctx.bezierCurveTo(f.x - 1.5, 238 + f.len + 3, f.x - 5.0, 238 + f.len + 1, f.x - 5.0, 238 + f.len - 4);
+    ctx.lineWidth = f.w;
+    ctx.strokeStyle = 'rgba(255, 220, 130, 0.95)';
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.arc(f.x + 1.0, 247, f.w * 0.42, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255, 250, 205, 0.95)';
+    ctx.fill();
+
+    if (idx > 0) {
+      ctx.beginPath();
+      ctx.moveTo(f.x - f.w * 0.5 - 0.5, 238);
+      ctx.lineTo(f.x - f.w * 0.5 - 0.5, 260);
+      ctx.lineWidth = 1.6;
+      ctx.strokeStyle = 'rgba(60, 35, 15, 0.60)';
+      ctx.stroke();
+    }
+  });
+
+  // Thumb wrapped across front
+  ctx.beginPath();
+  ctx.moveTo(362, 244);
+  ctx.bezierCurveTo(356, 252, 358, 262, 366, 262);
+  ctx.bezierCurveTo(372, 262, 374, 256, 370, 250);
+  ctx.lineWidth = 5.2;
+  ctx.strokeStyle = 'rgba(255, 215, 125, 0.92)';
+  ctx.stroke();
+
+  const tex = new THREE.CanvasTexture(c);
+  tex.minFilter = THREE.LinearFilter;
+  tex.magFilter = THREE.LinearFilter;
+  return tex;
+}
+const spiritTex = makeSpiritTexture();
+
 const spiritVert = `
   varying vec2 vUv;
+  varying vec3 vWorldPos;
   void main() {
     vUv = uv;
-    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    vec4 wp = modelMatrix * vec4(position, 1.0);
+    vWorldPos = wp.xyz;
+    gl_Position = projectionMatrix * viewMatrix * wp;
   }
 `;
 
 const spiritFrag = `
+  uniform sampler2D uTex;
   uniform float uTime;
-  uniform float uBob;
   varying vec2 vUv;
-
-  float distSeg(vec2 p, vec2 a, vec2 b) {
-    vec2 pa = p - a, ba = b - a;
-    float h = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0);
-    return length(pa - ba * h);
-  }
+  varying vec3 vWorldPos;
 
   void main() {
     vec2 uv = vUv;
-    float bx = 0.35;
+    float waveX = sin(uv.y * 14.0 - uTime * 3.0) * 0.003;
+    float waveY = cos(uv.x * 8.0 - uTime * 2.2) * 0.002;
+    vec2 distortedUV = uv + vec2(waveX, waveY);
 
-    // Head: soft circle centered at (bx, 0.88)
-    float dHead = length(uv - vec2(bx, 0.88)) - 0.065;
+    vec4 tex = texture2D(uTex, distortedUV);
+    if (tex.a < 0.005) discard;
 
-    // Torso / spine from (bx, 0.45) to (bx, 0.81)
-    float dSpine = distSeg(uv, vec2(bx, 0.45), vec2(bx, 0.81));
-    float torsoW = mix(0.10, 0.16, smoothstep(0.45, 0.78, uv.y));
-    float dTorso = dSpine - torsoW;
+    float ripple = sin(vWorldPos.y * 12.0 - uTime * 3.5 + uv.x * 6.0);
+    float shimmer = 0.5 + 0.5 * sin(ripple * 3.14159);
 
-    // Robe / drape flowing down to floor
-    float dDrapeSeg = distSeg(uv, vec2(bx, 0.06), vec2(bx, 0.48));
-    float drapeW = mix(0.13, 0.10, smoothstep(0.06, 0.48, uv.y));
-    float dDrape = dDrapeSeg - drapeW;
+    float handProx = smoothstep(0.40, 0.75, uv.x) * smoothstep(0.45, 0.75, uv.y);
 
-    // Right arm reaching to lantern handle at (0.80, 0.72 + uBob)
-    vec2 handPos = vec2(0.80, 0.72 + uBob);
-    vec2 shoulderPos = vec2(bx + 0.12, 0.76);
-    float dArm = distSeg(uv, shoulderPos, handPos) - 0.032;
+    vec3 bodyColor = vec3(0.93, 0.83, 0.66);
+    vec3 amberFire = vec3(1.0, 0.72, 0.28);
 
-    // Combine SDF silhouettes
-    float dBody = min(min(dHead, dTorso), min(dDrape, dArm));
+    vec3 col = mix(bodyColor, amberFire, handProx * 0.65);
+    col += vec3(0.12, 0.09, 0.03) * shimmer;
 
-    // Soft feathered silhouette boundary
-    float mask = smoothstep(0.05, -0.01, dBody);
-    mask *= smoothstep(0.02, 0.12, uv.y);
-    mask *= smoothstep(0.98, 0.92, uv.y);
-    if (mask <= 0.001) discard;
+    float alpha = tex.a * (0.60 + 0.20 * shimmer);
 
-    // Heat-haze rising wave distortion (Schlieren/mirage effect)
-    float wave1 = sin(uv.y * 26.0 - uTime * 3.8 + sin(uv.x * 14.0));
-    float wave2 = cos(uv.y * 40.0 - uTime * 5.2 + uv.x * 18.0);
-    float heat = wave1 * 0.6 + wave2 * 0.4;
-    float caustics = pow(0.5 + 0.5 * sin(heat * 3.14159265 + uTime * 2.2), 2.6);
-    float edge = smoothstep(0.05, 0.01, abs(dBody));
-
-    // Color: ethereal silver-violet body, blending to warm amber at hand/arm
-    float warmFactor = smoothstep(0.38, 0.78, uv.x);
-    vec3 coolSilver = vec3(0.78, 0.85, 0.94);
-    vec3 warmAmber = vec3(1.0, 0.74, 0.38);
-    vec3 col = mix(coolSilver, warmAmber, warmFactor);
-
-    // Alpha: subtle, transparent implied presence
-    float alpha = mask * (0.025 + 0.07 * caustics + 0.05 * edge);
-    gl_FragColor = vec4(col, alpha);
+    gl_FragColor = vec4(col, clamp(alpha, 0.0, 0.88));
   }
 `;
 
 const spiritMat = new THREE.ShaderMaterial({
   uniforms: {
-    uTime: { value: 0 },
-    uBob: { value: 0 }
+    uTex: { value: spiritTex },
+    uTime: { value: 0 }
   },
   vertexShader: spiritVert,
   fragmentShader: spiritFrag,
   transparent: true,
-  blending: THREE.AdditiveBlending,
+  blending: THREE.NormalBlending,
   depthWrite: false,
   side: THREE.DoubleSide
 });
 
-const spiritPlane = new THREE.Mesh(new THREE.PlaneGeometry(1.55, 1.85), spiritMat);
-spiritPlane.geometry.translate(0, 1.85 / 2, 0); // Origin at feet (y=0)
+const spiritPlaneGeom = new THREE.PlaneGeometry(1.15, 1.95);
+spiritPlaneGeom.translate(-0.298, -0.492, 0); // Origin at bail apex under hand
+const spiritPlane = new THREE.Mesh(spiritPlaneGeom, spiritMat);
 scene.add(spiritPlane);
 
 function updateLanternAtmosphere(t, bob, rx, rz){
@@ -892,15 +1064,14 @@ function updateLanternAtmosphere(t, bob, rx, rz){
     s.material.opacity = Math.sin(p * Math.PI) * 0.09;
   });
 
-  // 2. Spirit shimmer billboard follows walker and faces camera
+  // 2. Spirit shimmer billboard anchored to lantern bail handle and faces camera
   spiritPlane.position.set(
-    player.position.x + rx * 0.22,
-    player.position.y,
-    player.position.z + rz * 0.22
+    lantern.position.x,
+    lantern.position.y + 0.55,
+    lantern.position.z
   );
   spiritPlane.quaternion.copy(camera.quaternion);
   spiritMat.uniforms.uTime.value = t;
-  spiritMat.uniforms.uBob.value = bob / 1.85;
 }
 
 function placeLantern(t){
