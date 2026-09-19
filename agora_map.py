@@ -1071,8 +1071,8 @@ const spiritMat = new THREE.ShaderMaterial({
   side: THREE.DoubleSide
 });
 
-const spiritPlaneGeom = new THREE.PlaneGeometry(1.15, 1.95);
-spiritPlaneGeom.translate(-0.298, -0.492, 0); // Origin at bail apex under hand
+const spiritPlaneGeom = new THREE.PlaneGeometry(1.03, 1.75);
+spiritPlaneGeom.translate(-0.250, -0.460, 0); // Origin at bail apex under hand
 const spiritPlane = new THREE.Mesh(spiritPlaneGeom, spiritMat);
 scene.add(spiritPlane);
 
@@ -1111,7 +1111,7 @@ function placeLantern(t){
   const rx = fz, rz = -fx;
   lantern.position.set(
     player.position.x + fx * 0.35 + rx * 0.70 + sway,
-    player.position.y + 1.12 + bob,
+    player.position.y + 0.76 + bob,
     player.position.z + fz * 0.35 + rz * 0.52
   );
   lantern.rotation.y = Math.atan2(fx, fz);
