@@ -601,10 +601,8 @@ const DUSK_FOG = 0x6a5e68;
 scene.background = new THREE.Color(DUSK_FOG);
 scene.fog = new THREE.FogExp2(DUSK_FOG, 0.008);
 
-// You: a position on the floor, not a body — same "sprites, not sittings"
-// discipline the presence figures already follow, just for a visitor who
-// has no claimed face at all. A ring on the ground marks where you are;
-// the camera orbits and walks around that point, never becomes a face.
+// You: a position on the floor, not a body. A lantern follows — no hand
+// holding it, a spirit carrying a light. The camera orbits that point.
 const player = new THREE.Object3D();
 player.position.set(0, 0, 6);
 
@@ -642,34 +640,28 @@ if (new URLSearchParams(location.search).get('view') === 'inside') {
   camera.position.set(0, 4.4, 6.5);
   controls.target.set(0, 1, 0);
 }
+// Outside the south gate, on the plain — lantern vs the unlit stretch.
+if (new URLSearchParams(location.search).get('view') === 'plain') {
+  player.position.set(2.5, 0, 16);
+  camera.position.set(2.5, 1.8, 19.2);
+  controls.target.set(2.5, 1.2, 16);
+}
 
-// Mix, not a wash. Live shot of the first lighting pass (range 22 + heavy
-// hemisphere) was a flat beige courtyard — dark-cave problem gone, torch
-// pools gone with it. Pull the global lights back so the sconces read.
-// Mid-wall + near-corner, range 12: covers past the center from 9.3 without
-// turning every surface the same color. Decay 2 kept (the original intent).
-scene.add(new THREE.HemisphereLight(0xffe6c8, 0x3a3228, 0.28));
-scene.add(new THREE.AmbientLight(0xcbb89a, 0.12));
-const key = new THREE.DirectionalLight(0xfff4e0, 0.5);
+// Wash is now a dusk hint, not a fill. Torches pool at the walls (range 7
+// dies before the courtyard center). The visitor lantern is what lights
+// where you stand, and the plain past the gate is actually dark.
+scene.add(new THREE.HemisphereLight(0xffe6c8, 0x3a3228, 0.10));
+scene.add(new THREE.AmbientLight(0xcbb89a, 0.04));
+const key = new THREE.DirectionalLight(0xfff4e0, 0.14);
 key.position.set(6, 14, 4);
 scene.add(key);
-const fill = new THREE.DirectionalLight(0xffd9a8, 0.16);
+const fill = new THREE.DirectionalLight(0xffd9a8, 0.05);
 fill.position.set(0, 8, 12);
 scene.add(fill);
 
-const hall = new THREE.PointLight(0xffe0b0, 0.7, 12, 1.8);
-hall.position.set(0, 5.2, 0);
-scene.add(hall);
-const lamp = new THREE.Mesh(
-  new THREE.SphereGeometry(0.12, 12, 12),
-  new THREE.MeshBasicMaterial({color: 0xffe6c0})
-);
-lamp.position.copy(hall.position);
-scene.add(lamp);
-
 [[9.3, 0], [-9.3, 0], [0, 9.3], [0, -9.3],
  [7.4, 7.4], [7.4, -7.4], [-7.4, 7.4], [-7.4, -7.4]].forEach(([x, z]) => {
-  const torch = new THREE.PointLight(0xffb366, 2.2, 12, 2);
+  const torch = new THREE.PointLight(0xffb366, 1.15, 7, 2);
   torch.position.set(x, 2.6, z);
   scene.add(torch);
   const flame = new THREE.Mesh(
@@ -720,12 +712,44 @@ scene.add(ring);
 // edge than any wall is. Pushed past the wall corners (~14.8) so it only
 // ever catches someone who's gotten past every real wall segment.
 const FLOOR_R = 30;
-const marker = new THREE.Mesh(
-  new THREE.RingGeometry(0.35, 0.45, 24),
-  new THREE.MeshBasicMaterial({color: 0x67b9cd, transparent: true, opacity: 0.85, side: THREE.DoubleSide})
+
+// Visitor mark: a lantern that follows, no body holding it. Poly Haven
+// Lantern 01 (CC0). The PointLight is the point — it has to light the
+// ground around the player or it's just jewelry.
+const lantern = new THREE.Group();
+scene.add(lantern);
+const lanternLight = new THREE.PointLight(0xffc078, 2.6, 10, 2);
+lanternLight.position.set(0, 0.12, 0);
+lantern.add(lanternLight);
+new THREE.GLTFLoader().load(
+  '/models/lantern_01/lantern_01.gltf',
+  (gltf) => {
+    const mesh = gltf.scene;
+    const raw = new THREE.Box3().setFromObject(mesh).getSize(new THREE.Vector3());
+    mesh.scale.setScalar(0.55 / Math.max(raw.y, 0.01));
+    mesh.traverse(o => {
+      if (o.isMesh && o.name && /glass/i.test(o.name) && o.material) {
+        o.material.emissive = new THREE.Color(0xffc070);
+        o.material.emissiveIntensity = 1.1;
+      }
+    });
+    lantern.add(mesh);
+  },
+  undefined,
+  (err) => console.warn('lantern asset load error:', err)
 );
-marker.rotation.x = -Math.PI/2;
-scene.add(marker);
+function placeLantern(t){
+  const bob = Math.sin(t * 1.65) * 0.07;
+  const swayX = Math.sin(t * 1.05) * 0.08;
+  const swayZ = Math.cos(t * 0.82) * 0.06;
+  lantern.position.set(
+    player.position.x + 0.48 + swayX,
+    player.position.y + 1.72 + bob,
+    player.position.z + 0.12 + swayZ
+  );
+  lantern.rotation.y = Math.sin(t * 0.7) * 0.18;
+  lantern.rotation.z = Math.sin(t * 1.15) * 0.05;
+}
 
 // Walking: WASD/arrows move you across the real floor, camera-relative so
 // "forward" always means where you're looking. OrbitControls still owns
@@ -902,7 +926,7 @@ function stepPlayer(dt){
   const newTarget = new THREE.Vector3(player.position.x, player.position.y + eyeHeight, player.position.z);
   camera.position.add(newTarget.clone().sub(controls.target));
   controls.target.copy(newTarget);
-  marker.position.set(player.position.x, player.position.y + 0.02, player.position.z);
+  // lantern follows in animate() — not locked here, so the bob isn't a teleport
 
   if (!traveling) {
     for (const t of doorTriggers) {
@@ -1410,7 +1434,7 @@ function teleportPlayer(x, z){
   player.position.set(x, player.position.y, z);
   camera.position.add(delta);
   controls.target.add(delta);
-  marker.position.set(x, 0.02, z);
+  // lantern follows player in animate()
 }
 function crossDoor(t){
   traveling = true;
@@ -1692,6 +1716,7 @@ function animate(){
   // reads as here rather than a frozen cardboard cutout. getElapsedTime()
   // is cumulative and doesn't consume like getDelta() does.
   const t = clock.getElapsedTime();
+  placeLantern(t);
   presenceSprites.forEach(s => {
     s.position.y = s.userData.baseY + Math.sin(t * 1.4 + s.userData.bob) * 0.06;
     if (s.userData && s.userData.isCustom3D) {
