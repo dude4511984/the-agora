@@ -310,6 +310,15 @@ class Agora3DHomeRoomCharacter(unittest.TestCase):
         self.assertIn("const ms = [s[0] * mult, s[1] * mult, s[2] * mult];", page)
         self.assertIn("const shapeMult = isHome ? 0.20 : 1.0;", page)
 
+    def test_page_3d_home_scales_the_visitor_lantern_and_spirit(self):
+        page = agora_map.PAGE_3D
+        self.assertIn("function updateVisitorLanternScale(isHome)", page)
+        self.assertIn("const roomScale = isHome ? 0.20 : 1.0;", page)
+        self.assertIn("lantern.scale.setScalar(roomScale);", page)
+        self.assertIn("lanternLight.distance = 10 * roomScale;", page)
+        self.assertIn("spiritPlane.scale.setScalar(roomScale);", page)
+        self.assertIn("0.55 * (lantern.userData.roomScale || 1.0)", page)
+
     def test_page_3d_frosty_south_gate_has_a_real_cc0_threshold(self):
         page = agora_map.PAGE_3D
         self.assertIn("function buildGateThreshold(isHome)", page)
@@ -332,5 +341,4 @@ class Agora3DHomeRoomCharacter(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
-
 

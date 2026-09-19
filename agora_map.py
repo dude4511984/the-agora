@@ -1235,6 +1235,17 @@ spiritPlaneGeom.translate(-0.250, -0.460, 0); // Origin at bail apex under hand
 const spiritPlane = new THREE.Mesh(spiritPlaneGeom, spiritMat);
 scene.add(spiritPlane);
 
+function updateVisitorLanternScale(isHome) {
+  // Home's compact room uses the same measured multiplier as its claimed
+  // forms. The light and free-standing spirit plane do not inherit the
+  // lantern group's scale, so scale their reach and anchor explicitly.
+  const roomScale = isHome ? 0.20 : 1.0;
+  lantern.scale.setScalar(roomScale);
+  lantern.userData.roomScale = roomScale;
+  lanternLight.distance = 10 * roomScale;
+  spiritPlane.scale.setScalar(roomScale);
+}
+
 function updateLanternAtmosphere(t, bob, rx, rz){
   // 1. Gentle chimney smoke
   smokePuffs.forEach(s => {
@@ -1250,7 +1261,7 @@ function updateLanternAtmosphere(t, bob, rx, rz){
   // 2. Spirit shimmer billboard anchored to lantern bail handle and faces camera
   spiritPlane.position.set(
     lantern.position.x,
-    lantern.position.y + 0.55,
+    lantern.position.y + 0.55 * (lantern.userData.roomScale || 1.0),
     lantern.position.z
   );
   spiritPlane.quaternion.copy(camera.quaternion);
@@ -1676,6 +1687,7 @@ function buildRoom(mode){
 
   updateFloor(isHome ? 9.8 : 15, isHome ? 9.5 : 14.7, isHome ? 9.8 : 15, isHome ? 8 : 12);
   updateLighting(isHome);
+  updateVisitorLanternScale(isHome);
   buildGateThreshold(isHome);
   controls.minDistance = isHome ? 1.5 : 3.0;
   controls.maxDistance = isHome ? 14.0 : 22.0;
