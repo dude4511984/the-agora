@@ -1199,8 +1199,10 @@ function labelSprite(lines, accent){
 
 // Each real place (door, kiosk, table, bench, whatever kind shows up) becomes a
 // small booth or feature in the commons. Doors use real CC0 Large Castle Door assets
-// (Poly Haven, weathered wood and iron hardware), and tables/benches use real CC0
-// Painted Wooden Bench assets (Poly Haven, dark worn wood).
+// (Poly Haven, weathered wood and iron hardware), tables/benches use real CC0
+// Painted Wooden Bench assets (Poly Haven, dark worn wood), and kiosk/stall
+// use Wooden Table 03 — a worn wooden counter with drawers (Poly Haven has
+// no market-stall model; this is the closest counter that belongs in a fort).
 // Its Resonance Well is that place's own real number (Atlas.resonance in places.py).
 const KIND_COLOR = {door: 0x5a6072, kiosk: 0xe8b661, stall: 0xa99ad6, table: 0xc98a5a, bench: 0xc98a5a};
 let placeGroup = new THREE.Group();
@@ -1234,6 +1236,21 @@ new THREE.GLTFLoader().load(
   (err) => console.warn('bench asset load error:', err)
 );
 
+let stallTemplate = null;
+new THREE.GLTFLoader().load(
+  '/models/wooden_table_03/wooden_table_03.gltf',
+  (gltf) => {
+    stallTemplate = gltf.scene;
+    // Raw ~1.33m wide, 0.83m tall. Scale to booth size so it sits with
+    // the doors and benches instead of eating the arc.
+    const raw = new THREE.Box3().setFromObject(stallTemplate).getSize(new THREE.Vector3());
+    stallTemplate.scale.setScalar(0.95 / Math.max(raw.y, 0.01));
+    if (currentKids) buildPlaces(currentKids, currentResonance);
+  },
+  undefined,
+  (err) => console.warn('stall asset load error:', err)
+);
+
 function boothMesh(kind){
   const color = KIND_COLOR[kind] || 0x6a7280;
   const mat = new THREE.MeshStandardMaterial({color, roughness: 0.7});
@@ -1252,9 +1269,13 @@ function boothMesh(kind){
     g.add(left, right, lintel);
     return g;
   }
-  return new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.6, 0.7), mat); // kiosk/stall/unknown
+  if (kind === 'kiosk' || kind === 'stall') {
+    if (stallTemplate) return stallTemplate.clone(true);
+    return new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.6, 0.7), mat);
+  }
+  return new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.6, 0.7), mat); // unknown
 }
-const KIND_RADIUS = {door: 0.55, kiosk: 0.65, stall: 0.65, table: 0.75, bench: 0.75};
+const KIND_RADIUS = {door: 0.55, kiosk: 0.8, stall: 0.8, table: 0.75, bench: 0.75};
 let currentKids = null, currentResonance = null;
 function buildPlaces(kids, resonance){
   currentKids = kids; currentResonance = resonance;
