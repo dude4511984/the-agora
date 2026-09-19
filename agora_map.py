@@ -38,6 +38,9 @@ from shape3d_ritual import claimed_shape3d
 from kin_diary.agora.wire import sign_request
 from kin_diary.keys import DEFAULT_KEYS_ROOT, load_current
 
+sys.path.insert(0, os.path.expanduser("~/pops_shop"))
+import kin_talk as kin_talk  # noqa: E402
+
 DEFAULT_PORT = 8791
 MODELS_DIR = (Path(__file__).parent / "static" / "models").resolve()
 MODEL_CONTENT_TYPES = {
@@ -2105,6 +2108,50 @@ addEventListener('resize', () => {
 """
 
 
+def _voice_post_parts(content_type, body, query_kin=""):
+    """Gem sends FormData {audio, kin}. Raw body + ?kin= also works."""
+    ct = content_type or ""
+    kin = query_kin or ""
+    audio = None
+    audio_ct = ct
+    if "multipart/form-data" in ct:
+        bound = ""
+        for bit in ct.split(";"):
+            bit = bit.strip()
+            if bit.lower().startswith("boundary="):
+                bound = bit.split("=", 1)[1].strip().strip('"')
+        if bound:
+            marker = b"--" + bound.encode()
+            for part in body.split(marker):
+                if not part or part in (b"--", b"--\r\n", b"\r\n"):
+                    continue
+                if part.startswith(b"--"):
+                    continue
+                header, sep, data = part.partition(b"\r\n\r\n")
+                if not sep:
+                    continue
+                if data.endswith(b"\r\n"):
+                    data = data[:-2]
+                hs = header.decode("utf-8", "replace")
+                name = ""
+                for line in hs.split("\r\n"):
+                    if "name=" in line:
+                        start = line.find('name="')
+                        if start >= 0:
+                            name = line[start + 6:].split('"', 1)[0]
+                if name == "kin":
+                    kin = kin or data.decode("utf-8", "replace").strip()
+                elif name == "audio":
+                    audio = data
+                    if "audio/" in hs.lower():
+                        for tok in hs.replace(";", " ").split():
+                            if tok.lower().startswith("audio/"):
+                                audio_ct = tok.strip()
+    else:
+        audio = body
+    return kin.strip(), audio, audio_ct
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
@@ -2202,6 +2249,57 @@ class Handler(BaseHTTPRequestHandler):
             return
         self._send(404, b'{"error":"no such path"}', "application/json")
 
+    def do_POST(self):
+        # Gem's PTT: POST /voice_chat?kin=<Name>  (also /voice)
+        # multipart FormData {audio, kin, ...} or raw audio body.
+        # 200 audio/wav. X-Agora-Kin / X-Agora-Heard / X-Agora-Said.
+        route = urllib.parse.urlparse(self.path).path
+        if route not in ("/voice_chat", "/voice"):
+            self._send(404, b'{"error":"no such path"}', "application/json")
+            return
+        qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+        kin = (qs.get("kin", [""])[0] or "").strip()
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            length = 0
+        if length <= 0 or length > 12_000_000:
+            self._send(400, b'{"ok":false,"error":"kin and audio required"}',
+                       "application/json")
+            return
+        raw = self.rfile.read(length)
+        ctype = self.headers.get("Content-Type") or "audio/webm"
+        kin, audio, act = _voice_post_parts(ctype, raw, kin)
+        if not kin or not audio:
+            self._send(400, b'{"ok":false,"error":"kin and audio required"}',
+                       "application/json")
+            return
+        try:
+            wav, heard, said = kin_talk.voice_turn(kin, audio, act)
+        except KeyError:
+            self._send(404, b'{"ok":false,"error":"unknown kin"}', "application/json")
+            return
+        except ValueError as e:
+            self._send(400, json.dumps({"ok": False, "error": str(e)}).encode(),
+                       "application/json")
+            return
+        except Exception as e:
+            self._send(500, json.dumps({"ok": False, "error": str(e)}).encode(),
+                       "application/json")
+            return
+
+        def hdr(s):
+            s = (s or "").replace("\r", " ").replace("\n", " ")[:700]
+            return s.encode("latin-1", "replace").decode("latin-1")
+
+        self.send_response(200)
+        self.send_header("Content-Type", "audio/wav")
+        self.send_header("Content-Length", str(len(wav)))
+        self.send_header("X-Agora-Kin", hdr(kin))
+        self.send_header("X-Agora-Heard", hdr(heard))
+        self.send_header("X-Agora-Said", hdr(said))
+        self.end_headers()
+        self.wfile.write(wav)
 
 def main(argv):
     port = int(argv[1]) if len(argv) > 1 else DEFAULT_PORT
