@@ -1318,6 +1318,7 @@ const RAMP_Z_END = 9.80;
 let hasRamparts = true;
 let gateZWall = 10.5;
 let gateZMin = 9.2, gateZMax = 11.2;
+let gateHalfOpen = 0.45;   // set from the scaled gate mesh in buildRoom — not a second guess
 let wallInner = 10.5 - 0.613 - PLAYER_R; // ~9.537
 let wallOuter = 10.5 + PLAYER_R;         // ~10.85
 
@@ -1371,16 +1372,12 @@ function resolveCollisions(pos, prevX){
     }
   }
 
-  // South wall gate archway and fortress boundary (z ~ HALF = 10.5):
-  // The gate archway opening is between GATE_X_MIN (-0.45) and GATE_X_MAX (0.45).
-  // Within the opening, the player walks freely through in Z between the commons
-  // and the abyssal plain, with lateral sliding against the stone doorposts.
-  // Outside the opening, the solid stone wall stops the player from penetrating.
-  const GATE_X_MIN = -0.45, GATE_X_MAX = 0.45;
+  // South wall gate: walkable opening is the scaled mesh half-width.
+  // ±0.45 against a ~1.84m gate was a door-width of invisible stone.
+  const GATE_X_MIN = -gateHalfOpen, GATE_X_MAX = gateHalfOpen;
   if (pos.z >= gateZMin && pos.z <= gateZMax && pos.x >= -2.5 && pos.x <= 2.5) {
     if (pos.x >= GATE_X_MIN && pos.x <= GATE_X_MAX) {
-      // Inside archway opening: slide laterally against stone jambs
-      const margin = 0.25;
+      const margin = 0.05;
       if (pos.x < GATE_X_MIN + margin) pos.x = GATE_X_MIN + margin;
       else if (pos.x > GATE_X_MAX - margin) pos.x = GATE_X_MAX - margin;
       // Z passes freely through doorway
@@ -1742,6 +1739,9 @@ function buildRoom(mode){
   const segLen = rawStrLen * SCALE;
   const gateLen = rawGateLen * SCALE;
   const flankLen = (actualSeg - gateLen) / 2;
+  // Mesh is 7.41m along-wall including jambs. Leave a sliver of stone
+  // each side. Walkable slot == the arch you see.
+  gateHalfOpen = Math.max(0.4, gateLen / 2 - 0.08);
   function placeRun(axis, fixedCoord, ry, gateIndex) {
     for (let i = 0; i < n; i++) {
       const t = -wallSpan + i * actualSeg;
@@ -1998,63 +1998,28 @@ function buildDoors(doors){
   doorGroup.children.slice().forEach(c => doorGroup.remove(c));
   doorObstacles = [];
   doorTriggers = [];
-  const isHome = currentRoomMode === 'Home';
-  const doorZ = isHome ? 15.5 : 28.8;
-  const doorSpan = 2.2;
-  const startX = -(doors.length - 1) * doorSpan / 2;
+  // The fort gate mesh IS the door. Trigger uses gateZWall / gateHalfOpen
+  // from buildRoom. A second frame at z=28.8 was not the arch you walk.
+  const z = gateZWall;
+  const depth = Math.max(0.55, (gateZMax - gateZMin) / 2);
   doors.forEach((d, i) => {
-    const x = startX + i * doorSpan;
-    const z = doorZ;
-    const ry = 0;
     if (d.url) {
       doorTriggers.push({
-        x, z,
-        rotY: ry,
-        halfWidth: 0.80,
-        thresholdDepth: 0.50,
-        r: 1.0,
+        x: 0, z,
+        rotY: 0,
+        halfWidth: gateHalfOpen,
+        thresholdDepth: depth,
+        r: gateHalfOpen,
         url: d.url,
         peer: d.peer || 'peer'
       });
     }
-    const color = d.locked ? 0xc9a75f : 0x67c98a;
-    const mat = new THREE.MeshStandardMaterial({color, emissive: color, emissiveIntensity: 0.25});
-    const frame = new THREE.Group();
-    frame.position.set(x, 0, z);
-    frame.rotation.y = ry;
-    const post = new THREE.Mesh(new THREE.BoxGeometry(0.14, 2.0, 0.14), mat);
-    const left = post.clone(); left.position.set(-0.85, 1.0, 0);
-    const right = post.clone(); right.position.set(0.85, 1.0, 0);
-    const lintel = new THREE.Mesh(new THREE.BoxGeometry(1.84, 0.14, 0.14), mat);
-    lintel.position.set(0, 2.0, 0);
-    frame.add(left, right, lintel);
     const label = labelSprite(['→ ' + (d.peer || 'peer'), d.locked ? 'locked' : 'open'],
                                 d.locked ? '#c9a75f' : '#67c98a');
-    label.position.set(0, 2.6, 0);
-    frame.add(label);
-    doorGroup.add(frame);
-
-    frame.updateMatrixWorld(true);
-    const leftPos = new THREE.Vector3(); left.getWorldPosition(leftPos);
-    const rightPos = new THREE.Vector3(); right.getWorldPosition(rightPos);
-    const postR = 0.08;
-    doorObstacles.push({x: leftPos.x, z: leftPos.z, r: postR}, {x: rightPos.x, z: rightPos.z, r: postR});
+    label.scale.set(1.05, 0.4, 1);
+    label.position.set(0, 2.45, z - 1.4);
+    doorGroup.add(label);
   });
-
-  // End of West rampart walkway crossing trigger (Frosty):
-  if (!isHome && hasRamparts && doors.length > 0) {
-    const d = doors[0];
-    doorTriggers.push({
-      x: -10.5 + 1.35 * (3.5 / 14.5626688),
-      z: 9.80 - 0.2,
-      rotY: 0,
-      halfWidth: 0.90,
-      thresholdDepth: 0.50,
-      r: 1.0,
-      url: d.url,
-      peer: d.peer || 'peer'
-    });
-  }
 }
 
 // Crossing a peer door: find (or, matching the 2D map's own fallback,
