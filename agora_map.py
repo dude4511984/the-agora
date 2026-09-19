@@ -771,6 +771,65 @@ function updateFloor(radius, ringInner, ringOuter, repeats){
   if (floorMat.roughnessMap) floorMat.roughnessMap.repeat.set(repeats, repeats);
 }
 
+// Frosty's south gate opens onto a real threshold rather than the old sky-only
+// plain. It uses the same locally served Poly Haven CC0 pavement as the
+// courtyard, narrowed to the gate's passable collision corridor and lit by
+// locally served CC0 lanterns. The far marker deliberately stops short of the
+// fallback boundary: it is a place to arrive at, not a pretend Home room.
+const gateThresholdGroup = new THREE.Group();
+scene.add(gateThresholdGroup);
+let gateThresholdRevision = 0;
+
+function thresholdMat(repeatX, repeatZ) {
+  const material = new THREE.MeshStandardMaterial({
+    map: floorTex('/models/cobblestone_pavement/cobblestone_pavement_diff_1k.jpg', true),
+    normalMap: floorTex('/models/cobblestone_pavement/cobblestone_pavement_nor_gl_1k.jpg', false),
+    roughnessMap: floorTex('/models/cobblestone_pavement/cobblestone_pavement_rough_1k.jpg', false),
+    roughness: 1,
+    metalness: 0,
+  });
+  [material.map, material.normalMap, material.roughnessMap].forEach(t => t.repeat.set(repeatX, repeatZ));
+  return material;
+}
+
+function buildGateThreshold(isHome) {
+  gateThresholdRevision += 1;
+  const revision = gateThresholdRevision;
+  gateThresholdGroup.children.slice().forEach(c => gateThresholdGroup.remove(c));
+  if (isHome) return;
+
+  // Gate collision permits x=-0.20..0.20; the broad path begins beyond the
+  // jambs at z=10.7, where walking naturally opens into this 2.4m approach.
+  const path = new THREE.Mesh(new THREE.PlaneGeometry(2.4, 19.0), thresholdMat(1.2, 9.5));
+  path.rotation.x = -Math.PI / 2;
+  path.position.set(0, 0.012, 20.2);
+  gateThresholdGroup.add(path);
+
+  const marker = new THREE.Mesh(
+    new THREE.CircleGeometry(1.45, 32),
+    thresholdMat(1.45, 1.45)
+  );
+  marker.rotation.x = -Math.PI / 2;
+  marker.position.set(0, 0.018, 29.7);
+  gateThresholdGroup.add(marker);
+
+  // The physical lantern meshes and the pools of light use the harvested
+  // Poly Haven asset, not an invented torch stand.
+  [[-1.65, 15.2], [1.65, 15.2], [-1.65, 24.4], [1.65, 24.4]].forEach(([x, z]) => {
+    const light = new THREE.PointLight(0xffb366, 1.0, 7.0, 2);
+    light.position.set(x, 1.45, z);
+    gateThresholdGroup.add(light);
+    new THREE.GLTFLoader().load('/models/lantern_01/lantern_01.gltf', (gltf) => {
+      if (revision !== gateThresholdRevision || currentRoomMode === 'Home') return;
+      const lanternPost = gltf.scene;
+      const raw = new THREE.Box3().setFromObject(lanternPost).getSize(new THREE.Vector3());
+      lanternPost.scale.setScalar(0.9 / Math.max(raw.y, 0.01));
+      lanternPost.position.set(x, 0, z);
+      gateThresholdGroup.add(lanternPost);
+    }, undefined, (err) => console.warn('threshold lantern asset load error:', err));
+  });
+}
+
 // A distant fallback only — real containment is the wall collision now
 // (wallObstacles), which correctly leaves the gate opening passable. This
 // used to be the actual boundary before the walls existed; left at 10 it
@@ -1572,6 +1631,7 @@ function buildRoom(mode){
 
   updateFloor(isHome ? 9.8 : 15, isHome ? 9.5 : 14.7, isHome ? 9.8 : 15, isHome ? 8 : 12);
   updateLighting(isHome);
+  buildGateThreshold(isHome);
 
   if (!fortTemplates) return;
 
@@ -1901,8 +1961,8 @@ function buildDoors(doors){
 function teleportPlayer(x, z){
   player.position.set(x, player.position.y, z);
   const isHome = currentRoomMode === 'Home' || z < 5.0;
-  const camDist = isHome ? 2.4 : 5.5;
-  const camH = isHome ? 2.0 : 3.6;
+  const camDist = isHome ? 2.0 : 5.5;
+  const camH = isHome ? 1.6 : 3.6;
   camera.position.set(x, player.position.y + camH, z + camDist);
   controls.target.set(x, player.position.y + 1.0, z);
   // lantern follows player in animate()
@@ -1958,24 +2018,27 @@ function _phase(label){
 }
 function createShape3D(params, portraitTex){
   const group = new THREE.Group();
+  const isHome = currentRoomMode === 'Home';
+  const mult = isHome ? (6.88 / 10.5) : 1.0;
   function makeGeo(shape, s, facets){
     s = s || [1, 1, 1];
+    const ms = [s[0] * mult, s[1] * mult, s[2] * mult];
     // A named facet count gives a low-poly prism/spire look instead of the
     // smooth default — a hexagon IS a 6-sided cylinder. Kin, 2026-09-18:
     // Lumen wanted exactly this and there was no way to render it.
     const radialSegments = (typeof facets === 'number' && facets >= 3) ? facets : 32;
     let geo;
     switch((shape || 'sphere').toLowerCase()){
-      case 'box': geo = new THREE.BoxGeometry(1.2 * s[0], 1.2 * s[1], 1.2 * s[2]); break;
-      case 'cylinder': geo = new THREE.CylinderGeometry(0.6 * s[0], 0.6 * s[0], 1.4 * s[1], radialSegments); break;
-      case 'torus': geo = new THREE.TorusGeometry(0.7 * s[0], 0.22 * Math.min(s[1], s[2]), 16, 36); break;
-      case 'cone': geo = new THREE.ConeGeometry(0.7 * s[0], 1.4 * s[1], radialSegments); break;
-      case 'tetrahedron': geo = new THREE.TetrahedronGeometry(0.8 * s[0]); break;
-      case 'octahedron': geo = new THREE.OctahedronGeometry(0.8 * s[0]); break;
-      case 'dodecahedron': geo = new THREE.DodecahedronGeometry(0.8 * s[0]); break;
-      case 'icosahedron': geo = new THREE.IcosahedronGeometry(0.8 * s[0]); break;
+      case 'box': geo = new THREE.BoxGeometry(1.2 * ms[0], 1.2 * ms[1], 1.2 * ms[2]); break;
+      case 'cylinder': geo = new THREE.CylinderGeometry(0.6 * ms[0], 0.6 * ms[0], 1.4 * ms[1], radialSegments); break;
+      case 'torus': geo = new THREE.TorusGeometry(0.7 * ms[0], 0.22 * Math.min(ms[1], ms[2]), 16, 36); break;
+      case 'cone': geo = new THREE.ConeGeometry(0.7 * ms[0], 1.4 * ms[1], radialSegments); break;
+      case 'tetrahedron': geo = new THREE.TetrahedronGeometry(0.8 * ms[0]); break;
+      case 'octahedron': geo = new THREE.OctahedronGeometry(0.8 * ms[0]); break;
+      case 'dodecahedron': geo = new THREE.DodecahedronGeometry(0.8 * ms[0]); break;
+      case 'icosahedron': geo = new THREE.IcosahedronGeometry(0.8 * ms[0]); break;
       case 'sphere':
-      default: geo = new THREE.SphereGeometry(0.7 * s[0], 32, 24); break;
+      default: geo = new THREE.SphereGeometry(0.7 * ms[0], 32, 24); break;
     }
     return geo;
   }
@@ -2009,10 +2072,11 @@ function createShape3D(params, portraitTex){
     const acc = params.accent;
     const accMesh = new THREE.Mesh(makeGeo(acc.shape, acc.scale, acc.facets), makeMat(acc));
     if (Array.isArray(acc.offset) && acc.offset.length === 3) {
-      accMesh.position.set(acc.offset[0], acc.offset[1], acc.offset[2]);
+      accMesh.position.set(acc.offset[0] * mult, acc.offset[1] * mult, acc.offset[2] * mult);
     }
     group.add(accMesh);
   }
+  group.userData = {scaleMult: mult};
   return group;
 }
 function addPresence(label, i, n, avatarUrl, recent){
@@ -2026,6 +2090,7 @@ function addPresence(label, i, n, avatarUrl, recent){
   const kinItem = { label, x, z, obj: null };
   presentKinList.push(kinItem);
   const loader = new THREE.TextureLoader();
+  const shapeMult = isHome ? (6.88 / 10.5) : 1.0;
   const build = (tex) => {
     const mat = new THREE.SpriteMaterial({map: tex, transparent: true});
     const spr = new THREE.Sprite(mat);
@@ -2037,9 +2102,9 @@ function addPresence(label, i, n, avatarUrl, recent){
     presenceSprites.push(spr);
   };
   const placeShape = (s3d, tex) => {
-    const obj = createShape3D(s3d, tex || null);
+    const obj = createShape3D(s3d, tex || null, shapeMult);
     obj.position.set(x, 1.1, z);
-    obj.userData = {baseY: 1.1, bob: phase, isCustom3D: true, kin: label};
+    obj.userData = {baseY: 1.1, bob: phase, isCustom3D: true, kin: label, scaleMult: shapeMult};
     kinItem.obj = obj;
     scene.add(obj);
     presenceSprites.push(obj);
