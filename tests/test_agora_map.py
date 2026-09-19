@@ -284,7 +284,7 @@ class Agora3DHomeRoomCharacter(unittest.TestCase):
     def test_page_3d_home_distinct_places_and_presence_scale(self):
         page = agora_map.PAGE_3D
         self.assertIn("const placeR = isHome ? 4.4 : 7.4;", page)
-        self.assertIn("const doorR = isHome ? 4.8 : 8.3;", page)
+        self.assertIn("const doorR = isHome ? 4.2 : 8.3;", page)
         self.assertIn("const r = isHome ? 2.6 : 4.2;", page)
 
     def test_page_3d_home_distinct_lighting_palette(self):
@@ -306,9 +306,9 @@ class Agora3DHomeRoomCharacter(unittest.TestCase):
     def test_page_3d_home_scales_claimed_shapes_proportionally(self):
         page = agora_map.PAGE_3D
         self.assertIn("function createShape3D(params, portraitTex)", page)
-        self.assertIn("const mult = isHome ? (6.88 / 10.5) : 1.0;", page)
+        self.assertIn("const mult = (typeof scaleMult === 'number') ? scaleMult : (isHome ? 0.42 : 1.0);", page)
         self.assertIn("const ms = [s[0] * mult, s[1] * mult, s[2] * mult];", page)
-        self.assertIn("const shapeMult = isHome ? (6.88 / 10.5) : 1.0;", page)
+        self.assertIn("const shapeMult = isHome ? 0.42 : 1.0;", page)
 
     def test_page_3d_frosty_south_gate_has_a_real_cc0_threshold(self):
         page = agora_map.PAGE_3D

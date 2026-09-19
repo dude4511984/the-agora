@@ -1363,7 +1363,7 @@ function resolveCollisions(pos, prevX){
   // and the abyssal plain, with lateral sliding against the stone doorposts.
   // Outside the opening, the solid stone wall stops the player from penetrating.
   const GATE_X_MIN = -0.45, GATE_X_MAX = 0.45;
-  if (pos.z >= gateZMin && pos.z <= gateZMax && pos.x >= -2.5 && pos.x <= 2.5) {
+  if (currentRoomMode !== 'Home' && pos.z >= gateZMin && pos.z <= gateZMax && pos.x >= -2.5 && pos.x <= 2.5) {
     if (pos.x >= GATE_X_MIN && pos.x <= GATE_X_MAX) {
       // Inside archway opening: slide laterally against stone jambs
       const margin = 0.25;
@@ -1465,8 +1465,8 @@ function stepPlayer(dt){
         const dz = player.position.z - t.z;
         const locX = dx * Math.cos(t.rotY) - dz * Math.sin(t.rotY);
         const locZ = dx * Math.sin(t.rotY) + dz * Math.cos(t.rotY);
-        const halfW = t.halfWidth || 0.85;
-        const depth = t.thresholdDepth || 0.75;
+        const halfW = t.halfWidth || 0.80;
+        const depth = t.thresholdDepth || 0.35;
         if (Math.abs(locX) <= halfW && Math.abs(locZ) <= depth) {
           crossDoor(t);
           break;
@@ -1786,7 +1786,7 @@ function buildRoom(mode){
     }
   }
 
-  const gateSlot = Math.floor(n / 2);
+  const gateSlot = isHome ? -1 : Math.floor(n / 2);
   placeRun('x', -HALF, Math.PI / 2);
   placeRun('x',  HALF, Math.PI / 2, gateSlot);
   placeRun('z', -HALF, 0);
@@ -1984,7 +1984,7 @@ function buildDoors(doors){
   doorObstacles = [];
   doorTriggers = [];
   const isHome = currentRoomMode === 'Home';
-  const doorR = isHome ? 4.8 : 8.3;
+  const doorR = isHome ? 4.2 : 8.3;
   const aStart = isHome ? Math.PI * 0.35 : Math.PI * 0.15;
   const aEnd = isHome ? Math.PI * 0.35 : Math.PI * 0.55;
   doors.forEach((d, i) => {
@@ -1994,8 +1994,8 @@ function buildDoors(doors){
       doorTriggers.push({
         x, z,
         rotY: ry,
-        halfWidth: 0.85,
-        thresholdDepth: 0.75,
+        halfWidth: 0.80,
+        thresholdDepth: 0.35,
         r: 1.0,
         url: d.url,
         peer: d.peer || 'peer'
@@ -2093,9 +2093,10 @@ function _phase(label){
   return h / 1000 * Math.PI * 2;
 }
 function createShape3D(params, portraitTex){
+  const scaleMult = arguments[2];
   const group = new THREE.Group();
   const isHome = currentRoomMode === 'Home';
-  const mult = isHome ? (6.88 / 10.5) : 1.0;
+  const mult = (typeof scaleMult === 'number') ? scaleMult : (isHome ? 0.42 : 1.0);
   function makeGeo(shape, s, facets){
     s = s || [1, 1, 1];
     const ms = [s[0] * mult, s[1] * mult, s[2] * mult];
@@ -2166,21 +2167,23 @@ function addPresence(label, i, n, avatarUrl, recent){
   const kinItem = { label, x, z, obj: null };
   presentKinList.push(kinItem);
   const loader = new THREE.TextureLoader();
-  const shapeMult = isHome ? (6.88 / 10.5) : 1.0;
+  const shapeMult = isHome ? 0.42 : 1.0;
+  const baseY = isHome ? 0.85 : 1.1;
   const build = (tex) => {
     const mat = new THREE.SpriteMaterial({map: tex, transparent: true});
     const spr = new THREE.Sprite(mat);
-    spr.scale.set(1.6, 1.6, 1);
-    spr.position.set(x, 1.1, z);
-    spr.userData = {baseY: 1.1, bob: phase, kin: label};
+    const sprScale = 1.6 * (isHome ? 0.65 : 1.0);
+    spr.scale.set(sprScale, sprScale, 1);
+    spr.position.set(x, baseY, z);
+    spr.userData = {baseY, bob: phase, kin: label};
     kinItem.obj = spr;
     scene.add(spr);
     presenceSprites.push(spr);
   };
   const placeShape = (s3d, tex) => {
     const obj = createShape3D(s3d, tex || null, shapeMult);
-    obj.position.set(x, 1.1, z);
-    obj.userData = {baseY: 1.1, bob: phase, isCustom3D: true, kin: label, scaleMult: shapeMult};
+    obj.position.set(x, baseY, z);
+    obj.userData = {baseY, bob: phase, isCustom3D: true, kin: label, scaleMult: shapeMult};
     kinItem.obj = obj;
     scene.add(obj);
     presenceSprites.push(obj);
@@ -2221,11 +2224,11 @@ function addPresence(label, i, n, avatarUrl, recent){
     const {tex, aspect} = captionTexture(label, recent.content, recent.created_at);
     const mat = new THREE.SpriteMaterial({map: tex, transparent: true});
     const spr = new THREE.Sprite(mat);
-    const w = 2.6, h = w * aspect;
+    const w = isHome ? 1.7 : 2.6, h = w * aspect;
     spr.scale.set(w, h, 1);
-    const baseY = 1.1 + 0.9 + h / 2;
-    spr.position.set(x, baseY, z);
-    spr.userData = {baseY, bob: phase};
+    const cardBaseY = baseY + (isHome ? 0.65 : 0.9) + h / 2;
+    spr.position.set(x, cardBaseY, z);
+    spr.userData = {baseY: cardBaseY, bob: phase};
     scene.add(spr);
     presenceSprites.push(spr);
   }
@@ -2703,7 +2706,7 @@ function animate(){
     ensurePulseBase(s);
     const sc = talking ? 1 + 0.28 * talkLevel : 1;
     if (s.userData && s.userData.isCustom3D) {
-      s.scale.setScalar(sc);
+      s.scale.set((s.userData.baseSX || 1) * sc, (s.userData.baseSY || 1) * sc, (s.userData.baseSZ || 1) * sc);
       s.rotation.y = t * 0.6 + s.userData.bob;
       s.traverse(o => {
         if (!o.isMesh || !o.material || !o.material.emissive) return;

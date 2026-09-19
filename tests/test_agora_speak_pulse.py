@@ -19,3 +19,7 @@ class SpeakPulse(unittest.TestCase):
         self.assertIn("1 + 0.28 * talkLevel", page)
         self.assertIn("talkLight.intensity", page)
         self.assertIn("attachVoiceAnalyser(audio)", page)
+
+
+if __name__ == "__main__":
+    unittest.main()
