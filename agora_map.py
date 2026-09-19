@@ -1315,6 +1315,13 @@ const RAMP_Z_START = 0.0;
 const RAMP_Z_STAIR_TOP = 3.62;
 const RAMP_Z_END = 9.80;
 
+if (new URLSearchParams(location.search).get('view') === 'rampart') {
+  const rx = (RAMP_X_MIN + RAMP_X_MAX) / 2;
+  player.position.set(rx, RAMPART_DECK_H, RAMP_Z_END - 1.4);
+  camera.position.set(rx + 0.2, RAMPART_DECK_H + 1.6, RAMP_Z_END - 3.2);
+  controls.target.set(rx, RAMPART_DECK_H + 0.9, RAMP_Z_END - 0.3);
+}
+
 let hasRamparts = true;
 let gateZWall = 10.5;
 let gateZMin = 9.2, gateZMax = 11.2;
@@ -1998,26 +2005,48 @@ function buildDoors(doors){
   doorGroup.children.slice().forEach(c => doorGroup.remove(c));
   doorObstacles = [];
   doorTriggers = [];
-  // The fort gate mesh IS the door. Trigger uses gateZWall / gateHalfOpen
-  // from buildRoom. A second frame at z=28.8 was not the arch you walk.
-  const z = gateZWall;
-  const depth = Math.max(0.55, (gateZMax - gateZMin) / 2);
-  doors.forEach((d, i) => {
+  // Crossing lives at the end of the walkway, not in a wall cutout.
+  // Frosty: last plank of the west rampart (RAMP_Z_END). Home has no
+  // rampart — a floor plaque at the south-west inside corner.
+  let x, z, y, halfW, depth;
+  if (hasRamparts) {
+    x = (RAMP_X_MIN + RAMP_X_MAX) / 2;
+    z = RAMP_Z_END - 0.30;
+    y = RAMPART_DECK_H;
+    halfW = (RAMP_X_MAX - RAMP_X_MIN) / 2 - 0.08;
+    depth = 0.45;
+  } else {
+    x = -currentHalf + 1.2;
+    z = currentHalf - 1.2;
+    y = 0;
+    halfW = 0.70;
+    depth = 0.70;
+  }
+  doors.forEach((d) => {
     if (d.url) {
       doorTriggers.push({
-        x: 0, z,
+        x, z,
         rotY: 0,
-        halfWidth: gateHalfOpen,
+        halfWidth: halfW,
         thresholdDepth: depth,
-        r: gateHalfOpen,
+        r: halfW,
         url: d.url,
         peer: d.peer || 'peer'
       });
     }
+    const pad = new THREE.Mesh(
+      new THREE.CircleGeometry(0.72, 24),
+      new THREE.MeshStandardMaterial({
+        color: 0xc9a75f, emissive: 0x4a3208, emissiveIntensity: 0.45, roughness: 0.85
+      })
+    );
+    pad.rotation.x = -Math.PI / 2;
+    pad.position.set(x, y + 0.05, z);
+    doorGroup.add(pad);
     const label = labelSprite(['→ ' + (d.peer || 'peer'), d.locked ? 'locked' : 'open'],
                                 d.locked ? '#c9a75f' : '#67c98a');
     label.scale.set(1.05, 0.4, 1);
-    label.position.set(0, 2.45, z - 1.4);
+    label.position.set(x, y + 1.25, z);
     doorGroup.add(label);
   });
 }
