@@ -779,6 +779,17 @@ function updateFloor(radius, ringInner, ringOuter, repeats){
 const gateThresholdGroup = new THREE.Group();
 scene.add(gateThresholdGroup);
 let gateThresholdRevision = 0;
+let thresholdWayfinderTemplate = null;
+
+new THREE.GLTFLoader().load(
+  '/models/standing_chalkboard_01/standing_chalkboard_01.gltf',
+  (gltf) => {
+    thresholdWayfinderTemplate = gltf.scene;
+    buildGateThreshold(currentRoomMode === 'Home');
+  },
+  undefined,
+  (err) => console.warn('threshold wayfinder asset load error:', err)
+);
 
 function thresholdMat(repeatX, repeatZ) {
   const material = new THREE.MeshStandardMaterial({
@@ -812,6 +823,23 @@ function buildGateThreshold(isHome) {
   marker.rotation.x = -Math.PI / 2;
   marker.position.set(0, 0.018, 29.7);
   gateThresholdGroup.add(marker);
+
+  // Poly Haven's Standing Chalkboard 01 (CC0) marks the surveyed end of
+  // Frosty's current reach. Its wording is deliberately a direction and a
+  // status, not an invented distance or a pretend Home destination.
+  if (thresholdWayfinderTemplate) {
+    const wayfinder = thresholdWayfinderTemplate.clone(true);
+    const raw = new THREE.Box3().setFromObject(wayfinder).getSize(new THREE.Vector3());
+    wayfinder.scale.setScalar(1.35 / Math.max(raw.y, 0.01));
+    const bounds = new THREE.Box3().setFromObject(wayfinder);
+    wayfinder.position.set(1.7, -bounds.min.y, 28.8);
+    wayfinder.rotation.y = Math.PI;
+    gateThresholdGroup.add(wayfinder);
+
+    const sign = labelSprite(['HOME →', 'way under survey'], '#ffcf7a');
+    sign.position.set(1.7, 1.0, 28.45);
+    gateThresholdGroup.add(sign);
+  }
 
   // The physical lantern meshes and the pools of light use the harvested
   // Poly Haven asset, not an invented torch stand.
@@ -2352,6 +2380,51 @@ function setSpeakingKin(label, speaking){
   setChairSpeaker(Boolean(speaking));
 }
 
+let voiceCtx = null, voiceAnalyser = null, voiceFreq = null;
+function attachVoiceAnalyser(audio){
+  voiceAnalyser = null;
+  voiceFreq = null;
+  try {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    if (!voiceCtx) voiceCtx = new AC();
+    const src = voiceCtx.createMediaElementSource(audio);
+    voiceAnalyser = voiceCtx.createAnalyser();
+    voiceAnalyser.fftSize = 256;
+    voiceFreq = new Uint8Array(voiceAnalyser.frequencyBinCount);
+    src.connect(voiceAnalyser);
+    voiceAnalyser.connect(voiceCtx.destination);
+    voiceCtx.resume && voiceCtx.resume();
+  } catch (_) {
+    voiceAnalyser = null;
+    voiceFreq = null;
+  }
+}
+function voiceLevel(t){
+  if (voiceAnalyser && voiceFreq && currentVoiceAudio && !currentVoiceAudio.paused) {
+    voiceAnalyser.getByteFrequencyData(voiceFreq);
+    let s = 0;
+    for (let i = 0; i < voiceFreq.length; i++) s += voiceFreq[i];
+    return Math.min(1, (s / voiceFreq.length) / 80);
+  }
+  return 0.4 + 0.6 * Math.abs(Math.sin(t * 10));
+}
+function ensurePulseBase(obj){
+  if (!obj || obj.userData.pulseReady) return;
+  obj.userData.pulseReady = true;
+  obj.userData.baseSX = obj.scale.x;
+  obj.userData.baseSY = obj.scale.y;
+  obj.userData.baseSZ = obj.scale.z;
+  obj.traverse(o => {
+    if (o.isMesh && o.material) {
+      o.userData.baseEI = o.material.emissiveIntensity || 0;
+      o.userData.baseEm = o.material.emissive ? o.material.emissive.clone() : new THREE.Color(0,0,0);
+    }
+  });
+}
+const talkLight = new THREE.PointLight(0xffcf7a, 0, 6, 2);
+scene.add(talkLight);
+
 async function startVoiceRecording(){
   if (isVoiceRecording) return;
   pttTargetKin = getNearestKin();
@@ -2506,6 +2579,7 @@ function playVoiceAudio(url, kinLabel, saidText){
   }
   const audio = new Audio(url);
   currentVoiceAudio = audio;
+  attachVoiceAnalyser(audio);
   setSpeakingKin(kinLabel, true);
 
   if (voiceStatusEl){
@@ -2559,6 +2633,13 @@ if (pttBtn){
   pttBtn.addEventListener('touchstart', (e) => { e.preventDefault(); startVoiceRecording(); });
   pttBtn.addEventListener('touchend', (e) => { e.preventDefault(); stopVoiceRecording(); });
 }
+const _fakeSpeak = new URLSearchParams(location.search).get('speak');
+if (_fakeSpeak) {
+  setTimeout(() => {
+    setSpeakingKin(_fakeSpeak, true);
+    if (voiceStatusEl) voiceStatusEl.textContent = 'speaking (verify) ' + _fakeSpeak;
+  }, 800);
+}
 
 // Sprites should always face the camera — cheap, and it's the whole reason
 // billboards read as alive instead of like cardboard cutouts.
@@ -2572,10 +2653,36 @@ function animate(){
   // is cumulative and doesn't consume like getDelta() does.
   const t = clock.getElapsedTime();
   placeLantern(t);
+  const talkLevel = speakingKinLabel ? voiceLevel(t) : 0;
+  if (speakingKinLabel) {
+    const item = presentKinList.find(k => k.label === speakingKinLabel);
+    if (item && item.obj) {
+      talkLight.position.copy(item.obj.position);
+      talkLight.position.y += 0.9;
+      talkLight.intensity = 0.8 + 2.2 * talkLevel;
+    } else talkLight.intensity = 0;
+  } else talkLight.intensity = 0;
   presenceSprites.forEach(s => {
-    s.position.y = s.userData.baseY + Math.sin(t * 1.4 + s.userData.bob) * 0.06;
+    const talking = speakingKinLabel && s.userData && s.userData.kin === speakingKinLabel;
+    const bob = Math.sin(t * 1.4 + (s.userData.bob || 0)) * 0.06;
+    s.position.y = (s.userData.baseY || 1.1) + bob + (talking ? 0.1 * talkLevel : 0);
+    ensurePulseBase(s);
+    const sc = talking ? 1 + 0.28 * talkLevel : 1;
     if (s.userData && s.userData.isCustom3D) {
+      s.scale.setScalar(sc);
       s.rotation.y = t * 0.6 + s.userData.bob;
+      s.traverse(o => {
+        if (!o.isMesh || !o.material || !o.material.emissive) return;
+        if (talking) {
+          o.material.emissive.set(0xffcf7a);
+          o.material.emissiveIntensity = (o.userData.baseEI || 0) + 0.5 + 1.3 * talkLevel;
+        } else if (o.userData.baseEm) {
+          o.material.emissive.copy(o.userData.baseEm);
+          o.material.emissiveIntensity = o.userData.baseEI || 0;
+        }
+      });
+    } else {
+      s.scale.set(s.userData.baseSX * sc, s.userData.baseSY * (talking ? sc : 1), s.userData.baseSZ);
     }
   });
   controls.update();
