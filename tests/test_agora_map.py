@@ -198,6 +198,30 @@ class Agora3DBoothAssets(unittest.TestCase):
         self.assertIn("bench: 0.75", page)
 
 
+class Agora3DSpeakerChair(unittest.TestCase):
+
+    def test_speaker_chair_assets_exist_locally(self):
+        repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        static_models = os.path.join(repo_root, "static", "models")
+        chair_dir = os.path.join(static_models, "wooden_chair_01")
+        self.assertTrue(os.path.isfile(os.path.join(chair_dir, "wooden_chair_01.gltf")))
+        self.assertTrue(os.path.isfile(os.path.join(chair_dir, "WoodenChair_01.bin")))
+        self.assertTrue(os.path.isfile(os.path.join(chair_dir, "textures", "WoodenChair_01_diff_1k.jpg")))
+        self.assertTrue(os.path.isfile(os.path.join(chair_dir, "textures", "WoodenChair_01_nor_gl_1k.jpg")))
+        self.assertTrue(os.path.isfile(os.path.join(chair_dir, "textures", "WoodenChair_01_arm_1k.jpg")))
+
+    def test_page_3d_loads_chair_and_preserves_amber_emissive(self):
+        page = agora_map.PAGE_3D
+        self.assertIn("'/models/wooden_chair_01/wooden_chair_01.gltf'", page)
+        self.assertIn("function setChairSpeaker(speaking)", page)
+        self.assertIn("setChairSpeaker(Boolean(root.speaker));", page)
+        self.assertIn("o.material.emissiveMap = o.material.map;", page)
+        self.assertIn("o.material.emissive.set(0xff9922);", page)
+        self.assertIn("o.material.emissiveIntensity = 1.4;", page)
+        self.assertIn("chairMat.color.set(0xffcf7a);", page)
+        self.assertIn("chairMat.emissive.set(0x332200);", page)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
 

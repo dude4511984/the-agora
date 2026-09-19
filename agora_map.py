@@ -738,7 +738,7 @@ scene.add(marker);
 // contact normal instead of refused outright, so sliding along an edge
 // still feels like walking, not hitting a wall dead-on every time.
 const PLAYER_R = 0.35;
-const staticObstacles = [{x: 0, z: -2.2, r: 1.05}];   // the speaker chair
+const staticObstacles = [{x: 0, z: -2.2, r: 0.65}];   // the speaker chair
 let placeObstacles = [];
 let doorObstacles = [];
 let wallObstacles = [];
@@ -911,11 +911,64 @@ function stepPlayer(dt){
   }
 }
 
-// The Speaker chair, focal, empty or seated. Static shape, live color only.
+// The Speaker chair, focal, empty or seated. A CC0 Gothic wooden throne
+// (Poly Haven's "Wooden Chair 01", dark-stained wood with cathedral pointed
+// tracery back, finials, and turned legs). When someone is speaking,
+// lights up with an amber emissive glow through the carved wood material.
 const chairMat = new THREE.MeshStandardMaterial({color:0x555555, emissive:0x000000});
-const chair = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 0.9, 0.08, 24), chairMat);
-chair.position.set(0, 0.05, -2.2);
+const chair = new THREE.Group();
+chair.position.set(0, 0, -2.2);
 scene.add(chair);
+
+let chairMesh = null;
+let chairSpeaking = false;
+
+function setChairSpeaker(speaking){
+  chairSpeaking = Boolean(speaking);
+  if (chairSpeaking) {
+    chairMat.color.set(0xffcf7a);
+    chairMat.emissive.set(0x332200);
+  } else {
+    chairMat.color.set(0x555555);
+    chairMat.emissive.set(0x000000);
+  }
+  if (chairMesh) {
+    chairMesh.traverse(o => {
+      if (o.isMesh && o.material) {
+        if (!o.material.emissiveMap && o.material.map) {
+          o.material.emissiveMap = o.material.map;
+          o.material.needsUpdate = true;
+        }
+        if (chairSpeaking) {
+          // Warm amber glow through the carved wood grain
+          o.material.emissive.set(0xff9922);
+          o.material.emissiveIntensity = 1.4;
+        } else {
+          o.material.emissive.set(0x000000);
+          o.material.emissiveIntensity = 0;
+        }
+      }
+    });
+  }
+}
+
+new THREE.GLTFLoader().load(
+  '/models/wooden_chair_01/wooden_chair_01.gltf',
+  (gltf) => {
+    chairMesh = gltf.scene;
+    // The raw throne sits at floor level (Y ~ 0) and faces +Z (toward the commons center).
+    // Scale 1.0 retains its commanding 2.27m height with standard 0.50m seat height.
+    chairMesh.traverse(o => {
+      if (o.isMesh && o.material) {
+        o.material = o.material.clone();
+      }
+    });
+    chair.add(chairMesh);
+    setChairSpeaker(chairSpeaking);
+  },
+  undefined,
+  (err) => console.warn('speaker chair asset load error:', err)
+);
 
 // First real asset, not a placeholder box: a CC0 weathered stone figure
 // (Poly Haven's "Gothic Statue," downloaded and served locally at
@@ -1590,11 +1643,7 @@ async function loadNode(){
     if (view.error) throw new Error(view.error);
 
     // Speaker chair: lit only if someone is actually seated.
-    if (root.speaker) {
-      chairMat.color.set(0xffcf7a); chairMat.emissive.set(0x332200);
-    } else {
-      chairMat.color.set(0x555555); chairMat.emissive.set(0x000000);
-    }
+    setChairSpeaker(Boolean(root.speaker));
 
     // The real floor plan: whichever places this node actually signed as
     // children of the commons, plus its actual peer doors. No invented
