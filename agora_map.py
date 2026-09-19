@@ -651,8 +651,9 @@ controls.enablePan = false;   // panning would fight the walk-follow below
 // the camera every frame, so moving the camera here is a no-op; move
 // the player and let the existing offset sit inside the walls.
 if (new URLSearchParams(location.search).get('view') === 'inside') {
+  const isHomeView = location.search.includes('120') || location.search.toLowerCase().includes('home');
   player.position.set(0, 0, 0);
-  camera.position.set(0, 4.4, 6.5);
+  camera.position.set(0, isHomeView ? 3.6 : 4.4, isHomeView ? 5.0 : 6.5);
   controls.target.set(0, 1, 0);
 }
 // Outside the south gate, on the plain — lantern vs the unlit stretch.
@@ -665,8 +666,10 @@ if (new URLSearchParams(location.search).get('view') === 'plain') {
 // Wash is now a dusk hint, not a fill. Torches pool at the walls (range 7
 // dies before the courtyard center). The visitor lantern is what lights
 // where you stand, and the plain past the gate is actually dark.
-scene.add(new THREE.HemisphereLight(0xffe6c8, 0x3a3228, 0.10));
-scene.add(new THREE.AmbientLight(0xcbb89a, 0.04));
+const hemiLight = new THREE.HemisphereLight(0xffe6c8, 0x3a3228, 0.10);
+scene.add(hemiLight);
+const ambientLight = new THREE.AmbientLight(0xcbb89a, 0.04);
+scene.add(ambientLight);
 const key = new THREE.DirectionalLight(0xfff4e0, 0.14);
 key.position.set(6, 14, 4);
 scene.add(key);
@@ -674,18 +677,56 @@ const fill = new THREE.DirectionalLight(0xffd9a8, 0.05);
 fill.position.set(0, 8, 12);
 scene.add(fill);
 
-[[9.3, 0], [-9.3, 0], [0, 9.3], [0, -9.3],
- [7.4, 7.4], [7.4, -7.4], [-7.4, 7.4], [-7.4, -7.4]].forEach(([x, z]) => {
-  const torch = new THREE.PointLight(0xffb366, 1.15, 7, 2);
-  torch.position.set(x, 2.6, z);
-  scene.add(torch);
-  const flame = new THREE.Mesh(
-    new THREE.SphereGeometry(0.09, 8, 8),
-    new THREE.MeshBasicMaterial({color: 0xffcf7a})
-  );
-  flame.position.copy(torch.position);
-  scene.add(flame);
-});
+const torchGroup = new THREE.Group();
+scene.add(torchGroup);
+function buildTorches(coords, color, intensity, range){
+  torchGroup.children.slice().forEach(c => torchGroup.remove(c));
+  coords.forEach(([x, z]) => {
+    const torch = new THREE.PointLight(color, intensity, range, 2);
+    torch.position.set(x, 2.6, z);
+    torchGroup.add(torch);
+    const flame = new THREE.Mesh(
+      new THREE.SphereGeometry(0.09, 8, 8),
+      new THREE.MeshBasicMaterial({color: 0xffcf7a})
+    );
+    flame.position.copy(torch.position);
+    torchGroup.add(flame);
+  });
+}
+
+function updateLighting(isHome){
+  if (isHome) {
+    hemiLight.color.set(0xffdfb8);
+    hemiLight.groundColor.set(0x4a3828);
+    hemiLight.intensity = 0.16;
+    ambientLight.color.set(0xd4c2a8);
+    ambientLight.intensity = 0.08;
+    key.color.set(0xffe8c0);
+    key.intensity = 0.18;
+    fill.color.set(0xffd0a0);
+    fill.intensity = 0.07;
+    // Home: 4 warm wall torches along the bays + 4 warm corner brazier accents
+    buildTorches([
+      [0, -5.8], [0, 5.8], [-5.8, 0], [5.8, 0],
+      [4.8, 4.8], [4.8, -4.8], [-4.8, 4.8], [-4.8, -4.8]
+    ], 0xffaa55, 1.35, 6.5);
+  } else {
+    hemiLight.color.set(0xffe6c8);
+    hemiLight.groundColor.set(0x3a3228);
+    hemiLight.intensity = 0.10;
+    ambientLight.color.set(0xcbb89a);
+    ambientLight.intensity = 0.04;
+    key.color.set(0xfff4e0);
+    key.intensity = 0.14;
+    fill.color.set(0xffd9a8);
+    fill.intensity = 0.05;
+    // Frosty: 8 perimeter torches
+    buildTorches([
+      [9.3, 0], [-9.3, 0], [0, 9.3], [0, -9.3],
+      [7.4, 7.4], [7.4, -7.4], [-7.4, 7.4], [-7.4, -7.4]
+    ], 0xffb366, 1.15, 7.0);
+  }
+}
 
 // The floor: the commons. Poly Haven "Cobblestone Pavement" (CC0), 1k
 // jpg maps served from /models/ same as the fort walls — never fetched
@@ -720,6 +761,16 @@ const ring = new THREE.Mesh(
 ring.rotation.x = -Math.PI/2;
 scene.add(ring);
 
+function updateFloor(radius, ringInner, ringOuter, repeats){
+  floor.geometry.dispose();
+  floor.geometry = new THREE.CircleGeometry(radius, 64);
+  ring.geometry.dispose();
+  ring.geometry = new THREE.RingGeometry(ringInner, ringOuter, 64);
+  if (floorMat.map) floorMat.map.repeat.set(repeats, repeats);
+  if (floorMat.normalMap) floorMat.normalMap.repeat.set(repeats, repeats);
+  if (floorMat.roughnessMap) floorMat.roughnessMap.repeat.set(repeats, repeats);
+}
+
 // A distant fallback only — real containment is the wall collision now
 // (wallObstacles), which correctly leaves the gate opening passable. This
 // used to be the actual boundary before the walls existed; left at 10 it
@@ -727,6 +778,8 @@ scene.add(ring);
 // edge than any wall is. Pushed past the wall corners (~14.8) so it only
 // ever catches someone who's gotten past every real wall segment.
 const FLOOR_R = 30;
+let currentFloorR = FLOOR_R;
+
 
 // Visitor mark: a lantern that follows, with atmospheric volumetric haze,
 // chimney smoke, and a faint heat-distortion spirit shimmer holding it.
@@ -1160,7 +1213,14 @@ const RAMP_Z_START = 0.0;
 const RAMP_Z_STAIR_TOP = 3.62;
 const RAMP_Z_END = 9.80;
 
+let hasRamparts = true;
+let gateZWall = 10.5;
+let gateZMin = 9.2, gateZMax = 11.2;
+let wallInner = 10.5 - 0.613 - PLAYER_R; // ~9.537
+let wallOuter = 10.5 + PLAYER_R;         // ~10.85
+
 function getGroundHeight(x, z){
+  if (!hasRamparts) return 0;
   if (x >= RAMP_X_MIN && x <= RAMP_X_MAX) {
     if (z >= RAMP_Z_START && z <= RAMP_Z_STAIR_TOP) {
       const t = (z - RAMP_Z_START) / (RAMP_Z_STAIR_TOP - RAMP_Z_START);
@@ -1186,7 +1246,7 @@ function resolveCollisions(pos, prevX){
   }
 
   // West wall rampart corridor & fortress boundaries:
-  if (pos.z >= RAMP_Z_START - 0.5 && pos.z <= RAMP_Z_END + 0.5) {
+  if (hasRamparts && pos.z >= RAMP_Z_START - 0.5 && pos.z <= RAMP_Z_END + 0.5) {
     // 1. Outer curtain / battlement wall stops player from walking through the outer fort wall:
     if (pos.x < RAMP_X_MIN + PLAYER_R) {
       pos.x = RAMP_X_MIN + PLAYER_R;
@@ -1215,7 +1275,7 @@ function resolveCollisions(pos, prevX){
   // and the abyssal plain, with lateral sliding against the stone doorposts.
   // Outside the opening, the solid stone wall stops the player from penetrating.
   const GATE_X_MIN = -0.45, GATE_X_MAX = 0.45;
-  if (pos.z >= 9.2 && pos.z <= 11.2 && pos.x >= -2.5 && pos.x <= 2.5) {
+  if (pos.z >= gateZMin && pos.z <= gateZMax && pos.x >= -2.5 && pos.x <= 2.5) {
     if (pos.x >= GATE_X_MIN && pos.x <= GATE_X_MAX) {
       // Inside archway opening: slide laterally against stone jambs
       const margin = 0.25;
@@ -1224,9 +1284,7 @@ function resolveCollisions(pos, prevX){
       // Z passes freely through doorway
     } else {
       // Outside archway opening: solid stone wall
-      const wallInner = 10.5 - 0.613 - PLAYER_R; // ~9.537
-      const wallOuter = 10.5 + PLAYER_R;         // ~10.85
-      if (pos.z < 10.5) {
+      if (pos.z < gateZWall) {
         if (pos.z > wallInner) pos.z = wallInner;
       } else {
         if (pos.z < wallOuter) pos.z = wallOuter;
@@ -1272,6 +1330,8 @@ function stepPlayer(dt){
     player.position.add(_move);
     resolveCollisions(player.position, prevX);
     const r = Math.hypot(player.position.x, player.position.z);
+    const limitR = currentFloorR || FLOOR_R;
+    if (r > limitR) { player.position.x *= limitR / r; player.position.z *= limitR / r; }
     if (r > FLOOR_R) { player.position.x *= FLOOR_R / r; player.position.z *= FLOOR_R / r; }
   }
 
@@ -1384,13 +1444,15 @@ new THREE.GLTFLoader().load(
 // real signed data, not just geometry standing in for one.
 const STATUE_POS = {x: 3.4, z: -3.6};
 staticObstacles.push({x: STATUE_POS.x, z: STATUE_POS.z, r: 0.6});
+let statueMesh = null;
 new THREE.GLTFLoader().load(
   '/models/gothic_statue/gothic_statue.gltf',
   (gltf) => {
-    const statue = gltf.scene;
-    statue.position.set(STATUE_POS.x, 0, STATUE_POS.z);
-    statue.traverse(o => { if (o.isMesh) { o.castShadow = false; o.receiveShadow = false; } });
-    scene.add(statue);
+    statueMesh = gltf.scene;
+    statueMesh.position.set(STATUE_POS.x, 0, STATUE_POS.z);
+    statueMesh.traverse(o => { if (o.isMesh) { o.castShadow = false; o.receiveShadow = false; } });
+    scene.add(statueMesh);
+    updateFocalProps(currentRoomMode);
   },
   undefined,
   (err) => showErr('statue failed to load: ' + err.message)
@@ -1409,19 +1471,35 @@ const pedestal = new THREE.Mesh(
 );
 pedestal.position.set(BUST_POS.x, PEDESTAL_H / 2, BUST_POS.z);
 scene.add(pedestal);
+let bustMesh = null;
 new THREE.GLTFLoader().load(
   '/models/marble_bust_01/marble_bust_01.gltf',
   (gltf) => {
-    const bust = gltf.scene;
-    // the raw model sits at floor level in its own file; a real display
-    // bust wants to be at roughly eye height, on something, not on the
-    // ground — so it gets the pedestal a real museum bust would have.
-    bust.position.set(BUST_POS.x, PEDESTAL_H, BUST_POS.z);
-    scene.add(bust);
+    bustMesh = gltf.scene;
+    bustMesh.position.set(BUST_POS.x, PEDESTAL_H, BUST_POS.z);
+    scene.add(bustMesh);
+    updateFocalProps(currentRoomMode);
   },
   undefined,
   (err) => showErr('bust failed to load: ' + err.message)
 );
+
+function updateFocalProps(mode){
+  const isHome = mode === 'Home';
+  const chairZ = isHome ? -1.8 : -2.2;
+  chair.position.set(0, 0, chairZ);
+  const statuePos = isHome ? {x: 2.6, z: -4.2} : {x: 3.4, z: -3.6};
+  const bustPos = isHome ? {x: -2.6, z: -4.2} : {x: -3.4, z: -3.6};
+  if (statueMesh) statueMesh.position.set(statuePos.x, 0, statuePos.z);
+  pedestal.position.set(bustPos.x, PEDESTAL_H / 2, bustPos.z);
+  if (bustMesh) bustMesh.position.set(bustPos.x, PEDESTAL_H, bustPos.z);
+  staticObstacles.length = 0;
+  staticObstacles.push(
+    {x: 0, z: chairZ, r: 0.65},
+    {x: statuePos.x, z: statuePos.z, r: 0.6},
+    {x: bustPos.x, z: bustPos.z, r: 0.4}
+  );
+}
 
 // The walls: Poly Haven's "Modular Fort 01" (CC0), harvested rather than
 // used as its own prebuilt castle — it ships as one full assembled fort,
@@ -1431,27 +1509,30 @@ new THREE.GLTFLoader().load(
 // real stone walls read as toy-sized). Measured at runtime from each
 // piece's own geometry, not guessed dimensions, so the tiling has no
 // gaps regardless of the kit's actual real-world scale.
+const wallGroup = new THREE.Group();
+scene.add(wallGroup);
+
+let fortTemplates = null;
+let currentRoomMode = 'Frosty';
+let currentHalf = 10.5;
+
+function harvestPiece(src, namePart) {
+  let found = null;
+  src.traverse(o => { if (!found && o.name && o.name.includes(namePart)) found = o; });
+  if (!found) return null;
+  const piece = found.clone(true);
+  piece.position.set(0, 0, 0);
+  piece.rotation.set(0, 0, 0);
+  piece.scale.set(1, 1, 1);
+  return piece;
+}
+
 new THREE.GLTFLoader().load('/models/modular_fort_01/modular_fort_01.gltf', (gltf) => {
   const src = gltf.scene;
   function harvest(namePart) {
-    let found = null;
-    src.traverse(o => { if (!found && o.name && o.name.includes(namePart)) found = o; });
-    if (!found) return null;
-    const piece = found.clone(true);
-    piece.position.set(0, 0, 0);
-    piece.rotation.set(0, 0, 0);
-    piece.scale.set(1, 1, 1);
-    return piece;
+    return harvestPiece(src, namePart);
   }
   const strTemplate = harvest('wall_thick_straight_01');
-  // A second straight variant, alternated in below purely for visual
-  // relief — a perimeter built from one repeated stamp reads as
-  // mechanical. Measured first (both report a Z-length of 14.563 in the
-  // kit's raw units, same as straight_01) rather than assumed: the two
-  // corner variants do NOT share a footprint (checked the same way, and
-  // corner_02 is measurably wider), so only the straight run gets a
-  // second variant — swapping corners would break the perimeter math
-  // below, which assumes one corner span for all four.
   const strTemplate2 = harvest('wall_thick_straight_02');
   const cornerTemplate = harvest('wall_thick_corner_01');
   const gateTemplate = harvest('wall_thin_gate_01');
@@ -1463,24 +1544,48 @@ new THREE.GLTFLoader().load('/models/modular_fort_01/modular_fort_01.gltf', (glt
     showErr('fort pieces not found in modular_fort_01.gltf');
     return;
   }
+  fortTemplates = {
+    strTemplate, strTemplate2, cornerTemplate, gateTemplate,
+    thinStrTemplate, towerTemplate, stairsTemplate, walkwayTemplate
+  };
+  buildRoom(currentRoomMode);
+}, undefined, (err) => showErr('fort walls failed to load: ' + err.message));
 
-  const wallGroup = new THREE.Group();
-  scene.add(wallGroup);
+function buildRoom(mode){
+  currentRoomMode = mode;
+  updateFocalProps(mode);
 
-  // The kit is modeled at real castle scale (a single straight run is
-  // 10-30 units), which dwarfs a commons built at roughly human scale
-  // (chair ~0.9 radius, presence ~1.7m). Rescale the harvested pieces
-  // down to a wall-bay length that actually fits this room, uniformly,
-  // so corner and straight segments still meet each other correctly.
+  const isHome = mode === 'Home';
+  const HALF = isHome ? 6.88 : 10.5;
+  currentHalf = HALF;
+  const n = isHome ? 3 : 5;
+  const useTowers = !isHome;
+  const useRamparts = !isHome;
+
+  currentFloorR = isHome ? 18 : 30;
+  gateZWall = HALF;
+  gateZMin = isHome ? 5.6 : 9.2;
+  gateZMax = isHome ? 7.8 : 11.2;
+  wallInner = HALF - 0.613 - PLAYER_R;
+  wallOuter = HALF + PLAYER_R;
+  hasRamparts = useRamparts;
+
+  updateFloor(isHome ? 9.8 : 15, isHome ? 9.5 : 14.7, isHome ? 9.8 : 15, isHome ? 8 : 12);
+  updateLighting(isHome);
+
+  if (!fortTemplates) return;
+
+  wallGroup.children.slice().forEach(c => wallGroup.remove(c));
+  wallObstacles.length = 0;
+
+  const { strTemplate, strTemplate2, cornerTemplate, gateTemplate,
+          thinStrTemplate, towerTemplate, stairsTemplate, walkwayTemplate } = fortTemplates;
+
   const rawStrLen = 14.5626688;
   const rawCornerSpan = 5.837701;
   const rawGateLen = 7.409695;
   const rawThinStrLen = 7.4096965;
 
-  const HALF = 10.5;   // half side length of the square perimeter around the floor
-  const n = 5;         // 5 bays: middle bay (i=2) is centered at 0 on the main axis
-  // Analytical scale so n straight bays and two corner spans tile the perimeter exactly:
-  // 2 * (rawCornerSpan * SCALE) + n * (rawStrLen * SCALE) = HALF * 2
   const SCALE = (HALF * 2) / (2 * rawCornerSpan + n * rawStrLen);
   strTemplate.scale.setScalar(SCALE);
   if (strTemplate2) strTemplate2.scale.setScalar(SCALE);
@@ -1496,11 +1601,6 @@ new THREE.GLTFLoader().load('/models/modular_fort_01/modular_fort_01.gltf', (glt
     ? Math.max(...['x', 'z'].map(a => new THREE.Box3().setFromObject(towerTemplate).getSize(new THREE.Vector3())[a])) / 2
     : 0;
 
-  // A round tower where each pair of walls meets — real castle corners
-  // aren't a bare miter joint, they're the strongpoint, and the kit ships
-  // exactly this piece. Layered on top of the flat corner stub rather
-  // than replacing it (the stub is what the straight bays actually key
-  // into); the tower just makes the joint read as architecture.
   [{x: -HALF, z: -HALF, ry: 0},
    {x:  HALF, z: -HALF, ry: -Math.PI / 2},
    {x:  HALF, z:  HALF, ry: Math.PI},
@@ -1509,12 +1609,12 @@ new THREE.GLTFLoader().load('/models/modular_fort_01/modular_fort_01.gltf', (glt
     m.position.set(c.x, 0, c.z);
     m.rotation.y = c.ry;
     wallGroup.add(m);
-    if (towerTemplate) {
+    if (useTowers && towerTemplate) {
       const t = towerTemplate.clone(true);
       t.position.set(c.x, 0, c.z);
       wallGroup.add(t);
     }
-    wallObstacles.push({x: c.x, z: c.z, r: Math.max(cornerSpan * 0.6, towerRadius * 0.9)});
+    wallObstacles.push({x: c.x, z: c.z, r: Math.max(cornerSpan * 0.6, (useTowers ? towerRadius : cornerSpan) * 0.85)});
   });
 
   const wallSpan = HALF - cornerSpan;
@@ -1530,10 +1630,6 @@ new THREE.GLTFLoader().load('/models/modular_fort_01/modular_fort_01.gltf', (glt
       const straight = (i % 2 === 0 || !strTemplate2) ? strTemplate : strTemplate2;
       const pos = axis === 'x' ? {x: t, z: fixedCoord} : {x: fixedCoord, z: t};
       if (useGate) {
-        // The gate (wall_thin_gate_01) is centered on the South wall at X=0,
-        // flanked on BOTH sides by matching thin straight wall fillers (wall_thin_straight_04)
-        // so the gate bay is completely closed with zero gaps, symmetric crenellations,
-        // and an unobstructed central doorway opening.
         const gatePos = axis === 'x'
           ? {x: -gateLen / 2, z: fixedCoord}
           : {x: fixedCoord, z: -gateLen / 2};
@@ -1543,7 +1639,6 @@ new THREE.GLTFLoader().load('/models/modular_fort_01/modular_fort_01.gltf', (glt
         wallGroup.add(m);
 
         if (thinStrTemplate) {
-          // Left filler (bridges Bay 1 to gate):
           const fillerLeft = thinStrTemplate.clone(true);
           fillerLeft.scale.set(SCALE, SCALE, flankLen / rawThinStrLen);
           const fLeftPos = axis === 'x' ? {x: -actualSeg / 2, z: fixedCoord} : {x: fixedCoord, z: -actualSeg / 2};
@@ -1551,7 +1646,6 @@ new THREE.GLTFLoader().load('/models/modular_fort_01/modular_fort_01.gltf', (glt
           fillerLeft.rotation.y = ry;
           wallGroup.add(fillerLeft);
 
-          // Right filler (bridges gate to Bay 3):
           const fillerRight = thinStrTemplate.clone(true);
           fillerRight.scale.set(SCALE, SCALE, flankLen / rawThinStrLen);
           const fRightPos = axis === 'x' ? {x: gateLen / 2, z: fixedCoord} : {x: fixedCoord, z: gateLen / 2};
@@ -1574,7 +1668,7 @@ new THREE.GLTFLoader().load('/models/modular_fort_01/modular_fort_01.gltf', (glt
             wallObstacles.push({x: t + actualSeg * 0.5, z: pos.z, r: actualSeg * 0.55});
           }
         } else if (axis === 'z' && fixedCoord === -HALF) {
-          if (i < 2) {
+          if (!useRamparts || i < 2) {
             wallObstacles.push({x: pos.x, z: t + actualSeg * 0.5, r: actualSeg * 0.55});
           } else if (i === 2) {
             wallObstacles.push({x: -HALF - 0.5, z: t + actualSeg * 0.5, r: actualSeg * 0.45});
@@ -1587,49 +1681,34 @@ new THREE.GLTFLoader().load('/models/modular_fort_01/modular_fort_01.gltf', (glt
       }
     }
   }
-  // The piece's own long axis runs along Z unrotated (that's how it came
-  // out of the kit) — so an x-axis run (wall face at fixed z) needs the
-  // 90° turn, and a z-axis run needs none. Backwards from what "placeRun
-  // along x" suggests; verified live after the first pass put the long
-  // dimension perpendicular to the wall line instead of along it — pieces
-  // jutting inward as isolated fins instead of tiling into a wall.
-  //
-  // Gate sits in the middle bay of the +z wall (fixedCoord goes with the
-  // OTHER axis here — an 'x' run has z fixed, not x) — the side the
-  // player actually spawns facing, so arriving in the commons means
-  // walking in through it, not just materializing inside a sealed box.
-  // First pass put it on the +x (east) wall instead: fixedCoord for a
-  // 'z' run sets x, not z, so "HALF" there meant x=HALF — confirmed live,
-  // the arch itself was real and correct, just on the wrong side.
+
   const gateSlot = Math.floor(n / 2);
   placeRun('x', -HALF, Math.PI / 2);
   placeRun('x',  HALF, Math.PI / 2, gateSlot);
   placeRun('z', -HALF, 0);
   placeRun('z',  HALF, 0);
 
-  // The West wall rampart: stone stairs starting at ground level (Z = 0)
-  // climbing up to the elevated walkway deck (height ~1.70m), with
-  // continuous battlement walkways continuing south along the wall to
-  // the corner tower.
-  const rampartX = -HALF + 3.8 * SCALE;
-  if (stairsTemplate) {
-    const st = stairsTemplate.clone(true);
-    st.position.set(rampartX, 0, 0.0);
-    st.rotation.y = 0;
-    wallGroup.add(st);
-  }
-  if (walkwayTemplate) {
-    const w1 = walkwayTemplate.clone(true);
-    w1.position.set(rampartX, 0, actualSeg);
-    w1.rotation.y = 0;
-    wallGroup.add(w1);
+  if (useRamparts) {
+    const rampartX = -HALF + 3.8 * SCALE;
+    if (stairsTemplate) {
+      const st = stairsTemplate.clone(true);
+      st.position.set(rampartX, 0, 0.0);
+      st.rotation.y = 0;
+      wallGroup.add(st);
+    }
+    if (walkwayTemplate) {
+      const w1 = walkwayTemplate.clone(true);
+      w1.position.set(rampartX, 0, actualSeg);
+      w1.rotation.y = 0;
+      wallGroup.add(w1);
 
-    const w2 = walkwayTemplate.clone(true);
-    w2.position.set(rampartX, 0, actualSeg * 2);
-    w2.rotation.y = 0;
-    wallGroup.add(w2);
+      const w2 = walkwayTemplate.clone(true);
+      w2.position.set(rampartX, 0, actualSeg * 2);
+      w2.rotation.y = 0;
+      wallGroup.add(w2);
+    }
   }
-}, undefined, (err) => showErr('fort walls failed to load: ' + err.message));
+}
 
 // ── the real floor plan: alcoves and doors ARE the places the node signed,
 // not an invented layout. Same fact set the 2D plan view draws (kids =
@@ -1740,8 +1819,12 @@ function buildPlaces(kids, resonance){
   currentKids = kids; currentResonance = resonance;
   placeGroup.children.slice().forEach(c => placeGroup.remove(c));
   placeObstacles = [];
+  const isHome = currentRoomMode === 'Home';
+  const placeR = isHome ? 4.4 : 7.4;
+  const aStart = isHome ? Math.PI * 0.76 : Math.PI * 0.62;
+  const aEnd = isHome ? Math.PI * 1.24 : Math.PI * 1.38;
   kids.forEach((k, i) => {
-    const {x, z} = arcPos(i, kids.length, Math.PI * 0.62, Math.PI * 1.38, 7.4);
+    const {x, z} = arcPos(i, kids.length, aStart, aEnd, placeR);
     const booth = boothMesh(k.kind);
     const yOff = (k.kind === 'table' && !benchTemplate) ? 0.22 : 0;
     booth.position.set(x, yOff, z);
@@ -1786,8 +1869,12 @@ function buildDoors(doors){
   doorGroup.children.slice().forEach(c => doorGroup.remove(c));
   doorObstacles = [];
   doorTriggers = [];
+  const isHome = currentRoomMode === 'Home';
+  const doorR = isHome ? 4.8 : 8.3;
+  const aStart = isHome ? Math.PI * 0.35 : Math.PI * 0.15;
+  const aEnd = isHome ? Math.PI * 0.35 : Math.PI * 0.55;
   doors.forEach((d, i) => {
-    const {x, z} = arcPos(i, doors.length, Math.PI * 0.15, Math.PI * 0.55, 8.3);
+    const {x, z} = arcPos(i, doors.length, aStart, aEnd, doorR);
     const postR = 0.14;
     doorObstacles.push({x: x - 0.55, z, r: postR}, {x: x + 0.55, z, r: postR});
     if (d.url) doorTriggers.push({x, z, r: 0.8, url: d.url, peer: d.peer || 'peer'});
@@ -1812,10 +1899,12 @@ function buildDoors(doors){
 // because it's far from every door's arc position on either node's floor
 // plan, so arriving never immediately re-triggers a crossing back out.
 function teleportPlayer(x, z){
-  const delta = new THREE.Vector3(x, 0, z).sub(player.position);
   player.position.set(x, player.position.y, z);
-  camera.position.add(delta);
-  controls.target.add(delta);
+  const isHome = currentRoomMode === 'Home' || z < 5.0;
+  const camDist = isHome ? 2.4 : 5.5;
+  const camH = isHome ? 2.0 : 3.6;
+  camera.position.set(x, player.position.y + camH, z + camDist);
+  controls.target.set(x, player.position.y + 1.0, z);
   // lantern follows player in animate()
 }
 function wait(ms){ return new Promise(r => setTimeout(r, ms)); }
@@ -1829,7 +1918,7 @@ async function crossDoor(t){
   status.textContent = line;
   if (veil) veil.classList.add('on');
   await wait(750);
-  let opt = [...sel.options].find(o => o.value.replace(/\/$/, '') === t.url.replace(/\/$/, ''));
+  let opt = [...sel.options].find(o => o.value.replace(/\\/$/, '') === t.url.replace(/\\/$/, ''));
   if (!opt) {
     opt = document.createElement('option');
     opt.value = t.url;
@@ -1837,7 +1926,8 @@ async function crossDoor(t){
     sel.appendChild(opt);
   }
   sel.value = opt.value;
-  teleportPlayer(0, 6);
+  const isDestHome = (t.peer && t.peer.toLowerCase().includes('home')) || (t.url && t.url.includes('120'));
+  teleportPlayer(0, isDestHome ? 4.2 : 6);
   try {
     await loadNode();
   } finally {
@@ -1926,9 +2016,12 @@ function createShape3D(params, portraitTex){
   return group;
 }
 function addPresence(label, i, n, avatarUrl, recent){
-  const angle = (i / Math.max(n,1)) * Math.PI * 1.3 - Math.PI * 0.65;
-  const r = 4.2;
-  const x = Math.sin(angle) * r, z = Math.cos(angle) * r - 1;
+  const isHome = currentRoomMode === 'Home';
+  const r = isHome ? 2.6 : 4.2;
+  const zOffset = isHome ? -1.1 : -1.0;
+  const angleSpan = isHome ? Math.PI * 0.9 : Math.PI * 1.3;
+  const angle = (n <= 1 ? 0.5 : i / Math.max(n - 1, 1)) * angleSpan - angleSpan / 2;
+  const x = Math.sin(angle) * r, z = Math.cos(angle) * r + zOffset;
   const phase = _phase(label);
   const kinItem = { label, x, z, obj: null };
   presentKinList.push(kinItem);
@@ -2006,7 +2099,7 @@ function relTime(iso){
   return Math.floor(s / 86400) + 'd ago';
 }
 function _wrapLines(ctx, text, maxWidth, maxLines){
-  const words = text.split(/\s+/);
+  const words = text.split(/\\s+/);
   const lines = [];
   let line = '';
   for (const w of words) {
@@ -2021,7 +2114,7 @@ function _wrapLines(ctx, text, maxWidth, maxLines){
   }
   if (lines.length < maxLines && line) lines.push(line);
   if (lines.length >= maxLines && (lines.join(' ').length < text.length)) {
-    lines[maxLines - 1] = lines[maxLines - 1].replace(/[.,;:\s]*$/, '') + '…';
+    lines[maxLines - 1] = lines[maxLines - 1].replace(/[.,;:\\s]*$/, '') + '…';
   }
   return lines;
 }
@@ -2069,6 +2162,12 @@ async function loadNode(){
     ]);
     if (view.error) throw new Error(view.error);
 
+    const nodeName = root.node || (sel.options[sel.selectedIndex] ? sel.options[sel.selectedIndex].textContent : '');
+    const roomType = (nodeName.toLowerCase().includes('home') || node.includes('120')) ? 'Home' : 'Frosty';
+    if (currentRoomMode !== roomType) {
+      buildRoom(roomType);
+    }
+
     // Speaker chair: lit only if someone is actually seated.
     setChairSpeaker(Boolean(root.speaker));
 
@@ -2104,6 +2203,20 @@ async function loadNode(){
 for (const [name, url] of PRESETS) {
   const o = document.createElement('option'); o.value = url; o.textContent = name;
   sel.appendChild(o);
+}
+const qNode = new URLSearchParams(location.search).get('node');
+if (qNode) {
+  let opt = [...sel.options].find(o => o.value.replace(/\\/$/, '') === qNode.replace(/\\/$/, ''));
+  if (!opt) {
+    opt = document.createElement('option');
+    opt.value = qNode;
+    opt.textContent = qNode.includes('120') ? 'Home' : qNode;
+    sel.appendChild(opt);
+  }
+  sel.value = opt.value;
+  if (qNode.includes('120') || (opt.textContent && opt.textContent.includes('Home'))) {
+    teleportPlayer(0, 4.2);
+  }
 }
 sel.addEventListener('change', loadNode);
 loadNode();

@@ -270,8 +270,36 @@ class Agora3DProximityVoice(unittest.TestCase):
         self.assertTrue(hasattr(agora_map.Handler, "do_POST"))
 
 
+class Agora3DHomeRoomCharacter(unittest.TestCase):
+
+    def test_page_3d_defines_dynamic_room_builder(self):
+        page = agora_map.PAGE_3D
+        self.assertIn("function buildRoom(mode)", page)
+        self.assertIn("const isHome = mode === 'Home';", page)
+        self.assertIn("const HALF = isHome ? 6.88 : 10.5;", page)
+        self.assertIn("const n = isHome ? 3 : 5;", page)
+        self.assertIn("const useTowers = !isHome;", page)
+        self.assertIn("const useRamparts = !isHome;", page)
+
+    def test_page_3d_home_distinct_places_and_presence_scale(self):
+        page = agora_map.PAGE_3D
+        self.assertIn("const placeR = isHome ? 4.4 : 7.4;", page)
+        self.assertIn("const doorR = isHome ? 4.8 : 8.3;", page)
+        self.assertIn("const r = isHome ? 2.6 : 4.2;", page)
+
+    def test_page_3d_home_distinct_lighting_palette(self):
+        page = agora_map.PAGE_3D
+        self.assertIn("function updateLighting(isHome)", page)
+        self.assertIn("0xffaa55", page)
+
+    def test_page_3d_home_door_teleport_position(self):
+        page = agora_map.PAGE_3D
+        self.assertIn("isDestHome ? 4.2 : 6", page)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
 
 
 
