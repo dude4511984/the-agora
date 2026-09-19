@@ -729,8 +729,11 @@ new THREE.GLTFLoader().load(
     mesh.scale.setScalar(0.55 / Math.max(raw.y, 0.01));
     mesh.traverse(o => {
       if (o.isMesh && o.name && /glass/i.test(o.name) && o.material) {
+        o.material.transparent = true;
+        o.material.opacity = 0.4;
+        o.material.depthWrite = false;
         o.material.emissive = new THREE.Color(0xffc070);
-        o.material.emissiveIntensity = 1.1;
+        o.material.emissiveIntensity = 0.7;
       }
     });
     lantern.add(mesh);
@@ -739,16 +742,22 @@ new THREE.GLTFLoader().load(
   (err) => console.warn('lantern asset load error:', err)
 );
 function placeLantern(t){
-  const bob = Math.sin(t * 1.65) * 0.07;
-  const swayX = Math.sin(t * 1.05) * 0.08;
-  const swayZ = Math.cos(t * 0.82) * 0.06;
+  // Held-lantern seat: ahead and to the walker's right, below eye,
+  // never on the look-at point. Camera is third-person behind, so a
+  // camera-parented offset would hang in the sky next to the lens.
+  const bob = Math.sin(t * 1.7) * 0.05;
+  const sway = Math.sin(t * 1.1) * 0.04;
+  let fx = player.position.x - camera.position.x;
+  let fz = player.position.z - camera.position.z;
+  const fl = Math.hypot(fx, fz) || 1;
+  fx /= fl; fz /= fl;
+  const rx = fz, rz = -fx;
   lantern.position.set(
-    player.position.x + 0.48 + swayX,
-    player.position.y + 1.72 + bob,
-    player.position.z + 0.12 + swayZ
+    player.position.x + fx * 0.35 + rx * 0.70 + sway,
+    player.position.y + 1.12 + bob,
+    player.position.z + fz * 0.35 + rz * 0.52
   );
-  lantern.rotation.y = Math.sin(t * 0.7) * 0.18;
-  lantern.rotation.z = Math.sin(t * 1.15) * 0.05;
+  lantern.rotation.y = Math.atan2(fx, fz);
 }
 
 // Walking: WASD/arrows move you across the real floor, camera-relative so
