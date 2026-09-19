@@ -284,7 +284,7 @@ class Agora3DHomeRoomCharacter(unittest.TestCase):
     def test_page_3d_home_distinct_places_and_presence_scale(self):
         page = agora_map.PAGE_3D
         self.assertIn("const placeR = isHome ? 4.4 : 7.4;", page)
-        self.assertIn("const doorR = isHome ? 4.2 : 8.3;", page)
+        self.assertIn("const doorZ = isHome ? 15.5 : 28.8;", page)
         self.assertIn("const r = isHome ? 2.6 : 4.2;", page)
 
     def test_page_3d_home_distinct_lighting_palette(self):
@@ -298,7 +298,7 @@ class Agora3DHomeRoomCharacter(unittest.TestCase):
 
     def test_page_3d_peer_door_rotated_and_obstacles_aligned(self):
         page = agora_map.PAGE_3D
-        self.assertIn("frame.rotation.y = Math.atan2(-x, -z);", page)
+        self.assertIn("frame.rotation.y = ry;", page)
         self.assertIn("left.getWorldPosition(leftPos)", page)
         self.assertIn("right.getWorldPosition(rightPos)", page)
         self.assertIn("controls.minDistance = isHome ? 1.5 : 3.0;", page)
@@ -306,16 +306,15 @@ class Agora3DHomeRoomCharacter(unittest.TestCase):
     def test_page_3d_home_scales_claimed_shapes_proportionally(self):
         page = agora_map.PAGE_3D
         self.assertIn("function createShape3D(params, portraitTex)", page)
-        self.assertIn("const mult = (typeof scaleMult === 'number') ? scaleMult : (isHome ? 0.42 : 1.0);", page)
+        self.assertIn("const mult = (typeof scaleMult === 'number') ? scaleMult : (isHome ? 0.20 : 1.0);", page)
         self.assertIn("const ms = [s[0] * mult, s[1] * mult, s[2] * mult];", page)
-        self.assertIn("const shapeMult = isHome ? 0.42 : 1.0;", page)
+        self.assertIn("const shapeMult = isHome ? 0.20 : 1.0;", page)
 
     def test_page_3d_frosty_south_gate_has_a_real_cc0_threshold(self):
         page = agora_map.PAGE_3D
         self.assertIn("function buildGateThreshold(isHome)", page)
-        self.assertIn("if (isHome) return;", page)
         self.assertIn("new THREE.PlaneGeometry(2.4, 19.0)", page)
-        self.assertIn("path.position.set(0, 0.012, 20.2)", page)
+        self.assertIn("path.position.set(0, 0.012, isHome ? 11.2 : 20.2)", page)
         self.assertIn("new THREE.CircleGeometry(1.45, 32)", page)
         self.assertIn("'/models/lantern_01/lantern_01.gltf'", page)
         self.assertIn("gateThresholdRevision", page)

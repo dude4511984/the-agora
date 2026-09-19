@@ -807,13 +807,14 @@ function buildGateThreshold(isHome) {
   gateThresholdRevision += 1;
   const revision = gateThresholdRevision;
   gateThresholdGroup.children.slice().forEach(c => gateThresholdGroup.remove(c));
-  if (isHome) return;
 
-  // Gate collision permits x=-0.20..0.20; the broad path begins beyond the
-  // jambs at z=10.7, where walking naturally opens into this 2.4m approach.
-  const path = new THREE.Mesh(new THREE.PlaneGeometry(2.4, 19.0), thresholdMat(1.2, 9.5));
+  // Gate collision permits centered passage; the broad path begins beyond the
+  // jambs, where walking naturally opens into this 2.4m approach out to the peer door.
+  const path = isHome
+    ? new THREE.Mesh(new THREE.PlaneGeometry(2.4, 8.6), thresholdMat(1.2, 4.3))
+    : new THREE.Mesh(new THREE.PlaneGeometry(2.4, 19.0), thresholdMat(1.2, 9.5));
   path.rotation.x = -Math.PI / 2;
-  path.position.set(0, 0.012, 20.2);
+  path.position.set(0, 0.012, isHome ? 11.2 : 20.2);
   gateThresholdGroup.add(path);
 
   const marker = new THREE.Mesh(
@@ -821,34 +822,36 @@ function buildGateThreshold(isHome) {
     thresholdMat(1.45, 1.45)
   );
   marker.rotation.x = -Math.PI / 2;
-  marker.position.set(0, 0.018, 29.7);
+  marker.position.set(0, 0.018, isHome ? 15.5 : 29.7);
   gateThresholdGroup.add(marker);
 
-  // Poly Haven's Standing Chalkboard 01 (CC0) marks the surveyed end of
-  // Frosty's current reach. Its wording is deliberately a direction and a
-  // status, not an invented distance or a pretend Home destination.
+  // Poly Haven's Standing Chalkboard 01 (CC0) marks the end of the walkway
+  // beside the peer door.
   if (thresholdWayfinderTemplate) {
     const wayfinder = thresholdWayfinderTemplate.clone(true);
     const raw = new THREE.Box3().setFromObject(wayfinder).getSize(new THREE.Vector3());
     wayfinder.scale.setScalar(1.35 / Math.max(raw.y, 0.01));
     const bounds = new THREE.Box3().setFromObject(wayfinder);
-    wayfinder.position.set(1.7, -bounds.min.y, 28.8);
+    const wayZ = isHome ? 15.5 : 28.8;
+    wayfinder.position.set(1.7, -bounds.min.y, wayZ);
     wayfinder.rotation.y = Math.PI;
     gateThresholdGroup.add(wayfinder);
 
-    const sign = labelSprite(['HOME →', 'way under survey'], '#ffcf7a');
-    sign.position.set(1.7, 1.0, 28.45);
+    const sign = labelSprite(isHome ? ['FROSTY →', 'peer link'] : ['HOME →', 'way under survey'], '#ffcf7a');
+    sign.position.set(1.7, 1.0, wayZ - 0.35);
     gateThresholdGroup.add(sign);
   }
 
-  // The physical lantern meshes and the pools of light use the harvested
-  // Poly Haven asset, not an invented torch stand.
-  [[-1.65, 15.2], [1.65, 15.2], [-1.65, 24.4], [1.65, 24.4]].forEach(([x, z]) => {
+  // The physical lantern meshes and the pools of light along the walkway.
+  const lanternCoords = isHome
+    ? [[-1.65, 11.2], [1.65, 11.2]]
+    : [[-1.65, 15.2], [1.65, 15.2], [-1.65, 24.4], [1.65, 24.4]];
+  lanternCoords.forEach(([x, z]) => {
     const light = new THREE.PointLight(0xffb366, 1.0, 7.0, 2);
     light.position.set(x, 1.45, z);
     gateThresholdGroup.add(light);
     new THREE.GLTFLoader().load('/models/lantern_01/lantern_01.gltf', (gltf) => {
-      if (revision !== gateThresholdRevision || currentRoomMode === 'Home') return;
+      if (revision !== gateThresholdRevision) return;
       const lanternPost = gltf.scene;
       const raw = new THREE.Box3().setFromObject(lanternPost).getSize(new THREE.Vector3());
       lanternPost.scale.setScalar(0.9 / Math.max(raw.y, 0.01));
@@ -1363,7 +1366,7 @@ function resolveCollisions(pos, prevX){
   // and the abyssal plain, with lateral sliding against the stone doorposts.
   // Outside the opening, the solid stone wall stops the player from penetrating.
   const GATE_X_MIN = -0.45, GATE_X_MAX = 0.45;
-  if (currentRoomMode !== 'Home' && pos.z >= gateZMin && pos.z <= gateZMax && pos.x >= -2.5 && pos.x <= 2.5) {
+  if (pos.z >= gateZMin && pos.z <= gateZMax && pos.x >= -2.5 && pos.x <= 2.5) {
     if (pos.x >= GATE_X_MIN && pos.x <= GATE_X_MAX) {
       // Inside archway opening: slide laterally against stone jambs
       const margin = 0.25;
@@ -1663,7 +1666,7 @@ function buildRoom(mode){
   const useTowers = !isHome;
   const useRamparts = !isHome;
 
-  currentFloorR = isHome ? 18 : 30;
+  currentFloorR = isHome ? 20 : 30;
   gateZWall = HALF;
   gateZMin = isHome ? 5.6 : 9.2;
   gateZMax = isHome ? 7.8 : 11.2;
@@ -1786,7 +1789,7 @@ function buildRoom(mode){
     }
   }
 
-  const gateSlot = isHome ? -1 : Math.floor(n / 2);
+  const gateSlot = Math.floor(n / 2);
   placeRun('x', -HALF, Math.PI / 2);
   placeRun('x',  HALF, Math.PI / 2, gateSlot);
   placeRun('z', -HALF, 0);
@@ -1984,18 +1987,19 @@ function buildDoors(doors){
   doorObstacles = [];
   doorTriggers = [];
   const isHome = currentRoomMode === 'Home';
-  const doorR = isHome ? 4.2 : 8.3;
-  const aStart = isHome ? Math.PI * 0.35 : Math.PI * 0.15;
-  const aEnd = isHome ? Math.PI * 0.35 : Math.PI * 0.55;
+  const doorZ = isHome ? 15.5 : 28.8;
+  const doorSpan = 2.2;
+  const startX = -(doors.length - 1) * doorSpan / 2;
   doors.forEach((d, i) => {
-    const {x, z} = arcPos(i, doors.length, aStart, aEnd, doorR);
-    const ry = Math.atan2(-x, -z);
+    const x = startX + i * doorSpan;
+    const z = doorZ;
+    const ry = 0;
     if (d.url) {
       doorTriggers.push({
         x, z,
         rotY: ry,
         halfWidth: 0.80,
-        thresholdDepth: 0.35,
+        thresholdDepth: 0.50,
         r: 1.0,
         url: d.url,
         peer: d.peer || 'peer'
@@ -2005,7 +2009,7 @@ function buildDoors(doors){
     const mat = new THREE.MeshStandardMaterial({color, emissive: color, emissiveIntensity: 0.25});
     const frame = new THREE.Group();
     frame.position.set(x, 0, z);
-    frame.rotation.y = Math.atan2(-x, -z);
+    frame.rotation.y = ry;
     const post = new THREE.Mesh(new THREE.BoxGeometry(0.14, 2.0, 0.14), mat);
     const left = post.clone(); left.position.set(-0.85, 1.0, 0);
     const right = post.clone(); right.position.set(0.85, 1.0, 0);
@@ -2013,7 +2017,7 @@ function buildDoors(doors){
     lintel.position.set(0, 2.0, 0);
     frame.add(left, right, lintel);
     const label = labelSprite(['→ ' + (d.peer || 'peer'), d.locked ? 'locked' : 'open'],
-                               d.locked ? '#c9a75f' : '#67c98a');
+                                d.locked ? '#c9a75f' : '#67c98a');
     label.position.set(0, 2.6, 0);
     frame.add(label);
     doorGroup.add(frame);
@@ -2024,6 +2028,21 @@ function buildDoors(doors){
     const postR = 0.08;
     doorObstacles.push({x: leftPos.x, z: leftPos.z, r: postR}, {x: rightPos.x, z: rightPos.z, r: postR});
   });
+
+  // End of West rampart walkway crossing trigger (Frosty):
+  if (!isHome && hasRamparts && doors.length > 0) {
+    const d = doors[0];
+    doorTriggers.push({
+      x: -10.5 + 1.35 * (3.5 / 14.5626688),
+      z: 9.80 - 0.2,
+      rotY: 0,
+      halfWidth: 0.90,
+      thresholdDepth: 0.50,
+      r: 1.0,
+      url: d.url,
+      peer: d.peer || 'peer'
+    });
+  }
 }
 
 // Crossing a peer door: find (or, matching the 2D map's own fallback,
@@ -2035,7 +2054,7 @@ function teleportPlayer(x, z, targetMode){
   player.position.set(x, player.position.y, z);
   const isHome = targetMode ? (targetMode === 'Home') : (currentRoomMode === 'Home' || z < 4.0);
   controls.minDistance = isHome ? 1.5 : 3.0;
-  controls.maxDistance = isHome ? 14.0 : 22.0;
+  controls.maxDistance = isHome ? 20.0 : 35.0;
   const camDist = isHome ? 2.2 : 5.0;
   const camH = isHome ? 2.0 : 3.2;
   camera.position.set(x, player.position.y + camH, z + camDist);
@@ -2063,6 +2082,7 @@ async function crossDoor(t){
   }
   sel.value = opt.value;
   const isDestHome = (t.peer && t.peer.toLowerCase().includes('home')) || (t.url && t.url.includes('120'));
+  currentRoomMode = isDestHome ? 'Home' : 'Frosty';
   teleportPlayer(0, isDestHome ? 2.8 : 6, isDestHome ? 'Home' : 'Frosty');
   try {
     await loadNode();
@@ -2096,7 +2116,7 @@ function createShape3D(params, portraitTex){
   const scaleMult = arguments[2];
   const group = new THREE.Group();
   const isHome = currentRoomMode === 'Home';
-  const mult = (typeof scaleMult === 'number') ? scaleMult : (isHome ? 0.42 : 1.0);
+  const mult = (typeof scaleMult === 'number') ? scaleMult : (isHome ? 0.20 : 1.0);
   function makeGeo(shape, s, facets){
     s = s || [1, 1, 1];
     const ms = [s[0] * mult, s[1] * mult, s[2] * mult];
@@ -2167,12 +2187,12 @@ function addPresence(label, i, n, avatarUrl, recent){
   const kinItem = { label, x, z, obj: null };
   presentKinList.push(kinItem);
   const loader = new THREE.TextureLoader();
-  const shapeMult = isHome ? 0.42 : 1.0;
+  const shapeMult = isHome ? 0.20 : 1.0;
   const baseY = isHome ? 0.85 : 1.1;
   const build = (tex) => {
     const mat = new THREE.SpriteMaterial({map: tex, transparent: true});
     const spr = new THREE.Sprite(mat);
-    const sprScale = 1.6 * (isHome ? 0.65 : 1.0);
+    const sprScale = 1.6 * (isHome ? 0.45 : 1.0);
     spr.scale.set(sprScale, sprScale, 1);
     spr.position.set(x, baseY, z);
     spr.userData = {baseY, bob: phase, kin: label};
@@ -2224,7 +2244,7 @@ function addPresence(label, i, n, avatarUrl, recent){
     const {tex, aspect} = captionTexture(label, recent.content, recent.created_at);
     const mat = new THREE.SpriteMaterial({map: tex, transparent: true});
     const spr = new THREE.Sprite(mat);
-    const w = isHome ? 1.7 : 2.6, h = w * aspect;
+    const w = isHome ? 1.2 : 2.6, h = w * aspect;
     spr.scale.set(w, h, 1);
     const cardBaseY = baseY + (isHome ? 0.65 : 0.9) + h / 2;
     spr.position.set(x, cardBaseY, z);
@@ -2298,6 +2318,11 @@ async function loadNode(){
   status.textContent = 'loading…';
   errBox.style.display = 'none';
   const node = sel.value;
+  const optText = sel.options[sel.selectedIndex] ? sel.options[sel.selectedIndex].textContent : '';
+  const earlyRoomType = (optText.toLowerCase().includes('home') || node.includes('120')) ? 'Home' : 'Frosty';
+  if (currentRoomMode !== earlyRoomType) {
+    buildRoom(earlyRoomType);
+  }
   try {
     const [root, view, recentByAuthor] = await Promise.all([
       fetch('/proxy?what=root&node=' + encodeURIComponent(node)).then(r => r.json()),
@@ -2359,6 +2384,7 @@ if (qNode) {
   }
   sel.value = opt.value;
   if (qNode.includes('120') || (opt.textContent && opt.textContent.includes('Home'))) {
+    currentRoomMode = 'Home';
     teleportPlayer(0, 2.8, 'Home');
   }
 }
