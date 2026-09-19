@@ -222,6 +222,26 @@ class Agora3DSpeakerChair(unittest.TestCase):
         self.assertIn("chairMat.emissive.set(0x332200);", page)
 
 
+class Agora3DLanternAtmosphere(unittest.TestCase):
+
+    def test_page_3d_defines_volumetric_haze_and_smoke(self):
+        page = agora_map.PAGE_3D
+        self.assertIn("function makePuffTexture()", page)
+        self.assertIn("const lanternAura = new THREE.Sprite(", page)
+        self.assertIn("const SMOKE_PUFF_COUNT = 12;", page)
+        self.assertIn("lantern.add(lanternAura);", page)
+
+    def test_page_3d_defines_spirit_shimmer_shader_and_billboard(self):
+        page = agora_map.PAGE_3D
+        self.assertIn("const spiritPlane = new THREE.Mesh(", page)
+        self.assertIn("const spiritMat = new THREE.ShaderMaterial({", page)
+        self.assertIn("uniform float uTime;", page)
+        self.assertIn("uniform float uBob;", page)
+        self.assertIn("function updateLanternAtmosphere(t, bob, rx, rz)", page)
+        self.assertIn("updateLanternAtmosphere(t, bob, rx, rz);", page)
+        self.assertIn("spiritPlane.quaternion.copy(camera.quaternion);", page)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
 

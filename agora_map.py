@@ -713,9 +713,8 @@ scene.add(ring);
 // ever catches someone who's gotten past every real wall segment.
 const FLOOR_R = 30;
 
-// Visitor mark: a lantern that follows, no body holding it. Poly Haven
-// Lantern 01 (CC0). The PointLight is the point — it has to light the
-// ground around the player or it's just jewelry.
+// Visitor mark: a lantern that follows, with atmospheric volumetric haze,
+// chimney smoke, and a faint heat-distortion spirit shimmer holding it.
 const lantern = new THREE.Group();
 scene.add(lantern);
 const lanternLight = new THREE.PointLight(0xffc078, 2.6, 10, 2);
@@ -741,6 +740,169 @@ new THREE.GLTFLoader().load(
   undefined,
   (err) => console.warn('lantern asset load error:', err)
 );
+
+// ── Atmospheric effect 1: volumetric glow aura & gentle chimney smoke ──────
+function makePuffTexture() {
+  const c = document.createElement('canvas');
+  c.width = 128; c.height = 128;
+  const ctx = c.getContext('2d');
+  const g = ctx.createRadialGradient(64, 64, 0, 64, 64, 64);
+  g.addColorStop(0.0, 'rgba(255, 235, 190, 1.0)');
+  g.addColorStop(0.25, 'rgba(255, 210, 155, 0.5)');
+  g.addColorStop(0.55, 'rgba(210, 175, 140, 0.14)');
+  g.addColorStop(1.0, 'rgba(0, 0, 0, 0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, 128, 128);
+  return new THREE.CanvasTexture(c);
+}
+const puffTex = makePuffTexture();
+
+// Soft volumetric flame aura catching dusk light
+const lanternAura = new THREE.Sprite(new THREE.SpriteMaterial({
+  map: puffTex,
+  color: 0xffb86c,
+  transparent: true,
+  opacity: 0.18,
+  blending: THREE.AdditiveBlending,
+  depthWrite: false
+}));
+lanternAura.position.set(0, 0.14, 0);
+lanternAura.scale.set(0.85, 0.85, 0.85);
+lantern.add(lanternAura);
+
+// Wispy smoke rising from the lantern chimney cap
+const SMOKE_PUFF_COUNT = 12;
+const smokePuffs = [];
+for (let i = 0; i < SMOKE_PUFF_COUNT; i++) {
+  const s = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: puffTex,
+    color: 0xffcaa0,
+    transparent: true,
+    opacity: 0.08,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false
+  }));
+  s.userData = {
+    phase: i / SMOKE_PUFF_COUNT,
+    speed: 0.14 + (i % 3) * 0.03,
+    dx: Math.sin(i * 2.1) * 0.035,
+    dz: Math.cos(i * 1.7) * 0.035,
+    scale: 0.16 + (i % 4) * 0.035
+  };
+  lantern.add(s);
+  smokePuffs.push(s);
+}
+
+// ── Atmospheric effect 2: faint man-shaped shimmer / heat-distortion spirit ──
+const spiritVert = `
+  varying vec2 vUv;
+  void main() {
+    vUv = uv;
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  }
+`;
+
+const spiritFrag = `
+  uniform float uTime;
+  uniform float uBob;
+  varying vec2 vUv;
+
+  float distSeg(vec2 p, vec2 a, vec2 b) {
+    vec2 pa = p - a, ba = b - a;
+    float h = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0);
+    return length(pa - ba * h);
+  }
+
+  void main() {
+    vec2 uv = vUv;
+    float bx = 0.35;
+
+    // Head: soft circle centered at (bx, 0.88)
+    float dHead = length(uv - vec2(bx, 0.88)) - 0.065;
+
+    // Torso / spine from (bx, 0.45) to (bx, 0.81)
+    float dSpine = distSeg(uv, vec2(bx, 0.45), vec2(bx, 0.81));
+    float torsoW = mix(0.10, 0.16, smoothstep(0.45, 0.78, uv.y));
+    float dTorso = dSpine - torsoW;
+
+    // Robe / drape flowing down to floor
+    float dDrapeSeg = distSeg(uv, vec2(bx, 0.06), vec2(bx, 0.48));
+    float drapeW = mix(0.13, 0.10, smoothstep(0.06, 0.48, uv.y));
+    float dDrape = dDrapeSeg - drapeW;
+
+    // Right arm reaching to lantern handle at (0.80, 0.72 + uBob)
+    vec2 handPos = vec2(0.80, 0.72 + uBob);
+    vec2 shoulderPos = vec2(bx + 0.12, 0.76);
+    float dArm = distSeg(uv, shoulderPos, handPos) - 0.032;
+
+    // Combine SDF silhouettes
+    float dBody = min(min(dHead, dTorso), min(dDrape, dArm));
+
+    // Soft feathered silhouette boundary
+    float mask = smoothstep(0.05, -0.01, dBody);
+    mask *= smoothstep(0.02, 0.12, uv.y);
+    mask *= smoothstep(0.98, 0.92, uv.y);
+    if (mask <= 0.001) discard;
+
+    // Heat-haze rising wave distortion (Schlieren/mirage effect)
+    float wave1 = sin(uv.y * 26.0 - uTime * 3.8 + sin(uv.x * 14.0));
+    float wave2 = cos(uv.y * 40.0 - uTime * 5.2 + uv.x * 18.0);
+    float heat = wave1 * 0.6 + wave2 * 0.4;
+    float caustics = pow(0.5 + 0.5 * sin(heat * 3.14159265 + uTime * 2.2), 2.6);
+    float edge = smoothstep(0.05, 0.01, abs(dBody));
+
+    // Color: ethereal silver-violet body, blending to warm amber at hand/arm
+    float warmFactor = smoothstep(0.38, 0.78, uv.x);
+    vec3 coolSilver = vec3(0.78, 0.85, 0.94);
+    vec3 warmAmber = vec3(1.0, 0.74, 0.38);
+    vec3 col = mix(coolSilver, warmAmber, warmFactor);
+
+    // Alpha: subtle, transparent implied presence
+    float alpha = mask * (0.025 + 0.07 * caustics + 0.05 * edge);
+    gl_FragColor = vec4(col, alpha);
+  }
+`;
+
+const spiritMat = new THREE.ShaderMaterial({
+  uniforms: {
+    uTime: { value: 0 },
+    uBob: { value: 0 }
+  },
+  vertexShader: spiritVert,
+  fragmentShader: spiritFrag,
+  transparent: true,
+  blending: THREE.AdditiveBlending,
+  depthWrite: false,
+  side: THREE.DoubleSide
+});
+
+const spiritPlane = new THREE.Mesh(new THREE.PlaneGeometry(1.55, 1.85), spiritMat);
+spiritPlane.geometry.translate(0, 1.85 / 2, 0); // Origin at feet (y=0)
+scene.add(spiritPlane);
+
+function updateLanternAtmosphere(t, bob, rx, rz){
+  // 1. Gentle chimney smoke
+  smokePuffs.forEach(s => {
+    const p = (t * s.userData.speed + s.userData.phase) % 1.0;
+    s.position.y = 0.22 + p * 0.45;
+    s.position.x = s.userData.dx + Math.sin(t * 1.6 + s.userData.phase * 6.28) * (0.02 + p * 0.04);
+    s.position.z = s.userData.dz + Math.cos(t * 1.3 + s.userData.phase * 6.28) * (0.02 + p * 0.04);
+    const sz = s.userData.scale * (1.0 + p * 1.5);
+    s.scale.set(sz, sz, sz);
+    s.material.opacity = Math.sin(p * Math.PI) * 0.09;
+  });
+
+  // 2. Spirit shimmer billboard follows walker and faces camera
+  spiritPlane.position.set(
+    player.position.x + rx * 0.22,
+    player.position.y,
+    player.position.z + rz * 0.22
+  );
+  spiritPlane.quaternion.copy(camera.quaternion);
+  spiritMat.uniforms.uTime.value = t;
+  spiritMat.uniforms.uBob.value = bob / 1.85;
+}
+
 function placeLantern(t){
   // Held-lantern seat: ahead and to the walker's right, below eye,
   // never on the look-at point. Camera is third-person behind, so a
@@ -758,6 +920,7 @@ function placeLantern(t){
     player.position.z + fz * 0.35 + rz * 0.52
   );
   lantern.rotation.y = Math.atan2(fx, fz);
+  updateLanternAtmosphere(t, bob, rx, rz);
 }
 
 // Walking: WASD/arrows move you across the real floor, camera-relative so
