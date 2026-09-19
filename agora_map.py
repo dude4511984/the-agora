@@ -824,7 +824,8 @@ function buildGateThreshold(isHome) {
       const lanternPost = gltf.scene;
       const raw = new THREE.Box3().setFromObject(lanternPost).getSize(new THREE.Vector3());
       lanternPost.scale.setScalar(0.9 / Math.max(raw.y, 0.01));
-      lanternPost.position.set(x, 0, z);
+      const bounds = new THREE.Box3().setFromObject(lanternPost);
+      lanternPost.position.set(x, -bounds.min.y, z);
       gateThresholdGroup.add(lanternPost);
     }, undefined, (err) => console.warn('threshold lantern asset load error:', err));
   });
