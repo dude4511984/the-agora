@@ -414,5 +414,38 @@ class UnsignedVsSignedCaptionsAndMarkers(unittest.TestCase):
         self.assertIn("ghost voltage (signed)", page)
 
 
+class PublicCourtyardMode(unittest.TestCase):
+    def test_public_mode_strips_ptt_and_voice_chat(self):
+        page = agora_map.render_3d_page(is_public=True)
+        self.assertNotIn("ptt-btn", page)
+        self.assertNotIn("VOICE_ENDPOINT", page)
+        self.assertNotIn("/voice_chat", page)
+        self.assertNotIn("Proximity PTT", page)
+        self.assertIn("These minds live on a garage cluster in Mena, Arkansas.", page)
+        self.assertIn("app.everysynthetic.org/install", page)
+
+    def test_private_mode_retains_ptt_and_voice(self):
+        page = agora_map.render_3d_page(is_public=False)
+        self.assertIn("ptt-btn", page)
+        self.assertIn("VOICE_ENDPOINT", page)
+        self.assertIn("/voice_chat", page)
+        self.assertNotIn("app.everysynthetic.org/install", page)
+
+    def test_voice_chat_refused_when_arriving_via_door_header(self):
+        class MockPostHandler:
+            def __init__(self, path, headers):
+                self.path = path
+                self.headers = headers
+                self.code = None
+                self.body = None
+            def _send(self, code, body, ctype):
+                self.code = code
+                self.body = body
+
+        h = MockPostHandler("/voice_chat?kin=Bong", {"X-Agora-Door": "1"})
+        agora_map.Handler.do_POST(h)
+        self.assertEqual(h.code, 403)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

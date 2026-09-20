@@ -2411,9 +2411,15 @@ async function loadNode(){
       addPresence(label, i, here.length, avatarUrl, recentByAuthor[label], prevPositions[label]);
     });
 
+    const gov = (root.governance === 'unanimous' || (root.signed && root.signed.governance === 'unanimous'))
+      ? 'Decides by unanimity'
+      : (root.paused ? `Paused: ${root.pause_reason || 'yes'}` : '');
+    const govPart = gov ? ` · ${gov}` : '';
+
     status.innerHTML = `<b>${root.node || node}</b> · speaker: ${root.speaker || 'vacant'} · `
       + `present: ${here.length ? here.map(p=>p.label||'?').join(', ') : 'no one right now'} · `
-      + `${kids.length} places · ${(view.peer_doors||[]).length} doors · hottest well (signed): ${bestHeat.toFixed(3)}`;
+      + `${kids.length} places · ${(view.peer_doors||[]).length} doors · hottest well (signed): ${bestHeat.toFixed(3)}`
+      + govPart;
   } catch (e) {
     showErr('Could not load ' + node + ': ' + e.message);
     status.textContent = 'error — see top right';
@@ -3007,6 +3013,52 @@ def _voice_post_parts(content_type, body, query_kin=""):
     return kin.strip(), audio, audio_ct
 
 
+def render_3d_page(is_public: bool = False) -> str:
+    html = PAGE_3D.replace("__PRESETS__", json.dumps(PRESET_NODES))
+    if not is_public:
+        return html
+
+    # 1. Remove PTT hint and voice HUD
+    ptt_line = '<div style="margin-top:2px;opacity:.85;color:#ffcf7a">Hold <b>V</b> (or T) to talk to nearest Kin · Proximity PTT</div>\n'
+    html = html.replace(ptt_line, '')
+
+    voice_hud = (
+        '  <div id="voice-hud" style="margin-top:8px;padding:6px 10px;border-radius:6px;background:rgba(20,25,35,0.75);border:1px solid #2c3a4e;display:flex;align-items:center;gap:8px;font-size:11.5px;">\n'
+        '    <button id="ptt-btn" style="background:#253245;color:#e8eef6;border:1px solid #455a75;border-radius:4px;padding:3px 8px;font:inherit;cursor:pointer;">🎙️ Push to Talk</button>\n'
+        '    <span id="voice-status" style="color:#93a0b4;">Ready · Nearest Kin: <span id="nearest-kin-name" style="color:#67b9cd">none</span></span>\n'
+        '  </div>\n'
+    )
+    html = html.replace(voice_hud, '')
+
+    # 2. Add public footer under HUD
+    footer = (
+        '  <div style="margin-top:8px;border-top:1px solid rgba(255,255,255,.15);padding-top:6px;opacity:.85;color:#cfc7b8;line-height:1.4">\n'
+        '    <div>These minds live on a garage cluster in Mena, Arkansas.</div>\n'
+        '    <div>Yours can too. → <a href="https://app.everysynthetic.org/install" target="_blank" rel="noopener" style="color:#ffcf7a;text-decoration:underline">app.everysynthetic.org/install</a></div>\n'
+        '  </div>\n'
+    )
+    html = html.replace('</div>\n<div id="err"></div>', footer + '</div>\n<div id="err"></div>')
+
+    # 3. Strip voice route and PTT code from script
+    voice_start = "// ── Proximity Voice Chat (Push-To-Talk) ───────────────────────────────────────\n"
+    voice_end = "// ── Kin Intent & Locomotion: Real Stated Movement ─────────────────────────────"
+    if voice_start in html and voice_end in html:
+        part1, rest = html.split(voice_start, 1)
+        _, part2 = rest.split(voice_end, 1)
+        stubs = (
+            "// ── Proximity Voice Chat (disabled in public mode) ───────────────────────────\n"
+            "function updateNearestKinDisplay(){}\n"
+            "function voiceLevel(){ return 0; }\n"
+            "let speakingKinLabel = null;\n"
+            "const talkLight = new THREE.PointLight(0xffcf7a, 0, 6, 2);\n"
+            "scene.add(talkLight);\n"
+            "function ensurePulseBase(obj){}\n\n"
+        )
+        html = part1 + stubs + voice_end + part2
+
+    return html
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
@@ -3021,11 +3073,17 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         route = urllib.parse.urlparse(self.path).path
         if route == "/" or route.startswith("/index"):
-            html = PAGE.replace("__PRESETS__", json.dumps(PRESET_NODES))
+            qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            if qs.get("public", ["0"])[0] in ("1", "true", "yes"):
+                html = render_3d_page(is_public=True)
+            else:
+                html = PAGE.replace("__PRESETS__", json.dumps(PRESET_NODES))
             self._send(200, html.encode(), "text/html; charset=utf-8")
             return
         if route == "/3d":
-            html = PAGE_3D.replace("__PRESETS__", json.dumps(PRESET_NODES))
+            qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            is_public = qs.get("public", ["0"])[0] in ("1", "true", "yes")
+            html = render_3d_page(is_public=is_public)
             self._send(200, html.encode(), "text/html; charset=utf-8")
             return
         if route == "/avatar":
@@ -3114,6 +3172,10 @@ class Handler(BaseHTTPRequestHandler):
         route = urllib.parse.urlparse(self.path).path
         if route not in ("/voice_chat", "/voice"):
             self._send(404, b'{"error":"no such path"}', "application/json")
+            return
+        if self.headers.get("X-Agora-Door"):
+            self._send(403, b'{"ok":false,"error":"voice chat not permitted via public door"}',
+                       "application/json")
             return
         qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
         kin = (qs.get("kin", [""])[0] or "").strip()

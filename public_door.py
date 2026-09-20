@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The public ring-0 door: a named visitor reading Frosty's teaser.
+"""The public ring-0 door: a named visitor reading Frosty's teaser and courtyard.
 
 A stranger on the public internet reaches this through the Cloudflare
 tunnel as agora.everysynthetic.org. Anonymous callers to a node get only
@@ -10,10 +10,18 @@ matter what, and signs its reads with it. Every public read is attributed
 to that key in Frosty's record. The door holds no other power and no
 other key.
 
-Allowlist, not blocklist: GET / and GET /view, nothing else, ever. Every
-other path and every other method gets the same 404. Visitor headers are
+Allowlist, not blocklist:
+- GET / and GET /3d -> Frosty agora_map:8791/3d?public=1 (read-only 3D courtyard)
+- GET /facts -> Frosty node:8770/ (signed ring-0 facts HTML or JSON)
+- GET /view -> Frosty node:8770/view (signed ring-0 atlas teaser JSON)
+- GET /commons-recent, /kin-intent -> Frosty agora_map:8791 (polled JSON)
+- GET /proxy, /avatar, /shape3d -> Frosty agora_map:8791
+- GET /models/*, /static/agora/* -> Frosty agora_map:8791 (assets)
+
+Every other path and every other method gets the same 404. Visitor headers are
 never forwarded — a stranger cannot present a key through this door;
 the only X-Agora-* headers upstream are the ones this door signs itself.
+Map proxy calls set X-Agora-Door: 1 to ensure write routes are refused.
 
 stdlib only, like the wire it fronts. Runs on Themess; the node is on
 Frosty over the LAN.
@@ -27,6 +35,7 @@ import sys
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -39,22 +48,22 @@ if str(Path.home() / "kin_diary") not in sys.path:
 from kin_diary.keys import load_current  # noqa: E402
 from kin_diary.agora.wire import sign_request  # noqa: E402
 
-ALLOWED_PATHS = ("/", "/view")
+ALLOWED_NODE_PATHS = frozenset({"/facts", "/view"})
+ALLOWED_MAP_EXACT_PATHS = frozenset({"/", "/3d", "/commons-recent", "/kin-intent"})
+ALLOWED_MAP_QUERY_PATHS = frozenset({"/proxy", "/avatar", "/shape3d"})
+ALLOWED_MAP_PREFIXES = ("/models/", "/static/agora/")
+
 NOT_FOUND = {"error": "no such path"}
 
 UPSTREAM_HOST = "192.168.1.119"
-UPSTREAM_PORT = 8770
+UPSTREAM_PORT = 8770               # Frosty node (signed reads)
+UPSTREAM_MAP_PORT = 8791           # Frosty agora map (courtyard + assets)
 NODE_NAME = "Frosty"
 DOOR_KEY_AUTHOR = "door-everysynthetic"
 
 UPSTREAM_TIMEOUT_S = 5
 RATE_WINDOW_MS = 60_000
-RATE_MAX_READS = 30               # per visitor per minute, sliding window
-
-HOP_BY_HOP = frozenset({
-    "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
-    "te", "trailer", "transfer-encoding", "upgrade",
-})
+RATE_MAX_READS = 180               # per visitor per minute, sliding window
 
 
 class _VisitorLimiter:
@@ -83,7 +92,7 @@ class _VisitorLimiter:
             return True
 
 
-def render_facts_html(facts: dict, view_path: str) -> bytes:
+def render_facts_html(facts: dict, view_path: str = "/view") -> bytes:
     """A plain page for a human in a browser. The JSON is the record; this
     is the same facts, rendered. No tracking, no assets, no script."""
     def esc(v) -> str:
@@ -120,7 +129,7 @@ to a stranger: who is here, and enough to make you want to ask in.</p>
 <table>
 {body}
 </table>
-<p><a href="{html.escape(view_path)}">The atlas teaser (JSON)</a> ·
+<p><a href="/">Enter the 3D courtyard</a> · <a href="{html.escape(view_path)}">The atlas teaser (JSON)</a> ·
 send <code>Accept: application/json</code> here for the raw facts.</p>
 </body>
 </html>
@@ -133,6 +142,8 @@ class DoorHandler(BaseHTTPRequestHandler):
     limiter: _VisitorLimiter = None
     upstream_host = UPSTREAM_HOST
     upstream_port = UPSTREAM_PORT
+    map_host = UPSTREAM_HOST
+    map_port = UPSTREAM_MAP_PORT
     node_name = NODE_NAME
     server_version = "agora-door/1"
 
@@ -160,9 +171,9 @@ class DoorHandler(BaseHTTPRequestHandler):
         return "application/json" not in accept or accept.index(
             "text/html") < accept.index("application/json")
 
-    def _fetch_upstream(self, path: str):
-        """One signed read. Visitor headers are never forwarded; the only
-        identity upstream is this door's own signature."""
+    def _fetch_node(self, path: str):
+        """One signed read from the node. Visitor headers are never forwarded;
+        the only identity upstream is this door's own signature."""
         auth = sign_request(self.door_key, self.node_name, path)
         req = urllib.request.Request(
             f"http://{self.upstream_host}:{self.upstream_port}{path}",
@@ -178,43 +189,113 @@ class DoorHandler(BaseHTTPRequestHandler):
             with urllib.request.urlopen(req, timeout=UPSTREAM_TIMEOUT_S) as r:
                 return r.status, r.read()
         except urllib.error.HTTPError as e:
-            # The node's own answer (403/404) is the answer; pass it through.
             return e.code, e.read()
+
+    def _fetch_map(self, map_path_and_query: str):
+        """Proxy a read to the Agora 3D map server. Visitor headers are stripped;
+        X-Agora-Door: 1 is attached so upstream refuses write routes."""
+        req = urllib.request.Request(
+            f"http://{self.map_host}:{self.map_port}{map_path_and_query}",
+            headers={
+                "Host": f"{self.map_host}:{self.map_port}",
+                "User-Agent": "agora-door/1",
+                "Connection": "close",
+                "X-Agora-Door": "1",
+            },
+            method="GET",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=UPSTREAM_TIMEOUT_S) as r:
+                return r.status, dict(r.headers), r.read()
+        except urllib.error.HTTPError as e:
+            return e.code, dict(e.headers), e.read()
 
     # ── the door ───────────────────────────────────────────────────────────
 
     def do_GET(self):
-        if self.path not in ALLOWED_PATHS:
+        parsed = urllib.parse.urlparse(self.path)
+        path = parsed.path
+        query = parsed.query
+
+        # Basic path traversal guard
+        if ".." in path or "//" in path:
             self._send(404, NOT_FOUND)
             return
+
+        # 1. Check if path is in allowlist
+        target_kind = None  # 'node' or 'map'
+        target_path = None
+
+        if path in ALLOWED_NODE_PATHS:
+            target_kind = "node"
+            # /facts reads the node root /; /view reads /view
+            target_path = "/" if path == "/facts" else "/view"
+        elif path in ("/", "/3d"):
+            target_kind = "map"
+            target_path = "/3d?public=1"
+        elif path in ALLOWED_MAP_EXACT_PATHS:
+            target_kind = "map"
+            target_path = path
+        elif path in ALLOWED_MAP_QUERY_PATHS:
+            target_kind = "map"
+            target_path = f"{path}?{query}" if query else path
+        elif any(path.startswith(prefix) for prefix in ALLOWED_MAP_PREFIXES):
+            target_kind = "map"
+            target_path = f"{path}?{query}" if query else path
+        else:
+            self._send(404, NOT_FOUND)
+            return
+
+        # 2. Rate limit check
         if not self.limiter.allows(self._visitor()):
             self._send(429, {"error": "rate limit: slow down"})
             return
-        try:
-            status, body = self._fetch_upstream(self.path)
-        except (urllib.error.URLError, OSError):
-            self._send(502, {"error": "the node is not answering"})
-            return
-        if status == 200 and self.path == "/" and self._wants_html():
+
+        # 3. Dispatch to node or map
+        if target_kind == "node":
             try:
-                facts = json.loads(body)
-            except ValueError:
-                facts = None
-            if isinstance(facts, dict):
-                page = render_facts_html(facts, "/view")
-                self.send_response(200)
-                self.send_header("Content-Type",
-                                 "text/html; charset=utf-8")
-                self.send_header("Content-Length", str(len(page)))
-                self.end_headers()
-                self.wfile.write(page)
+                status, body = self._fetch_node(target_path)
+            except (urllib.error.URLError, OSError):
+                self._send(502, {"error": "the node is not answering"})
                 return
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("X-Content-Type-Options", "nosniff")
-        self.end_headers()
-        self.wfile.write(body)
+
+            if status == 200 and path == "/facts" and self._wants_html():
+                try:
+                    facts = json.loads(body)
+                except ValueError:
+                    facts = None
+                if isinstance(facts, dict):
+                    page = render_facts_html(facts, "/view")
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/html; charset=utf-8")
+                    self.send_header("Content-Length", str(len(page)))
+                    self.end_headers()
+                    self.wfile.write(page)
+                    return
+
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
+        if target_kind == "map":
+            try:
+                status, hdrs, body = self._fetch_map(target_path)
+            except (urllib.error.URLError, OSError):
+                self._send(502, {"error": "the node is not answering"})
+                return
+
+            self.send_response(status)
+            ctype = hdrs.get("Content-Type", "application/octet-stream")
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.end_headers()
+            self.wfile.write(body)
+            return
 
     def _refuse(self):
         self._send(404, NOT_FOUND)
@@ -230,12 +311,16 @@ class DoorHandler(BaseHTTPRequestHandler):
 def make_server(host: str, port: int, door_key, node_name: str = NODE_NAME,
                 upstream_host: str = UPSTREAM_HOST,
                 upstream_port: int = UPSTREAM_PORT,
+                map_host: str = UPSTREAM_HOST,
+                map_port: int = UPSTREAM_MAP_PORT,
                 max_reads: int = RATE_MAX_READS) -> ThreadingHTTPServer:
     handler = type("BoundDoor", (DoorHandler,), {
         "door_key": door_key,
         "limiter": _VisitorLimiter(max_reads=max_reads),
         "upstream_host": upstream_host,
         "upstream_port": upstream_port,
+        "map_host": map_host,
+        "map_port": map_port,
         "node_name": node_name,
     })
     return ThreadingHTTPServer((host, port), handler)
@@ -251,7 +336,8 @@ def main(argv):
     httpd = make_server(host, port, door_key)
     print(f"ring-0 door on {host}:{port} as {DOOR_KEY_AUTHOR} "
           f"({door_key.key_id[:16]}…) -> "
-          f"{UPSTREAM_HOST}:{UPSTREAM_PORT} ({NODE_NAME})",
+          f"node={UPSTREAM_HOST}:{UPSTREAM_PORT} ({NODE_NAME}), "
+          f"map={UPSTREAM_HOST}:{UPSTREAM_MAP_PORT}",
           flush=True)
     httpd.serve_forever()
     return 0
