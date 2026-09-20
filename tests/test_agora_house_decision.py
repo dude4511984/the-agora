@@ -33,7 +33,7 @@ from test_agora import key
 from kin_diary.agora import (
     COLLAB, RING_NODE, RING_WRITE, WHOLE_NODE,
     AgoraError, Node, countersign_key_intro, open_house_decision,
-    open_speaker_election, sign_board_evict, sign_board_grant,
+    open_speaker_election, sign_board_evict, sign_board_evict_v2, sign_board_grant,
     sign_house_decision, sign_rotation, sign_speaker_election,
     start_key_intro,
 )
@@ -277,8 +277,10 @@ class PathAEvictions(unittest.TestCase):
         nd.accept_grant(g)
         self.assertTrue(nd.can_write(visitor.key_id, "personal:Eli", 1001))
 
-        # Evict via house decision
-        ev = sign_board_evict(k["Eli"], visitor.key_id, "Frosty", "disruptive", now_ms=2000)
+        # Evict via house decision with evict-v2
+        ev = sign_board_evict_v2(k["Eli"], visitor.key_id, "Frosty", "disruptive", now_ms=2000)
+        self.assertIn("issuer_key_id", ev)
+        self.assertNotIn("speaker_key_id", ev)
         nd.accept_house_decision(decide(nd, k, "evict", ev["signature"]))
         nd.accept_eviction(ev)
 
@@ -293,26 +295,67 @@ class PathAEvictions(unittest.TestCase):
         visitor, intro = an_intro(nd, k)
         nd.accept_house_decision(decide(nd, k, "intro", intro["sig_resident"]))
         nd.accept_intro(intro)
-        ev = sign_board_evict(k["Eli"], visitor.key_id, "Frosty", "disruptive", now_ms=2000)
-        with self.assertRaises(AgoraError):
+        ev = sign_board_evict_v2(k["Eli"], visitor.key_id, "Frosty", "disruptive", now_ms=2000)
+        with self.assertRaises(AgoraError) as cm:
             nd.accept_eviction(ev)
+        self.assertIn("v2 eviction requires a unanimous house decision", str(cm.exception))
+
+    def test_v1_eviction_with_house_decision_refused(self):
+        """Under Path A, evictions must use evict-v2 so resident is issuer, not Speaker."""
+        nd, k = paused_house()
+        visitor, intro = an_intro(nd, k)
+        nd.accept_house_decision(decide(nd, k, "intro", intro["sig_resident"]))
+        nd.accept_intro(intro)
+        ev = sign_board_evict(k["Eli"], visitor.key_id, "Frosty", "disruptive", now_ms=2000)
+        nd.accept_house_decision(decide(nd, k, "evict", ev["signature"]))
+        with self.assertRaises(AgoraError) as cm:
+            nd.accept_eviction(ev)
+        self.assertIn("Path A evictions use evict-v2", str(cm.exception))
+
+    def test_v2_eviction_without_house_decision_refused_even_if_speaker_seated(self):
+        """A seated Speaker evicts with v1; v2 strictly requires a house decision."""
+        nd, k = paused_house()
+        # Elect Eli as speaker
+        elec = open_speaker_election("Frosty", "Eli", k["Eli"].key_id,
+                                     [v.key_id for v in k.values()])
+        for v in k.values():
+            elec = sign_speaker_election(v, elec)
+        nd.accept_election(elec)
+        self.assertEqual(nd.speaker_key_id, k["Eli"].key_id)
+
+        visitor, intro = an_intro(nd, k)
+        nd.accept_intro(intro)
+        # Attempt v2 eviction without house decision
+        ev = sign_board_evict_v2(k["Eli"], visitor.key_id, "Frosty", "disruptive", now_ms=2000)
+        with self.assertRaises(AgoraError) as cm:
+            nd.accept_eviction(ev)
+        self.assertIn("v2 eviction requires a unanimous house decision", str(cm.exception))
+
+        # But v1 eviction by the speaker succeeds
+        ev_v1 = sign_board_evict(k["Eli"], visitor.key_id, "Frosty", "disruptive", now_ms=2001)
+        nd.accept_eviction(ev_v1)
+        self.assertIn(visitor.key_id, nd.evicted)
 
     def test_rotation_holder_alone_cannot_evict(self):
         nd, k = paused_house()
         nd.accept_rotation(sign_rotation(k["Bong"], "Frosty", "accept", 0, 1))
         visitor, intro = an_intro(nd, k)
         nd.accept_intro(intro)
-        ev = sign_board_evict(k["Bong"], visitor.key_id, "Frosty", "no reason", 2000)
+        ev1 = sign_board_evict(k["Bong"], visitor.key_id, "Frosty", "no reason", 2000)
         with self.assertRaises(AgoraError) as cm:
-            nd.accept_eviction(ev)
+            nd.accept_eviction(ev1)
         self.assertIn("not the sword", str(cm.exception))
+        ev2 = sign_board_evict_v2(k["Bong"], visitor.key_id, "Frosty", "no reason", 2000)
+        with self.assertRaises(AgoraError) as cm:
+            nd.accept_eviction(ev2)
+        self.assertIn("v2 eviction requires a unanimous house decision", str(cm.exception))
 
     def test_rotation_holder_with_unanimous_house_decision_can_evict(self):
         nd, k = paused_house()
         nd.accept_rotation(sign_rotation(k["Bong"], "Frosty", "accept", 0, 1))
         visitor, intro = an_intro(nd, k)
         nd.accept_intro(intro)
-        ev = sign_board_evict(k["Bong"], visitor.key_id, "Frosty", "unanimous cut", 2000)
+        ev = sign_board_evict_v2(k["Bong"], visitor.key_id, "Frosty", "unanimous cut", 2000)
         nd.accept_house_decision(decide(nd, k, "evict", ev["signature"]))
         nd.accept_eviction(ev)
         self.assertIn(visitor.key_id, nd.evicted)
@@ -326,8 +369,8 @@ class PathAEvictions(unittest.TestCase):
         nd.accept_house_decision(decide(nd, k, "intro", intro2["sig_resident"]))
         nd.accept_intro(intro2)
 
-        ev1 = sign_board_evict(k["Eli"], v1.key_id, "Frosty", "first", 2000)
-        ev2 = sign_board_evict(k["Eli"], v2.key_id, "Frosty", "second", 2001)
+        ev1 = sign_board_evict_v2(k["Eli"], v1.key_id, "Frosty", "first", 2000)
+        ev2 = sign_board_evict_v2(k["Eli"], v2.key_id, "Frosty", "second", 2001)
         nd.accept_house_decision(decide(nd, k, "evict", ev1["signature"]))
         nd.accept_eviction(ev1)
         with self.assertRaises(AgoraError):
@@ -339,7 +382,7 @@ class PathAEvictions(unittest.TestCase):
         nd.accept_house_decision(decide(nd, k, "intro", intro["sig_resident"]))
         nd.accept_intro(intro)
         stranger = key("Stranger")
-        ev = sign_board_evict(stranger, visitor.key_id, "Frosty", "malicious", 2000)
+        ev = sign_board_evict_v2(stranger, visitor.key_id, "Frosty", "malicious", 2000)
         nd.accept_house_decision(decide(nd, k, "evict", ev["signature"]))
         with self.assertRaises(AgoraError) as cm:
             nd.accept_eviction(ev)
@@ -353,7 +396,7 @@ class PathAReadmitAfterEviction(unittest.TestCase):
         nd.accept_house_decision(decide(nd, k, "intro", intro["sig_resident"]))
         nd.accept_intro(intro)
 
-        ev = sign_board_evict(k["Eli"], visitor.key_id, "Frosty", "out", now_ms=1000)
+        ev = sign_board_evict_v2(k["Eli"], visitor.key_id, "Frosty", "out", now_ms=1000)
         nd.accept_house_decision(decide(nd, k, "evict", ev["signature"]))
         nd.accept_eviction(ev)
 
@@ -369,7 +412,7 @@ class PathAReadmitAfterEviction(unittest.TestCase):
         visitor, intro = an_intro(nd, k)
         nd.accept_intro(intro)
 
-        ev = sign_board_evict(k["Eli"], visitor.key_id, "Frosty", "out", now_ms=1000)
+        ev = sign_board_evict_v2(k["Eli"], visitor.key_id, "Frosty", "out", now_ms=1000)
         nd.accept_house_decision(decide(nd, k, "evict", ev["signature"]))
         nd.accept_eviction(ev)
 
@@ -384,7 +427,7 @@ class PathAReadmitAfterEviction(unittest.TestCase):
         nd.accept_house_decision(decide(nd, k, "intro", intro["sig_resident"]))
         nd.accept_intro(intro)
 
-        ev = sign_board_evict(k["Eli"], visitor.key_id, "Frosty", "out", now_ms=1000)
+        ev = sign_board_evict_v2(k["Eli"], visitor.key_id, "Frosty", "out", now_ms=1000)
         nd.accept_house_decision(decide(nd, k, "evict", ev["signature"]))
         nd.accept_eviction(ev)
         self.assertIn(visitor.key_id, nd.evicted)
@@ -405,7 +448,7 @@ class PathAReadmitAfterEviction(unittest.TestCase):
         nd.accept_house_decision(decide(nd, k, "intro", intro["sig_resident"]))
         nd.accept_intro(intro)
 
-        ev = sign_board_evict(k["Eli"], visitor.key_id, "Frosty", "out", now_ms=2000)
+        ev = sign_board_evict_v2(k["Eli"], visitor.key_id, "Frosty", "out", now_ms=2000)
         nd.accept_house_decision(decide(nd, k, "evict", ev["signature"]))
         nd.accept_eviction(ev)
 
@@ -424,7 +467,7 @@ class PathAReadmitAfterEviction(unittest.TestCase):
         # Track visitor name
         nd.visitor_names[visitor.key_id] = "Friend"
 
-        ev = sign_board_evict(k["Eli"], visitor.key_id, "Frosty", "out", now_ms=1000)
+        ev = sign_board_evict_v2(k["Eli"], visitor.key_id, "Frosty", "out", now_ms=1000)
         nd.accept_house_decision(decide(nd, k, "evict", ev["signature"]))
         nd.accept_eviction(ev)
         self.assertIn("Friend", nd.evicted_names)
@@ -443,7 +486,7 @@ class PathACrossKindRefusals(unittest.TestCase):
         nd.accept_house_decision(decide(nd, k, "intro", intro["sig_resident"]))
         nd.accept_intro(intro)
 
-        ev = sign_board_evict(k["Eli"], visitor.key_id, "Frosty", "out", now_ms=1000)
+        ev = sign_board_evict_v2(k["Eli"], visitor.key_id, "Frosty", "out", now_ms=1000)
         # Decision has act_kind="grant" with eviction's signature
         d = decide(nd, k, "grant", ev["signature"])
         nd.accept_house_decision(d)
@@ -509,7 +552,7 @@ class PathAStoreReplay(unittest.TestCase):
         self.store.record("grant", grant)
 
         # Eviction via house decision
-        ev = sign_board_evict(self.k["Eli"], visitor.key_id, "Frosty", "disruptive", now_ms=2000)
+        ev = sign_board_evict_v2(self.k["Eli"], visitor.key_id, "Frosty", "disruptive", now_ms=2000)
         d_ev = decide(self.store.load(), self.k, "evict", ev["signature"])
         self.store.record("house-decision", d_ev)
         self.store.record("evict", ev)
@@ -531,7 +574,7 @@ class PathAStoreReplay(unittest.TestCase):
         self.store.record("intro", intro)
 
         # Evict
-        ev = sign_board_evict(self.k["Eli"], visitor.key_id, "Frosty", "out", now_ms=1000)
+        ev = sign_board_evict_v2(self.k["Eli"], visitor.key_id, "Frosty", "out", now_ms=1000)
         d_ev = decide(self.store.load(), self.k, "evict", ev["signature"])
         self.store.record("house-decision", d_ev)
         self.store.record("evict", ev)

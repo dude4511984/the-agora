@@ -18,6 +18,7 @@ MAGIC_ROTATION = "agora-rotation-v1"
 MAGIC_HOUSE_DECISION = "agora-house-decision-v1"
 MAGIC_BOARD_GRANT = "agora-board-grant-v1"
 MAGIC_BOARD_EVICT = "agora-board-evict-v1"
+MAGIC_BOARD_EVICT_V2 = "agora-board-evict-v2"
 MAGIC_BOARD_REVOKE = "agora-board-revoke-v1"
 MAGIC_KEY_QUARANTINE = "agora-key-quarantine-v1"
 MAGIC_REQUEST = "agora-request-v1"
@@ -271,6 +272,28 @@ def board_evict_canonical(
         ("host_node", _line_value(host_node)),
         ("reason", r),
         ("speaker_key_id", _hex64(speaker_key_id)),
+        ("evicted_at_unix_ms", _unix_ms(evicted_at_unix_ms)),
+    ])
+
+
+def board_evict_v2_canonical(
+    visitor_key_id: str,
+    host_node: str,
+    reason: str,
+    issuer_key_id: str,
+    evicted_at_unix_ms: int,
+) -> bytes:
+    """Path A node-scoped quarantine of a key, issued by a resident under a
+    unanimous house decision. No Speaker exists; the signer is issuer_key_id.
+    """
+    r = _line_value(reason)
+    if not r.strip():
+        raise ValueError("eviction requires a stated reason")
+    return _lines(MAGIC_BOARD_EVICT_V2, [
+        ("visitor_key_id", _hex64(visitor_key_id)),
+        ("host_node", _line_value(host_node)),
+        ("reason", r),
+        ("issuer_key_id", _hex64(issuer_key_id)),
         ("evicted_at_unix_ms", _unix_ms(evicted_at_unix_ms)),
     ])
 

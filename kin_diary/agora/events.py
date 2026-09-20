@@ -16,6 +16,7 @@ from .canonical import (
     RING_NODE,
     RING_WRITE,
     board_evict_canonical,
+    board_evict_v2_canonical,
     quarantine_canonical,
     board_grant_canonical,
     key_intro_canonical,
@@ -392,7 +393,33 @@ def sign_board_evict(
     return payload
 
 
+def sign_board_evict_v2(
+    issuer_key: KeyRecord,
+    visitor_key_id: str,
+    host_node: str,
+    reason: str,
+    now_ms: int | None = None,
+) -> dict:
+    payload = {
+        "visitor_key_id": visitor_key_id.lower(),
+        "host_node": host_node,
+        "reason": reason,
+        "issuer_key_id": issuer_key.key_id,
+        "evicted_at_unix_ms": _now_ms(now_ms),
+    }
+    payload["signature"] = issuer_key.sign(_evict_bytes(payload))
+    return payload
+
+
 def _evict_bytes(ev: dict) -> bytes:
+    if "issuer_key_id" in ev:
+        return board_evict_v2_canonical(
+            ev["visitor_key_id"],
+            ev["host_node"],
+            ev["reason"],
+            ev["issuer_key_id"],
+            int(ev["evicted_at_unix_ms"]),
+        )
     return board_evict_canonical(
         ev["visitor_key_id"],
         ev["host_node"],
@@ -403,10 +430,20 @@ def _evict_bytes(ev: dict) -> bytes:
 
 
 def verify_board_evict(ev: dict) -> None:
-    load_public(ev["speaker_key_id"]).verify(
-        bytes.fromhex(ev["signature"]), _evict_bytes(ev)
-    )
-    _normalize_hex(ev, "visitor_key_id", "speaker_key_id", "signature")
+    if "issuer_key_id" in ev and "speaker_key_id" in ev:
+        raise ValueError("eviction cannot have both issuer_key_id and speaker_key_id")
+    if "issuer_key_id" in ev:
+        load_public(ev["issuer_key_id"]).verify(
+            bytes.fromhex(ev["signature"]), _evict_bytes(ev)
+        )
+        _normalize_hex(ev, "visitor_key_id", "issuer_key_id", "signature")
+    elif "speaker_key_id" in ev:
+        load_public(ev["speaker_key_id"]).verify(
+            bytes.fromhex(ev["signature"]), _evict_bytes(ev)
+        )
+        _normalize_hex(ev, "visitor_key_id", "speaker_key_id", "signature")
+    else:
+        raise ValueError("eviction missing signer key id")
 
 
 __all__ = [
@@ -426,6 +463,7 @@ __all__ = [
     "sign_board_grant",
     "verify_board_grant",
     "sign_board_evict",
+    "sign_board_evict_v2",
     "verify_board_evict",
     "RING_WRITE",
     "RING_NODE",

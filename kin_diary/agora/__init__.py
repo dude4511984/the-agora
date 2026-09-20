@@ -5,11 +5,13 @@ Design doc: ~/claude_home/agora.md
 
 from .canonical import (
     COLLAB,
+    MAGIC_BOARD_EVICT_V2,
     RING_NODE,
     RING_READ,
     RING_TEASER,
     RING_WRITE,
     WHOLE_NODE,
+    board_evict_v2_canonical,
     board_id,
     teaser,
 )
@@ -21,6 +23,7 @@ from .events import (
     countersign_key_intro,
     open_speaker_election,
     sign_board_evict,
+    sign_board_evict_v2,
     sign_board_revoke,
     sign_board_grant,
     sign_speaker_election,
@@ -75,7 +78,10 @@ __all__ = [
     "sign_board_grant",
     "verify_board_grant",
     "sign_board_evict",
+    "sign_board_evict_v2",
     "sign_board_revoke",
     "verify_board_evict",
     "verify_board_revoke",
+    "MAGIC_BOARD_EVICT_V2",
+    "board_evict_v2_canonical",
 ]

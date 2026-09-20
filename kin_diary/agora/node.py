@@ -719,8 +719,8 @@ class Node:
                          "board": board})
 
     def accept_eviction(self, ev: dict) -> None:
-        """Speaker-only, or a unanimous house decision. Overrides a resident's
-        own grant.
+        """Speaker-only (v1), or a unanimous house decision (v2). Overrides a
+        resident's own grant.
 
         This is the reason the role exists: a node where any resident can
         unilaterally admit someone and nobody can pull them back out has no
@@ -729,20 +729,24 @@ class Node:
         if ev.get("host_node") != self.name:
             raise AgoraError("eviction is for a different node")
         verify_board_evict(ev)
-        self._refuse_if_paused(door_only=False, act=("evict", ev.get("signature")))
-        permitted = (
-            self.speaker_key_id is not None and ev["speaker_key_id"] == self.speaker_key_id
-        ) or self._permitted_by_house("evict", ev.get("signature"))
-        if not permitted:
-            if self.speaker_key_id is None:
-                raise AgoraError("no Speaker seated — eviction is unreachable")
-            raise AgoraError("only the sitting Speaker can evict")
-        if self._permitted_by_house("evict", ev.get("signature")):
-            signer = self.resident_for_key(ev["speaker_key_id"])
+        if "issuer_key_id" in ev:
+            if not self._permitted_by_house("evict", ev.get("signature")):
+                raise AgoraError("v2 eviction requires a unanimous house decision")
+            self._refuse_if_paused(door_only=False, act=("evict", ev.get("signature")))
+            issuer = ev["issuer_key_id"]
+            signer = self.resident_for_key(issuer)
             if signer is None:
                 raise AgoraError("eviction signer is not a resident of this node")
-            if ev["speaker_key_id"].lower() in self.quarantined_keys:
+            if issuer.lower() in self.quarantined_keys:
                 raise AgoraError("eviction signer is quarantined")
+        else:
+            if self._permitted_by_house("evict", ev.get("signature")):
+                raise AgoraError("Path A evictions use evict-v2")
+            self._refuse_if_paused(door_only=False, act=("evict", ev.get("signature")))
+            if self.speaker_key_id is None:
+                raise AgoraError("no Speaker seated — eviction is unreachable")
+            if ev["speaker_key_id"] != self.speaker_key_id:
+                raise AgoraError("only the sitting Speaker can evict")
         visitor = ev["visitor_key_id"].lower()
         # The grant goes with the eviction, and it does not come back on its
         # own. Overturn (accept_ruling) lifts the bans but restores no grant:
