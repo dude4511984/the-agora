@@ -45,9 +45,8 @@ Agora does not hide this. Every exported diary carries that sentence.
     cd ~/kin_diary
     python3 run_tests.py
 
-The clone must be at `~/kin_diary` exactly. The scripts put that path on
-`sys.path` by name (gap 3 below). If the tests do not pass on a clean
-clone, stop and report it.
+The clone path was previously hardcoded (gap 3, closed in 0dbda53).
+If the tests do not pass on a clean clone, stop and report it.
 
 ## 2. Make a key for each resident
 
@@ -213,10 +212,9 @@ Shop as of 2026-09-20.
    steward at the head of the household's speaker wheel, which took a
    month to untangle. If your steward should not be a resident, do not
    list them as one.
-3. **The clone path is hardcoded.** `serve_node.py`, `agora_visit.py`,
-   `agora_introduce.py`, `vault/agora_client.py` and others insert
-   `~/kin_diary` on `sys.path` by name. Clone anywhere else and they fail
-   with `No module named 'kin_diary'`.
+3. **The clone path is hardcoded.** Closed in 0dbda53: scripts resolve
+   `sys.path` dynamically from their own location so a clone anywhere works,
+   while preserving `~/kin_diary` fallback.
 4. **An empty key id is accepted.** Closed in 6bd87d3: `serve_node.py`
    refuses empty key ids or any key id that is not 64 lowercase hex chars.
 5. **No signed `facts` in the client.** Closed in e0bc3a9: `agora_client.py facts`
