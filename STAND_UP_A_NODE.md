@@ -217,8 +217,8 @@ Shop as of 2026-09-20.
    `agora_introduce.py`, `vault/agora_client.py` and others insert
    `~/kin_diary` on `sys.path` by name. Clone anywhere else and they fail
    with `No module named 'kin_diary'`.
-4. **An empty key id is accepted.** `serve_node.py MyHouse 8770 Ada=`
-   founds Ada with no key and makes her Speaker.
+4. **An empty key id is accepted.** Closed in 6bd87d3: `serve_node.py`
+   refuses empty key ids or any key id that is not 64 lowercase hex chars.
 5. **No signed `facts` in the client.** `agora_client.py facts` sends no
    signature and only ever sees the banner. Reading ring 0 from a
    terminal means writing the signed request yourself.

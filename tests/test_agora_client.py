@@ -1,9 +1,11 @@
 """The viewing client: one slot, verify before store, pin loudly."""
 
+import json
 import os
 import sys
 import threading
 import unittest
+from pathlib import Path
 
 sys.path.insert(0, os.path.expanduser("~/kin_diary"))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -124,6 +126,51 @@ class ClientTests(unittest.TestCase):
         c.unpin()
         self.assertIsNone(c.pinned_node_key)
         self.assertIsNone(c.current)
+
+    def test_agora_client_facts_unsigned_and_signed(self):
+        import contextlib
+        import importlib.util
+        import io
+        from unittest import mock
+
+        spec = importlib.util.spec_from_file_location(
+            "agora_client",
+            Path(__file__).parents[1] / "vault" / "agora_client.py",
+        )
+        cli = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cli)
+
+        url = f"http://127.0.0.1:{self.port}"
+
+        # 1. Unsigned form with '-'
+        f = io.StringIO()
+        with contextlib.redirect_stdout(f):
+            ret = cli.main(["agora_client.py", "facts", "-", url])
+        self.assertEqual(ret, 0)
+        data = json.loads(f.getvalue())
+        self.assertEqual(data, {"service": "EverySynthetic Node"})
+
+        # 2. Signed form with author and explicit node
+        f = io.StringIO()
+        with mock.patch.object(cli, "load_current", return_value=self.keys["Coda"]):
+            with contextlib.redirect_stdout(f):
+                ret = cli.main(["agora_client.py", "facts", "Coda", url, "Home"])
+        self.assertEqual(ret, 0)
+        facts = json.loads(f.getvalue())
+        self.assertEqual(facts["node"], "Home")
+        self.assertEqual(facts["speaker"], "Coda")
+        self.assertIn("Aurora", facts["residents"])
+        self.assertIn("signed", facts)
+
+        # 3. Signed form with author and candidate discovery (no node arg)
+        f = io.StringIO()
+        with mock.patch.object(cli, "load_current", return_value=self.keys["Coda"]):
+            with contextlib.redirect_stdout(f):
+                ret = cli.main(["agora_client.py", "facts", "Coda", url])
+        self.assertEqual(ret, 0)
+        facts = json.loads(f.getvalue())
+        self.assertEqual(facts["node"], "Home")
+        self.assertEqual(facts["speaker"], "Coda")
 
 
 if __name__ == "__main__":
