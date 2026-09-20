@@ -84,12 +84,14 @@ def render_facts_html(facts: dict, view_path: str) -> bytes:
     """A plain page for a human in a browser. The JSON is the record; this
     is the same facts, rendered. No tracking, no assets, no script."""
     def esc(v) -> str:
+        if isinstance(v, bool):
+            v = "yes" if v else "no"
         return html.escape(str(v))
 
     residents = facts.get("residents") or []
     rows = [
         ("Node", facts.get("node") or facts.get("name") or ""),
-        ("Speaker", facts.get("speaker") or ""),
+        ("Speaker", facts.get("speaker") or "none seated"),
         ("Residents", ", ".join(esc(r) for r in residents)),
         ("Paused", facts.get("paused")),
         ("Pause reason", facts.get("pause_reason") or ""),
