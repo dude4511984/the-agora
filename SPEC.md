@@ -6,7 +6,7 @@ unsigned fields in the JSON MUST NOT affect verification.
 
 Python 3 stdlib + `cryptography` (Ed25519). No other deps.
 
-Import is deferred. This spec covers keygen, sign, rotate, export, verify.
+Import exists on Agora nodes (`Node.accept_bundle_import`, verified, segregated visitor storage, no CLI yet). This spec covers keygen, sign, rotate, export, verify.
 
 
 ## Custody (do not paper over)
