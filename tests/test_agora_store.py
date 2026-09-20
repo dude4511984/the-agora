@@ -252,6 +252,42 @@ class StoreTests(unittest.TestCase):
                 launcher.read_text(),
             )
 
+    def test_serve_node_refuses_invalid_key_id(self):
+        import serve_node
+        import importlib.util
+
+        # Empty key id
+        ret = serve_node.main(["serve_node.py", "TestNode", "8770", "Ada="])
+        self.assertEqual(ret, 2)
+        # Not 64 hex chars
+        ret = serve_node.main(["serve_node.py", "TestNode", "8770", "Ada=nothex"])
+        self.assertEqual(ret, 2)
+        # Uppercase hex chars (must be lowercase)
+        ret = serve_node.main(["serve_node.py", "TestNode", "8770", "Ada=" + "A" * 64])
+        self.assertEqual(ret, 2)
+        # Empty steward key id
+        ret = serve_node.main(["serve_node.py", "TestNode", "8770", "steward="])
+        self.assertEqual(ret, 2)
+
+        # Same for vault/serve_node.py
+        spec = importlib.util.spec_from_file_location(
+            "vault_serve_node",
+            Path(__file__).parents[1] / "vault" / "serve_node.py",
+        )
+        vault_serve = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(vault_serve)
+        ret = vault_serve.main(["serve_node.py", "TestNode", "8770", "Ada="])
+        self.assertEqual(ret, 2)
+
+    def test_found_resident_refuses_invalid_key_id(self):
+        store, keys, path = fresh_store()
+        with self.assertRaises(ValueError):
+            store.found_resident("Ada", "")
+        with self.assertRaises(ValueError):
+            store.found_resident("Ada", "tooshort")
+        with self.assertRaises(ValueError):
+            store.found_resident("Ada", "A" * 64)
+
     def test_state_survives_a_reopen(self):
         store, keys, path = fresh_store()
         elect(store, keys)

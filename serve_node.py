@@ -22,12 +22,27 @@ from kin_diary.agora.wire import serve  # noqa: E402
 from kin_diary.keys import generate_keypair, load_current  # noqa: E402
 
 
+
+def _is_hex64(s: str) -> bool:
+    return len(s) == 64 and all(c in "0123456789abcdef" for c in s)
+
+
 def main(argv):
     if len(argv) < 2:
         print(__doc__)
         return 2
     name = argv[1]
     port = int(argv[2]) if len(argv) > 2 and argv[2].isdigit() else 8770
+
+    for arg in argv[3:]:
+        if "=" in arg:
+            author, key_id = arg.split("=", 1)
+            if not _is_hex64(key_id):
+                print(
+                    f"error: key id for {author!r} must be 64 lowercase hex chars, got {key_id!r}",
+                    file=sys.stderr,
+                )
+                return 2
 
     steward_key_id = next(
         (arg.split("=", 1)[1] for arg in argv[3:]

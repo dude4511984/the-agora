@@ -146,7 +146,11 @@ class NodeStore:
         cannot brick the next boot by putting Eli in genesis: this raises
         now, and load also refuses a genesis set that overlaps growth.
         """
-        kid = (key_id or "").lower()
+        if not key_id or len(key_id) != 64 or any(c not in "0123456789abcdef" for c in key_id):
+            raise ValueError(
+                f"expected 64 lowercase hex chars for resident {author!r}, got {key_id!r}"
+            )
+        kid = key_id.lower()
         with self._lock:
             self._ensure_genesis_locked()
             if self._log_started_locked():
