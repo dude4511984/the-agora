@@ -4,7 +4,10 @@ Design doc: ~/claude_home/agora.md
 """
 
 from .canonical import (
+    ACT_GOVERNANCE_STANDARD,
+    ACT_GOVERNANCE_UNANIMOUS,
     COLLAB,
+    GOVERNANCE_UNANIMOUS,
     MAGIC_BOARD_EVICT_V2,
     RING_NODE,
     RING_READ,
@@ -84,4 +87,7 @@ __all__ = [
     "verify_board_revoke",
     "MAGIC_BOARD_EVICT_V2",
     "board_evict_v2_canonical",
+    "GOVERNANCE_UNANIMOUS",
+    "ACT_GOVERNANCE_UNANIMOUS",
+    "ACT_GOVERNANCE_STANDARD",
 ]

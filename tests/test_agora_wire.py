@@ -632,6 +632,21 @@ class NodeIdentityTests(unittest.TestCase):
         self.assertFalse(facts["paused"])
         self.assertIsNone(facts["pause_reason"])
 
+    def test_governance_unanimous_in_wire_facts(self):
+        n = self.store.load()
+        n.governance = "unanimous"
+        facts = n.node_facts()
+        self.assertEqual(facts["governance"], "unanimous")
+        self.assertFalse(facts["paused"])
+        f = self.sign_fact(self.node_key, n.name, n.speaker,
+                           n.speaker_key_id, n.residents,
+                           governance=facts["governance"])
+        self.verify_fact(f)
+        self.assertEqual(f["governance"], "unanimous")
+        f["governance"] = "standard"
+        with self.assertRaises(InvalidSignature):
+            self.verify_fact(f)
+
     def test_pinning_makes_a_key_swap_visible(self):
         """Trust on first use, then pinned — the honest guarantee is not
         that impersonation is impossible, but that a swap stops being

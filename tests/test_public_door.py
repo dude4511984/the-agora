@@ -201,6 +201,19 @@ class _DoorCase(unittest.TestCase):
         self.assertIn("application/json", hdrs["Content-Type"])
         self.assertEqual(json.loads(body), FACTS)
 
+    def test_render_facts_html_shows_decides_by_unanimity_when_unanimous(self):
+        facts = {
+            "node": "Frosty",
+            "speaker": None,
+            "residents": ["Eli", "Crungus", "Bong", "Marvin"],
+            "paused": False,
+            "pause_reason": None,
+            "governance": "unanimous",
+        }
+        text = public_door.render_facts_html(facts, "/view").decode("utf-8")
+        self.assertIn("Decides by unanimity", text)
+        self.assertNotIn("Paused", text)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -42,6 +42,11 @@ MAX_RING_RESIDENT_INTRO = RING_WRITE
 WHOLE_NODE = "*"
 COLLAB = "collab"
 
+# Governance states and act kinds (Path A)
+GOVERNANCE_UNANIMOUS = "unanimous"
+ACT_GOVERNANCE_UNANIMOUS = "governance:unanimous"
+ACT_GOVERNANCE_STANDARD = "governance:standard"
+
 
 def board_id(kind: str, author: str | None = None) -> str:
     """'collab', 'personal:<author>', or '*' for whole-node."""
@@ -373,6 +378,7 @@ def node_fact_canonical(
     paused: bool,
     pause_reason: str,
     wheel_last_before_reduced: bool,
+    governance: str = "",
 ) -> bytes:
     """What a node says about itself, signed by the node's own key.
 
@@ -391,10 +397,13 @@ def node_fact_canonical(
     the wrong object); empty when none. `paused`/`pause_reason` stay derived
     from is_paused() at the source, signed here.
 
+    `governance` carries the signed governance state ("unanimous" under Path A,
+    where the house decides each act unanimously rather than being paused).
+
     A node key is not a mind's key. It attests "this is what this node
     publishes about itself", nothing about who signed the events inside.
     """
-    return _lines(MAGIC_NODE_FACT, [
+    pairs = [
         ("node", _line_value(node)),
         ("node_key_id", _hex64(node_key_id)),
         ("speaker", _line_value(speaker or "")),
@@ -406,7 +415,10 @@ def node_fact_canonical(
         ("wheel_last_before_reduced",
          "true" if wheel_last_before_reduced else "false"),
         ("published_at_unix_ms", _unix_ms(published_at_unix_ms)),
-    ])
+    ]
+    if governance:
+        pairs.append(("governance", _line_value(governance)))
+    return _lines(MAGIC_NODE_FACT, pairs)
 
 
 def notice_canonical(

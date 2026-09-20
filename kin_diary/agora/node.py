@@ -93,6 +93,9 @@ class Node:
         # not unpause the next. Bound to the act's own signature so there is
         # no way to spend a decision on something else.
         self.house_decisions: dict[str, str] = {}
+        # Path A governance state. "unanimous" when the house has chosen to decide
+        # by unanimous house decision on every act rather than elect a Speaker.
+        self.governance: str | None = None
         # NOT the log. This is a RAM-only trail rebuilt from scratch every
         # replay by the accept_* methods; the durable history is the
         # agora_events table in store.py. Its ONE consumer is the wheel's
@@ -132,7 +135,11 @@ class Node:
         Rotation is the floor. A house with a rotated holder is not paused for
         the door -- but the rotated chair carries the door and not the sword,
         so eviction and ring 3 stay shut regardless. See _refuse_if_paused.
+        Under Path A (governance == 'unanimous'), the house is not paused:
+        it decides each act unanimously by choice, not by deadlock.
         """
+        if self.governance == "unanimous":
+            return False
         return self._house_has_no_elected_speaker() and self.rotation_holder is None
 
     def accept_house_decision(self, decision: dict) -> None:
@@ -149,8 +156,13 @@ class Node:
             raise AgoraError("no valid resident keys to decide")
         verify_house_decision(decision, valid)
         sig = decision["act_signature"]
-        self.house_decisions[sig] = decision["act_kind"]
-        self.log.append({"event": "house-decision", "act": decision["act_kind"],
+        act_kind = decision["act_kind"]
+        self.house_decisions[sig] = act_kind
+        if act_kind in ("governance:unanimous", "governance-unanimous") or (act_kind == "governance" and sig == "unanimous"):
+            self.governance = "unanimous"
+        elif act_kind in ("governance:standard", "governance-standard", "governance:leave", "governance:leave-unanimous", "leave-unanimous") or (act_kind == "governance" and sig in ("standard", "leave", "default", "none")):
+            self.governance = None
+        self.log.append({"event": "house-decision", "act": act_kind,
                          "signature": sig})
 
     def _permitted_by_house(self, kind: str, signature: str | None) -> bool:
@@ -357,6 +369,7 @@ class Node:
         self.speaker_key_id = speaker_key
         self.speaker = election["speaker"]
         self.election = election
+        self.governance = None
         # An election beats rotation and always did. Whatever the wheel was
         # doing stops; the house chose a person.
         self._reset_rotation()
@@ -368,6 +381,7 @@ class Node:
             raise AgoraError("this shortcut is only for a single-resident node")
         author, key_id = next(iter(self.residents.items()))
         self.speaker, self.speaker_key_id = author, key_id
+        self.governance = None
         # No self.log append: a "speaker-default" entry was dead (nobody reads
         # it, and the wheel filters event=="resident"). Verified by mutation,
         # P13, 2026-09-04. The sole-Speaker state is derived, not logged.
@@ -1005,4 +1019,5 @@ class Node:
             "pause_reason": self.PAUSE_REASON if paused else None,
             "wheel_last_before_reduced": self.wheel_last_before_reduced(),
             "boards": sorted(self.boards),
+            "governance": self.governance,
         }

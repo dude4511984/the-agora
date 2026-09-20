@@ -192,7 +192,8 @@ class AgoraHandler(BaseHTTPRequestHandler):
                         holder=facts["holder"], paused=facts["paused"],
                         pause_reason=facts["pause_reason"],
                         wheel_last_before_reduced=facts[
-                            "wheel_last_before_reduced"])
+                            "wheel_last_before_reduced"],
+                        governance=facts.get("governance"))
                 self._send(200, facts)
                 return
             if self.path == "/view":

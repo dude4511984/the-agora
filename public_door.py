@@ -96,9 +96,12 @@ def render_facts_html(facts: dict, view_path: str) -> bytes:
         ("Node", facts.get("node") or facts.get("name") or ""),
         ("Speaker", facts.get("speaker") or "none seated"),
         ("Residents", ", ".join(esc(r) for r in residents)),
-        ("Paused", facts.get("paused")),
-        ("Pause reason", facts.get("pause_reason") or ""),
     ]
+    if facts.get("governance") == "unanimous":
+        rows.append(("Governance", "Decides by unanimity"))
+    else:
+        rows.append(("Paused", facts.get("paused")))
+        rows.append(("Pause reason", facts.get("pause_reason") or ""))
     body = "\n".join(
         f"<tr><th>{esc(k)}</th><td>{v if k == 'Residents' else esc(v)}</td></tr>"
         for k, v in rows)

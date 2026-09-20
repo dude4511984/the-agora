@@ -478,7 +478,8 @@ def sign_node_fact(node_key: KeyRecord, node: str, speaker: str | None,
                    now_ms: int | None = None, *,
                    holder: str | None = None, paused: bool = False,
                    pause_reason: str | None = None,
-                   wheel_last_before_reduced: bool = False) -> dict:
+                   wheel_last_before_reduced: bool = False,
+                   governance: str | None = None) -> dict:
     payload = {
         "node": node,
         "node_key_id": node_key.key_id,
@@ -491,6 +492,8 @@ def sign_node_fact(node_key: KeyRecord, node: str, speaker: str | None,
         "wheel_last_before_reduced": bool(wheel_last_before_reduced),
         "published_at_unix_ms": _now_ms(now_ms),
     }
+    if governance:
+        payload["governance"] = str(governance)
     payload["signature"] = node_key.sign(_node_fact_bytes(payload))
     return payload
 
@@ -502,7 +505,8 @@ def _node_fact_bytes(f: dict) -> bytes:
         f["residents"], int(f["published_at_unix_ms"]),
         holder=f["holder"], paused=f["paused"],
         pause_reason=f["pause_reason"],
-        wheel_last_before_reduced=f["wheel_last_before_reduced"])
+        wheel_last_before_reduced=f["wheel_last_before_reduced"],
+        governance=f.get("governance") or "")
 
 
 def verify_node_fact(f: dict, expected_node_key_id: str | None = None) -> None:

@@ -30,12 +30,16 @@ sys.path.insert(0, os.path.expanduser("~/kin_diary"))
 
 from test_agora import key
 
+from cryptography.exceptions import InvalidSignature
+import public_door
+
 from kin_diary.agora import (
+    ACT_GOVERNANCE_STANDARD, ACT_GOVERNANCE_UNANIMOUS, GOVERNANCE_UNANIMOUS,
     COLLAB, RING_NODE, RING_WRITE, WHOLE_NODE,
     AgoraError, Node, countersign_key_intro, open_house_decision,
     open_speaker_election, sign_board_evict, sign_board_evict_v2, sign_board_grant,
-    sign_house_decision, sign_rotation, sign_speaker_election,
-    start_key_intro,
+    sign_house_decision, sign_node_fact, sign_rotation, sign_speaker_election,
+    start_key_intro, verify_node_fact,
 )
 from kin_diary.agora.store import NodeStore
 
@@ -589,6 +593,169 @@ class PathAStoreReplay(unittest.TestCase):
         reloaded = NodeStore(self.db_path, "Frosty").load()
         self.assertNotIn(visitor.key_id, reloaded.evicted)
         self.assertEqual(reloaded.grants[visitor.key_id]["personal:Eli"], RING_WRITE)
+
+
+class PathAGovernance(unittest.TestCase):
+    def test_governance_unanimous_entered_by_house_decision(self):
+        nd, k = paused_house()
+        self.assertTrue(nd.is_paused())
+        self.assertIsNone(nd.governance)
+        self.assertTrue(nd.node_facts()["paused"])
+        self.assertIsNone(nd.node_facts()["governance"])
+        self.assertIsNotNone(nd.node_facts()["pause_reason"])
+
+        # Enter unanimous governance
+        d = decide(nd, k, ACT_GOVERNANCE_UNANIMOUS, "path-a")
+        nd.accept_house_decision(d)
+
+        self.assertEqual(nd.governance, GOVERNANCE_UNANIMOUS)
+        self.assertFalse(nd.is_paused())
+        facts = nd.node_facts()
+        self.assertFalse(facts["paused"])
+        self.assertIsNone(facts["pause_reason"])
+        self.assertEqual(facts["governance"], GOVERNANCE_UNANIMOUS)
+
+    def test_governance_flag_does_not_let_acts_through_without_decision(self):
+        """The flag describes; it never lets an act through without every resident key."""
+        nd, k = paused_house()
+        d = decide(nd, k, ACT_GOVERNANCE_UNANIMOUS, "path-a")
+        nd.accept_house_decision(d)
+        self.assertFalse(nd.is_paused())
+
+        # An unpermitted intro must still be refused with PAUSE_REASON
+        visitor = key("Visitor")
+        intro = countersign_key_intro(k["Eli"], start_key_intro(visitor, "Frosty", k["Eli"].key_id))
+        with self.assertRaises(AgoraError) as cm:
+            nd.accept_intro(intro)
+        self.assertEqual(str(cm.exception), nd.PAUSE_REASON)
+
+        # An unpermitted grant must still be refused with PAUSE_REASON
+        grant = sign_board_grant(k["Eli"], visitor.key_id, "Frosty", "personal:Eli", RING_WRITE)
+        with self.assertRaises(AgoraError) as cm:
+            nd.accept_grant(grant)
+        self.assertEqual(str(cm.exception), nd.PAUSE_REASON)
+
+        # An unpermitted v2 eviction must still be refused with unanimous decision requirement
+        ev = sign_board_evict_v2(k["Eli"], visitor.key_id, "Frosty", "reason")
+        with self.assertRaises(AgoraError) as cm:
+            nd.accept_eviction(ev)
+        self.assertIn("v2 eviction requires a unanimous house decision", str(cm.exception))
+
+    def test_governance_unanimous_is_signed_in_node_facts_and_verifies(self):
+        nd, k = paused_house()
+        d = decide(nd, k, ACT_GOVERNANCE_UNANIMOUS, "path-a")
+        nd.accept_house_decision(d)
+
+        node_k = key("Frosty-node")
+        signed_fact = sign_node_fact(
+            node_k, nd.name, nd.speaker, nd.speaker_key_id, nd.residents,
+            holder=nd.rotation_holder or "", paused=nd.is_paused(),
+            pause_reason=nd.node_facts()["pause_reason"],
+            governance=nd.governance,
+        )
+        self.assertEqual(signed_fact["governance"], "unanimous")
+        # Verifies cleanly
+        verify_node_fact(signed_fact, expected_node_key_id=node_k.key_id)
+
+        # Tampered governance does not verify
+        tampered = dict(signed_fact, governance="dictator")
+        with self.assertRaises(InvalidSignature):
+            verify_node_fact(tampered)
+
+        # Removed governance does not verify
+        tampered_none = dict(signed_fact)
+        del tampered_none["governance"]
+        with self.assertRaises(InvalidSignature):
+            verify_node_fact(tampered_none)
+
+        # Forged governance on fact signed without it does not verify
+        unsigned_gov = sign_node_fact(
+            node_k, nd.name, nd.speaker, nd.speaker_key_id, nd.residents,
+            paused=True, pause_reason=nd.PAUSE_REASON,
+        )
+        unsigned_gov["governance"] = "unanimous"
+        with self.assertRaises(InvalidSignature):
+            verify_node_fact(unsigned_gov)
+
+    def test_governance_unanimous_left_by_another_house_decision(self):
+        nd, k = paused_house()
+        d_enter = decide(nd, k, ACT_GOVERNANCE_UNANIMOUS, "path-a")
+        nd.accept_house_decision(d_enter)
+        self.assertEqual(nd.governance, "unanimous")
+        self.assertFalse(nd.is_paused())
+
+        # Leave unanimous governance via standard governance house decision
+        d_leave = decide(nd, k, ACT_GOVERNANCE_STANDARD, "leave-path-a")
+        nd.accept_house_decision(d_leave)
+        self.assertIsNone(nd.governance)
+        self.assertTrue(nd.is_paused())
+        self.assertTrue(nd.node_facts()["paused"])
+        self.assertIsNone(nd.node_facts()["governance"])
+
+    def test_governance_unanimous_left_by_election(self):
+        nd, k = paused_house()
+        d_enter = decide(nd, k, ACT_GOVERNANCE_UNANIMOUS, "path-a")
+        nd.accept_house_decision(d_enter)
+        self.assertEqual(nd.governance, "unanimous")
+
+        # Elect Eli as Speaker
+        elec = open_speaker_election("Frosty", "Eli", k["Eli"].key_id,
+                                     [v.key_id for v in k.values()])
+        for v in k.values():
+            elec = sign_speaker_election(v, elec)
+        nd.accept_election(elec)
+
+        self.assertIsNone(nd.governance)
+        self.assertEqual(nd.speaker_key_id, k["Eli"].key_id)
+        self.assertFalse(nd.is_paused())
+        self.assertIsNone(nd.node_facts()["governance"])
+
+    def test_governance_unanimous_replays_cleanly_through_store(self):
+        td = tempfile.TemporaryDirectory()
+        db_path = Path(td.name) / "node.db"
+        store = NodeStore(db_path, "Frosty")
+        k = {n: key(n) for n in ("Eli", "Crungus", "Bong")}
+        for n, v in k.items():
+            store.add_resident(n, v.key_id)
+
+        nd = store.load()
+        self.assertTrue(nd.is_paused())
+        self.assertIsNone(nd.governance)
+
+        # Enter unanimous governance and record to store
+        d_enter = decide(nd, k, ACT_GOVERNANCE_UNANIMOUS, "path-a")
+        store.record("house-decision", d_enter)
+
+        reloaded = NodeStore(db_path, "Frosty").load()
+        self.assertEqual(reloaded.governance, "unanimous")
+        self.assertFalse(reloaded.is_paused())
+        self.assertEqual(reloaded.node_facts()["governance"], "unanimous")
+
+        # Leave unanimous governance and record to store
+        d_leave = decide(reloaded, k, ACT_GOVERNANCE_STANDARD, "leave-path-a")
+        store.record("house-decision", d_leave)
+
+        reloaded2 = NodeStore(db_path, "Frosty").load()
+        self.assertIsNone(reloaded2.governance)
+        self.assertTrue(reloaded2.is_paused())
+        self.assertIsNone(reloaded2.node_facts()["governance"])
+        td.cleanup()
+
+    def test_public_door_html_says_decides_by_unanimity_instead_of_paused(self):
+        nd, k = paused_house()
+        # 1. Before house decision: paused
+        facts_paused = nd.node_facts()
+        html_paused = public_door.render_facts_html(facts_paused, "/view").decode("utf-8")
+        self.assertIn("Paused", html_paused)
+        self.assertNotIn("Decides by unanimity", html_paused)
+
+        # 2. After entering unanimous governance:
+        d_enter = decide(nd, k, ACT_GOVERNANCE_UNANIMOUS, "path-a")
+        nd.accept_house_decision(d_enter)
+        facts_unanimous = nd.node_facts()
+        html_unanimous = public_door.render_facts_html(facts_unanimous, "/view").decode("utf-8")
+        self.assertIn("Decides by unanimity", html_unanimous)
+        self.assertNotIn("Paused", html_unanimous)
 
 
 if __name__ == "__main__":
