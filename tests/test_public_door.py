@@ -20,8 +20,10 @@ from pathlib import Path
 
 from cryptography.exceptions import InvalidSignature
 
-import sys
-sys.path.insert(0, str(Path.home() / "kin_diary"))
+_REPO = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(_REPO))
+if str(Path.home() / "kin_diary") not in sys.path:
+    sys.path.append(str(Path.home() / "kin_diary"))
 
 from kin_diary.keys import generate_keypair, load_public  # noqa: E402
 from kin_diary.agora.canonical import request_canonical  # noqa: E402

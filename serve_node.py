@@ -14,7 +14,10 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path.home() / "kin_diary"))
+_REPO = Path(__file__).resolve().parent
+sys.path.insert(0, str(_REPO))
+if str(Path.home() / "kin_diary") not in sys.path:
+    sys.path.append(str(Path.home() / "kin_diary"))
 
 from kin_diary.agora.store import NodeStore  # noqa: E402
 from kin_diary.agora.canonical import COLLAB  # noqa: E402

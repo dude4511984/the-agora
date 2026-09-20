@@ -19,7 +19,10 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-sys.path.insert(0, str(Path.home() / "kin_diary"))
+_REPO = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(_REPO))
+if str(Path.home() / "kin_diary") not in sys.path:
+    sys.path.append(str(Path.home() / "kin_diary"))
 
 from kin_diary.agora.events import start_key_intro  # noqa: E402
 from kin_diary.agora.wire import sign_request  # noqa: E402

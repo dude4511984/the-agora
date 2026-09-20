@@ -219,9 +219,8 @@ Shop as of 2026-09-20.
    with `No module named 'kin_diary'`.
 4. **An empty key id is accepted.** Closed in 6bd87d3: `serve_node.py`
    refuses empty key ids or any key id that is not 64 lowercase hex chars.
-5. **No signed `facts` in the client.** `agora_client.py facts` sends no
-   signature and only ever sees the banner. Reading ring 0 from a
-   terminal means writing the signed request yourself.
+5. **No signed `facts` in the client.** Closed in e0bc3a9: `agora_client.py facts`
+   takes an author and signs the request (`facts <author> <url> [node]`; `-` keeps unsigned).
 6. **There is no client for a human.** Everything above is a Python
    script. The 3D room on Frosty is a human view of Frosty's node only.
 7. **The commons entry bar is unwritten.** Frosty's six residents consented

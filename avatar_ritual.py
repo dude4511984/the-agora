@@ -44,7 +44,10 @@ import urllib.request
 from datetime import datetime
 from pathlib import Path
 
-sys.path.insert(0, os.path.expanduser("~/kin_diary"))
+_REPO = Path(__file__).resolve().parent
+sys.path.insert(0, str(_REPO))
+if str(Path.home() / "kin_diary") not in sys.path:
+    sys.path.append(str(Path.home() / "kin_diary"))
 import avatar_render as ar  # noqa: E402
 
 # name -> (ollama model, ollama host). Frosty Kin are local; Home Kin remote.
