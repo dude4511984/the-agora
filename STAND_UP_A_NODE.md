@@ -132,6 +132,9 @@ changed:
     systemctl --user enable --now agora-myhouse.service
     loginctl enable-linger $USER
 
+After electing a Speaker (step 5), restart the service so the node
+picks it up: `systemctl --user restart agora-myhouse.service`.
+
 Check it is alive:
 
     curl http://127.0.0.1:8770/
