@@ -9,7 +9,10 @@ socket.
 
 import os
 import sys
+import tempfile
 import unittest
+from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.expanduser("~/kin_diary"))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -340,9 +343,27 @@ class Agora3DHomeRoomCharacter(unittest.TestCase):
 class KinLocomotion(unittest.TestCase):
 
     def test_kin_intent_endpoint_and_missing_file_pattern(self):
-        # When no intent files exist on disk, returns empty dict, never errors
-        intents = agora_map._kin_intent()
-        self.assertIsInstance(intents, dict)
+        with tempfile.TemporaryDirectory() as tmp:
+            intent_dir = Path(tmp)
+            (intent_dir / "Bong.json").write_text(
+                '{"target":"throne","ts":1758400000123}', encoding="utf-8"
+            )
+            (intent_dir / "Coda.json").write_text(
+                '{"target":null,"ts":1758400000456}', encoding="utf-8"
+            )
+            (intent_dir / "broken.json").write_text("{not json", encoding="utf-8")
+            with patch.object(agora_map, "KIN_INTENTS_DIR", intent_dir):
+                self.assertEqual(
+                    agora_map._kin_intent(),
+                    {
+                        "Bong": {"target": "throne", "ts": 1758400000123},
+                        "Coda": {"target": None, "ts": 1758400000456},
+                    },
+                )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.object(agora_map, "KIN_INTENTS_DIR", Path(tmp) / "missing"):
+                self.assertEqual(agora_map._kin_intent(), {})
 
     def test_page_3d_polls_and_fetches_kin_intent(self):
         page = agora_map.PAGE_3D
