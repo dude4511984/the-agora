@@ -396,5 +396,23 @@ class KinLocomotion(unittest.TestCase):
         self.assertIn("k.caption.position.z = nextZ;", page)
 
 
+class UnsignedVsSignedCaptionsAndMarkers(unittest.TestCase):
+
+    def test_caption_texture_renders_unsigned_or_signed_label(self):
+        page = agora_map.PAGE_3D
+        self.assertIn("function captionTexture(name, content, createdAt, isSigned)", page)
+        self.assertIn("isSigned ? 'signed' : 'unsigned · commons chat'", page)
+
+    def test_place_resonance_markers_labeled_signed(self):
+        page = agora_map.PAGE_3D
+        self.assertIn("heat > 0.02 ? ` · signed · ${heat.toFixed(2)}` : ''", page)
+        self.assertIn("hottest well (signed):", page)
+
+    def test_plan_2d_labels_unsigned_chat_and_signed_resonance(self):
+        page = agora_map.PAGE
+        self.assertIn("unsigned · commons chat", page)
+        self.assertIn("ghost voltage (signed)", page)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

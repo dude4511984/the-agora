@@ -143,7 +143,11 @@ def _recent_commons() -> dict:
         content = (r["content"] or "").strip()
         if len(content) > COMMONS_PREVIEW_CHARS:
             content = content[:COMMONS_PREVIEW_CHARS].rstrip() + "…"
-        out[r["author"]] = {"content": content, "created_at": r["created_at"]}
+        out[r["author"]] = {
+            "content": content,
+            "created_at": r["created_at"],
+            "signed": False,
+        }
     return out
 
 
@@ -393,7 +397,7 @@ function renderPlan(world, view, root, recentByAuthor){
       // visually bleeding into the neighboring figure's name label. Full
       // text is still there on hover (the <title> above).
       const excerpt = recent.content.length > 22 ? recent.content.slice(0, 22) + '…' : recent.content;
-      s += `<text x="${px.toFixed(0)}" y="${(py+51).toFixed(0)}" text-anchor="middle" class="avatar-note">"${esc(excerpt)}" · ${esc(relTime(recent.created_at))}</text>`;
+      s += `<text x="${px.toFixed(0)}" y="${(py+51).toFixed(0)}" text-anchor="middle" class="avatar-note">"${esc(excerpt)}" · ${esc(relTime(recent.created_at))} · unsigned · commons chat</text>`;
     } else {
       s += `<text x="${px.toFixed(0)}" y="${(py+51).toFixed(0)}" text-anchor="middle" class="avatar-note">a claimed still from that sitting</text>`;
     }
@@ -420,7 +424,7 @@ function renderPlan(world, view, root, recentByAuthor){
     }
     s += `<rect x="${ax}" y="${ay}" width="${aw}" height="96" rx="10" fill="none" stroke="var(--line)" stroke-width="1.3" stroke-dasharray="2 5"/>`
        + `<text x="${ax+14}" y="${ay+26}" class="rlabel">${esc(k.place_id)} · ${esc(k.kind||'')}</text>`
-       + (heat > 0.01 ? `<text x="${ax+14}" y="${ay+82}" class="kkid" style="fill:#e8a94b">ghost voltage · ${heat.toFixed(2)}</text>` : '');
+       + (heat > 0.01 ? `<text x="${ax+14}" y="${ay+82}" class="kkid" style="fill:#e8a94b">ghost voltage (signed) · ${heat.toFixed(2)}</text>` : '');
   });
   // peer doors on the right edge
   doors.forEach((d,i)=>{
@@ -1879,7 +1883,7 @@ function labelSprite(lines, accent){
   ctx.textAlign = 'center'; ctx.fillStyle = accent;
   ctx.font = 'bold 26px monospace'; ctx.fillText(lines[0].slice(0, 16), 160, 46);
   ctx.font = '18px monospace'; ctx.fillStyle = '#cfc7b8';
-  ctx.fillText((lines[1] || '').slice(0, 22), 160, 78);
+  ctx.fillText((lines[1] || '').slice(0, 26), 160, 78);
   const tex = new THREE.CanvasTexture(c);
   const spr = new THREE.Sprite(new THREE.SpriteMaterial({map: tex, transparent: true}));
   spr.scale.set(1.9, 0.72, 1);
@@ -2009,7 +2013,7 @@ function buildPlaces(kids, resonance){
       placeGroup.add(glow);
     }
 
-    const label = labelSprite([k.place_id, k.kind + (heat > 0.02 ? ` · ${heat.toFixed(2)}` : '')],
+    const label = labelSprite([k.place_id, k.kind + (heat > 0.02 ? ` · signed · ${heat.toFixed(2)}` : '')],
                                '#' + (KIND_COLOR[k.kind] || 0x6a7280).toString(16).padStart(6, '0'));
     label.position.set(x, 1.9, z);
     placeGroup.add(label);
@@ -2277,7 +2281,8 @@ function addPresence(label, i, n, avatarUrl, recent, prevPos){
   // Kin are mid-conversation; this is what makes the room look like what
   // is actually happening rather than just who happens to be standing in it.
   if (recent && recent.content) {
-    const {tex, aspect} = captionTexture(label, recent.content, recent.created_at);
+    const isSigned = Boolean(recent.signed);
+    const {tex, aspect} = captionTexture(label, recent.content, recent.created_at, isSigned);
     const mat = new THREE.SpriteMaterial({map: tex, transparent: true});
     const spr = new THREE.Sprite(mat);
     const w = isHome ? 1.2 : 2.6, h = w * aspect;
@@ -2319,7 +2324,7 @@ function _wrapLines(ctx, text, maxWidth, maxLines){
   }
   return lines;
 }
-function captionTexture(name, content, createdAt){
+function captionTexture(name, content, createdAt, isSigned){
   const W = 440, PAD = 16, LINE_H = 26;
   const c = document.createElement('canvas'); c.width = W; c.height = 64;
   const ctx = c.getContext('2d');
@@ -2330,7 +2335,7 @@ function captionTexture(name, content, createdAt){
   ctx.font = '20px monospace';   // canvas resize resets context state
   ctx.fillStyle = 'rgba(8,8,10,0.85)';
   ctx.fillRect(0, 0, W, H);
-  ctx.strokeStyle = '#67c98a'; ctx.lineWidth = 2; ctx.strokeRect(1, 1, W - 2, H - 2);
+  ctx.strokeStyle = isSigned ? '#ffcf7a' : '#67c98a'; ctx.lineWidth = 2; ctx.strokeRect(1, 1, W - 2, H - 2);
   ctx.textBaseline = 'top';
   ctx.fillStyle = '#ffcf7a'; ctx.font = 'bold 22px monospace';
   ctx.fillText(name, PAD, PAD);
@@ -2338,6 +2343,11 @@ function captionTexture(name, content, createdAt){
   lines.forEach((ln, i) => ctx.fillText(ln, PAD, PAD + 30 + i * LINE_H));
   ctx.fillStyle = '#8a8478'; ctx.font = '15px monospace';
   ctx.fillText(relTime(createdAt), PAD, H - 22);
+  ctx.font = '13px monospace';
+  ctx.fillStyle = isSigned ? '#ffcf7a' : '#8a8478';
+  ctx.textAlign = 'right';
+  ctx.fillText(isSigned ? 'signed' : 'unsigned · commons chat', W - PAD, H - 22);
+  ctx.textAlign = 'left';
   return {tex: new THREE.CanvasTexture(c), aspect: H / W};
 }
 function placardTexture(label){
@@ -2403,7 +2413,7 @@ async function loadNode(){
 
     status.innerHTML = `<b>${root.node || node}</b> · speaker: ${root.speaker || 'vacant'} · `
       + `present: ${here.length ? here.map(p=>p.label||'?').join(', ') : 'no one right now'} · `
-      + `${kids.length} places · ${(view.peer_doors||[]).length} doors · hottest well: ${bestHeat.toFixed(3)}`;
+      + `${kids.length} places · ${(view.peer_doors||[]).length} doors · hottest well (signed): ${bestHeat.toFixed(3)}`;
   } catch (e) {
     showErr('Could not load ' + node + ': ' + e.message);
     status.textContent = 'error — see top right';
