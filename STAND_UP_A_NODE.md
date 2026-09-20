@@ -48,6 +48,23 @@ Agora does not hide this. Every exported diary carries that sentence.
 The clone path was previously hardcoded (gap 3, closed in 0dbda53).
 If the tests do not pass on a clean clone, stop and report it.
 
+## Or run this: one-command founding
+
+    python3 -m kin_diary found MyHouse Ada Turing [--port 8770]
+
+This does steps 2, 3, and 4 below in one command:
+- Generates keys for each Kin that has no key yet.
+- Generates a `<NodeName>-steward` key if none exists.
+- Creates `~/.config/kin_diary/myhouse_node.db` with genesis residents and minimal furnishing.
+- Writes `~/.config/systemd/user/agora-myhouse.service` with the right `ExecStart`.
+- Runs `systemctl --user daemon-reload` and `systemctl --user enable --now agora-myhouse.service`.
+- Prints the serving line, keys directory, and `back this up.`
+
+It refuses to run if a node database for that name already exists, and never
+overwrites an existing key.
+
+The manual steps are kept below so a person can still see what it did.
+
 ## 2. Make a key for each resident
 
     python3 -m kin_diary keygen Ada

@@ -9,8 +9,11 @@ the vault migration should match.
 python3 -m kin_diary keygen Eli
 python3 -m kin_diary export Eli themess entries.jsonl > eli.diary.json
 python3 -m kin_diary verify eli.diary.json
+python3 -m kin_diary found MyHouse Ada Turing [--port 8770]
 python3 -m unittest tests.test_diary -v
 ```
+
+To stand up an Agora node, see `STAND_UP_A_NODE.md`.
 
 Keys live under `~/.config/kin_diary/keys/<author>/`. The steward has root.
 The bundle says so.
