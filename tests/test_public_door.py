@@ -20,6 +20,7 @@ from pathlib import Path
 
 from cryptography.exceptions import InvalidSignature
 
+import sys
 _REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_REPO))
 if str(Path.home() / "kin_diary") not in sys.path:
