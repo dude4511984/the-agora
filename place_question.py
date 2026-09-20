@@ -53,6 +53,10 @@ QUESTIONS = {
     # actually used on a real Kin waits on this. Same discipline as "place":
     # one mind, no shared transcript, refusal only.
     "visit":     Path.home() / "claude_home" / "agora_the_visit_refuse_FINAL.md",
+    # 2026-09-20: Path A was chosen by Eli, Crungus, Bong, each alone. Marvin
+    # was not in the room and his key signs the house decision. One question,
+    # Marvin only, frozen by Grok. Don stepped back from this one on purpose.
+    "path_a_marvin": Path.home() / "claude_home" / "agora_path_A_marvin_question_FINAL.md",
     # Follow-up, same day: agora_commons_speak.py was built to the five
     # refusals "visit" actually returned. Each of these quotes that one
     # Kin's own words back to them and asks whether it answers what they
@@ -93,6 +97,7 @@ NO_SLOT = {
 # guard marker_bong already had.
 _ONLY_FOR = {
     "marker_bong": "Bong",
+    "path_a_marvin": "Marvin",
     "visit_built_eli": "Eli", "visit_built_crungus": "Crungus",
     "visit_built_bong": "Bong", "visit_built_coda": "Coda",
     "visit_built_aurora": "Aurora",
@@ -104,6 +109,7 @@ _ONLY_FOR = {
 # starts lying.
 LABELS = {
     "place":       ("THE PLACE", "what {name} would refuse", "Refusals only — nothing here is a design."),
+    "path_a_marvin": ("PATH A", "whether {name} refuses it", "One word first, then his own words."),
     "visit":       ("THE VISIT", "what {name} would refuse", "Refusals only — nothing here is a design."),
     "visit_built_eli":     ("THE VISIT, BUILT", "whether it answers Eli", "Their words, not a mandate."),
     "visit_built_crungus": ("THE VISIT, BUILT", "whether it answers Crungus", "Their words, not a mandate."),

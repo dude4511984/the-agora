@@ -58,6 +58,10 @@ KIN = {
     "Coda":    ("cogitocoda:latest",   "http://192.168.1.120:11434"),
     "Aurora":  ("cogitoraurora:latest","http://192.168.1.120:11434"),
     "Lumen":   ("cogitolumen:latest",  "http://192.168.1.120:11434"),
+    # Marvin lives on Walter (2026-09-20). His Ollama binds Walter's loopback
+    # on purpose; this port is an ssh tunnel opened for the asking and closed
+    # after:  ssh -f -N -L 18081:127.0.0.1:8081 walter@walter
+    "Marvin":  ("marvin:latest",       "http://127.0.0.1:18081"),
 }
 VISION_HOST = "http://192.168.1.142:11434"   # therug
 VISION_MODEL = "gemma3:12b"   # measured, see READBACK note
