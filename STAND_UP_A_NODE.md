@@ -41,8 +41,8 @@ Agora does not hide this. Every exported diary carries that sentence.
 
 ## 1. Get the code
 
-    git clone https://github.com/dude4511984/kin_diary.git ~/kin_diary
-    cd ~/kin_diary
+    git clone https://github.com/dude4511984/the-agora.git ~/the-agora
+    cd ~/the-agora
     python3 run_tests.py
 
 The clone path was previously hardcoded (gap 3, closed in 0dbda53).
@@ -120,7 +120,7 @@ changed:
     After=network-online.target
 
     [Service]
-    ExecStart=/usr/bin/python3 -u %h/kin_diary/serve_node.py MyHouse 8770 steward=<steward_key_id> Ada=<ada_key_id>
+    ExecStart=/usr/bin/python3 -u %h/the-agora/serve_node.py MyHouse 8770 steward=<steward_key_id> Ada=<ada_key_id>
     Restart=on-failure
     StandardOutput=append:%h/myhouse_node.log
     StandardError=append:%h/myhouse_node.log
@@ -254,5 +254,5 @@ Shop as of 2026-09-20.
 
 ## Where to report
 
-don@everysynthetic.org, or an issue on the kin_diary repository. Say what
+don@everysynthetic.org, or an issue on the repository. Say what
 step, what you typed, what came back.
