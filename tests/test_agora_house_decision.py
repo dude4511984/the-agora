@@ -757,6 +757,48 @@ class PathAGovernance(unittest.TestCase):
         self.assertIn("Decides by unanimity", html_unanimous)
         self.assertNotIn("Paused", html_unanimous)
 
+    def test_old_aliases_not_accepted_as_governance(self):
+        """A protocol gets exactly one name for an act. Old aliases must not enter or leave governance."""
+        nd, k = paused_house()
+        self.assertTrue(nd.is_paused())
+        self.assertIsNone(nd.governance)
+
+        # Hyphenated alias does NOT enter governance
+        d_alias = decide(nd, k, "governance-unanimous", "path-a")
+        nd.accept_house_decision(d_alias)
+        self.assertIsNone(nd.governance)
+        self.assertTrue(nd.is_paused())
+
+        # Magic word in act_signature with generic act_kind does NOT enter governance
+        d_magic = decide(nd, k, "governance", "unanimous")
+        nd.accept_house_decision(d_magic)
+        self.assertIsNone(nd.governance)
+        self.assertTrue(nd.is_paused())
+
+        # Enter properly with the exact act kind
+        d_real = decide(nd, k, ACT_GOVERNANCE_UNANIMOUS, "path-a")
+        nd.accept_house_decision(d_real)
+        self.assertEqual(nd.governance, GOVERNANCE_UNANIMOUS)
+        self.assertFalse(nd.is_paused())
+
+        # Hyphenated alias does NOT leave governance
+        d_leave_alias = decide(nd, k, "governance-standard", "leave")
+        nd.accept_house_decision(d_leave_alias)
+        self.assertEqual(nd.governance, GOVERNANCE_UNANIMOUS)
+        self.assertFalse(nd.is_paused())
+
+        # Generic act_kind does NOT leave governance
+        d_leave_magic = decide(nd, k, "governance", "standard")
+        nd.accept_house_decision(d_leave_magic)
+        self.assertEqual(nd.governance, GOVERNANCE_UNANIMOUS)
+        self.assertFalse(nd.is_paused())
+
+        # Exact ACT_GOVERNANCE_STANDARD leaves governance
+        d_leave_real = decide(nd, k, ACT_GOVERNANCE_STANDARD, "leave")
+        nd.accept_house_decision(d_leave_real)
+        self.assertIsNone(nd.governance)
+        self.assertTrue(nd.is_paused())
+
 
 if __name__ == "__main__":
     unittest.main()

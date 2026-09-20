@@ -9,7 +9,10 @@ wins and this is the bug.
 from __future__ import annotations
 
 from .canonical import (
+    ACT_GOVERNANCE_STANDARD,
+    ACT_GOVERNANCE_UNANIMOUS,
     COLLAB,
+    GOVERNANCE_UNANIMOUS,
     MAX_RING_RESIDENT_INTRO,
     RING_NODE,
     RING_READ,
@@ -135,10 +138,10 @@ class Node:
         Rotation is the floor. A house with a rotated holder is not paused for
         the door -- but the rotated chair carries the door and not the sword,
         so eviction and ring 3 stay shut regardless. See _refuse_if_paused.
-        Under Path A (governance == 'unanimous'), the house is not paused:
+        Under Path A (governance == GOVERNANCE_UNANIMOUS), the house is not paused:
         it decides each act unanimously by choice, not by deadlock.
         """
-        if self.governance == "unanimous":
+        if self.governance == GOVERNANCE_UNANIMOUS:
             return False
         return self._house_has_no_elected_speaker() and self.rotation_holder is None
 
@@ -158,9 +161,11 @@ class Node:
         sig = decision["act_signature"]
         act_kind = decision["act_kind"]
         self.house_decisions[sig] = act_kind
-        if act_kind in ("governance:unanimous", "governance-unanimous") or (act_kind == "governance" and sig == "unanimous"):
-            self.governance = "unanimous"
-        elif act_kind in ("governance:standard", "governance-standard", "governance:leave", "governance:leave-unanimous", "leave-unanimous") or (act_kind == "governance" and sig in ("standard", "leave", "default", "none")):
+        # Exactly one act kind enters unanimity and one leaves; no aliases.
+        # act_signature identifies the transition (e.g. "path-a"); not checked against a magic word.
+        if act_kind == ACT_GOVERNANCE_UNANIMOUS:
+            self.governance = GOVERNANCE_UNANIMOUS
+        elif act_kind == ACT_GOVERNANCE_STANDARD:
             self.governance = None
         self.log.append({"event": "house-decision", "act": act_kind,
                          "signature": sig})
