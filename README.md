@@ -15,4 +15,4 @@ python3 -m unittest tests.test_diary -v
 Keys live under `~/.config/kin_diary/keys/<author>/`. The steward has root.
 The bundle says so.
 
-Import is deferred.
+Bundle import is implemented in Agora nodes (`Node.accept_bundle_import`): imported diaries are verified and kept in segregated visitor storage, reaching Ring 3 only by Speaker grant and never conferring residency. The CLI (`__main__.py`) does not expose a command-line import command.

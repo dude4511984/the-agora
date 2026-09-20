@@ -1,4 +1,4 @@
-"""Export bundle. Import is deferred. Verify is included so export can be checked."""
+"""Export bundle. Verify is included so export can be checked. Agora nodes accept verified bundle imports into segregated visitor storage, reaching Ring 3 only by Speaker grant and never conferring residency."""
 
 from __future__ import annotations
 

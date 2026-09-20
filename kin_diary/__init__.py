@@ -1,4 +1,4 @@
-"""Signed portable diary — keys, canonical bytes, export. Import is deferred."""
+"""Signed portable diary — keys, canonical bytes, export. Agora nodes accept verified bundle imports into segregated visitor storage, reaching Ring 3 only by Speaker grant and never conferring residency."""
 
 from .keys import generate_keypair, load_current, rotate, KEY_CUSTODY, KEY_CUSTODY_STATEMENT
 from .canonical import (
