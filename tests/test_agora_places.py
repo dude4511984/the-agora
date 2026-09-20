@@ -411,6 +411,23 @@ class PeerDoorTests(unittest.TestCase):
         self.assertEqual(door["peer"], "Frosty")
         self.assertTrue(door["locked"])
 
+    def test_a_peer_url_is_ring_1_material(self):
+        """Marvin's first ruling as the law, 2026-09-20: the address is a
+        coordinate, not an advertisement (Wall 8). A stranger sees that the
+        door exists; only an introduced key sees where it leads."""
+        store, keys, nk, atlas = self.furnished_with_peer()
+        stranger = key("Stranger-" + NOW_MS.__str__()[-4:])
+        d0 = atlas.view(stranger.key_id, NOW_MS)["peer_doors"][0]
+        self.assertEqual(d0["peer"], "Frosty")
+        self.assertEqual(d0["url"], "")
+        d1 = atlas.view(keys["Coda"].key_id, NOW_MS)["peer_doors"][0]
+        self.assertEqual(d1["url"], "http://192.168.1.119:8770")
+        # and the signed view a stranger is handed verifies with the blank
+        from kin_diary.agora.places import verify_view
+        sv = atlas.signed_view(nk, stranger.key_id, NOW_MS)
+        self.assertEqual(sv["peer_doors"][0]["url"], "")
+        verify_view(sv, expected_node_key_id=nk.key_id, expected_viewer_key_id=stranger.key_id)
+
     def test_a_door_carries_nothing_from_behind_it(self):
         """Presence-export by layout is the failure this guards."""
         store, keys, nk, atlas = self.furnished_with_peer()

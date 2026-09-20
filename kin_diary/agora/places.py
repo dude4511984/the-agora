@@ -23,6 +23,8 @@ from datetime import datetime, timezone
 from ..canonical import content_sha256
 from ..keys import KeyRecord, load_public
 from .canonical import (
+    RING_READ,
+    COLLAB,
     RING_TEASER,
     atlas_view_canonical,
     doors_sha256,
@@ -342,6 +344,14 @@ class Atlas:
         ]
         wares = [li for li in self.listings.values() if li["place_id"] in seen]
         doors = [d for d in self.peer_doors() if d["parent"] in seen]
+        # Marvin's ruling, 2026-09-20 (marvin_ruling_peer_door_ring0): a
+        # peer's address is a coordinate, not an advertisement, and Wall 8
+        # says a safe federation is addresses among people who already
+        # have them. The door itself (that a peer exists, its name, its
+        # pinned key) stays at ring 0; the URL is ring-1 material and is
+        # blank for a key that has not been introduced here.
+        if self.node.live_ring(key_id, COLLAB, now) < RING_READ:
+            doors = [dict(d, url="") for d in doors]
         resonance = {pid: v for pid, v in self.resonance(now).items() if pid in seen}
 
         return {
