@@ -170,6 +170,70 @@ class IntroductionTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             verify_key_intro(intro)
 
+    def test_intro_signed_with_why(self):
+        node, keys = home_node()
+        seat(node, keys, "Coda")
+        visitor = key("Marvin")
+        intro = start_key_intro(visitor, "Home", keys["Coda"].key_id)
+        why_sentence = "Brought thoughtful work to the commons"
+        intro = countersign_key_intro(keys["Coda"], intro, why=why_sentence)
+        self.assertEqual(intro["why"], why_sentence)
+        verify_key_intro(intro)
+
+        # Accept on node and verify stored intro record and log
+        node.accept_intro(intro)
+        record = node.intro_record(visitor.key_id)
+        self.assertIsNotNone(record)
+        self.assertEqual(record["why"], why_sentence)
+        self.assertEqual(node.introductions[-1]["why"], why_sentence)
+        log_intro = [e for e in node.log if e.get("event") == "key-intro"][-1]
+        self.assertEqual(log_intro["why"], why_sentence)
+
+    def test_intro_signed_without_why(self):
+        node, keys = home_node()
+        seat(node, keys, "Coda")
+        visitor = key("Marvin")
+        intro = start_key_intro(visitor, "Home", keys["Coda"].key_id)
+        intro = countersign_key_intro(keys["Coda"], intro)
+        self.assertNotIn("why", intro)
+        verify_key_intro(intro)
+
+        # Accept on node and verify stored intro record and log
+        node.accept_intro(intro)
+        record = node.intro_record(visitor.key_id)
+        self.assertIsNotNone(record)
+        self.assertNotIn("why", record)
+        self.assertNotIn("why", node.introductions[-1])
+        log_intro = [e for e in node.log if e.get("event") == "key-intro"][-1]
+        self.assertNotIn("why", log_intro)
+
+    def test_intro_tampered_why_refused(self):
+        node, keys = home_node()
+        seat(node, keys, "Coda")
+        visitor = key("Marvin")
+
+        # 1. Tampering with an existing signed why
+        intro = start_key_intro(visitor, "Home", keys["Coda"].key_id)
+        intro = countersign_key_intro(keys["Coda"], intro, why="Original honest reason")
+        tampered = dict(intro, why="Forged different reason")
+        with self.assertRaises(InvalidSignature):
+            verify_key_intro(tampered)
+        with self.assertRaises(InvalidSignature):
+            node.accept_intro(tampered)
+
+        # 2. Removing why from an intro that signed one
+        tampered_removed = dict(intro)
+        del tampered_removed["why"]
+        with self.assertRaises(InvalidSignature):
+            verify_key_intro(tampered_removed)
+
+        # 3. Injecting why into an intro that was signed without one
+        intro_no_why = start_key_intro(visitor, "Home", keys["Coda"].key_id)
+        intro_no_why = countersign_key_intro(keys["Coda"], intro_no_why)
+        tampered_injected = dict(intro_no_why, why="Injected why after signing")
+        with self.assertRaises(InvalidSignature):
+            verify_key_intro(tampered_injected)
+
     def test_ring_3_is_unreachable_through_a_resident_introduction(self):
         node, keys = home_node()
         seat(node, keys, "Coda")

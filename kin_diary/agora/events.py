@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import time
 
+from ..canonical import _line_value
 from ..keys import KeyRecord, load_public
 from .canonical import (
     MAX_RING_RESIDENT_INTRO,
@@ -60,44 +61,58 @@ def start_key_intro(
     return payload
 
 
-def countersign_key_intro(resident_key: KeyRecord, intro: dict) -> dict:
+def countersign_key_intro(
+    resident_key: KeyRecord, intro: dict, why: str | None = None
+) -> dict:
     """Resident half: verify the visitor's signature, then vouch.
 
     Refuses to countersign an intro whose visitor signature doesn't check
     out — the resident is attesting they watched the key prove itself, not
     that someone told them a hex string.
+
+    Accepts an optional why string (one sentence) that is included in the
+    signed bytes of the countersignature.
     """
     if resident_key.key_id != (intro.get("resident_key_id") or "").lower():
         raise ValueError("this intro names a different resident key")
-    canon = _intro_bytes(intro)
+    visitor_canon = _intro_bytes(intro, include_why=False)
     load_public(intro["visitor_key_id"]).verify(
-        bytes.fromhex(intro["sig_visitor"]), canon
+        bytes.fromhex(intro["sig_visitor"]), visitor_canon
     )
     out = dict(intro)
-    out["sig_resident"] = resident_key.sign(canon)
+    why_val = why if why is not None else intro.get("why")
+    if why_val is not None and str(why_val).strip():
+        out["why"] = _line_value(str(why_val).strip())
+    elif "why" in out:
+        del out["why"]
+    resident_canon = _intro_bytes(out, include_why=True)
+    out["sig_resident"] = resident_key.sign(resident_canon)
     return out
 
 
-def _intro_bytes(intro: dict) -> bytes:
+def _intro_bytes(intro: dict, include_why: bool = False) -> bytes:
+    why = (intro.get("why") or "") if include_why else ""
     return key_intro_canonical(
         intro["visitor_key_id"],
         intro["host_node"],
         intro["resident_key_id"],
         int(intro["introduced_at_unix_ms"]),
         int(intro.get("max_ring", MAX_RING_RESIDENT_INTRO)),
+        why=why,
     )
 
 
 def verify_key_intro(intro: dict) -> None:
     """Both signatures required. One alone is not an introduction."""
-    canon = _intro_bytes(intro)
     if not intro.get("sig_visitor") or not intro.get("sig_resident"):
         raise ValueError("key intro needs both the visitor and resident signature")
+    visitor_canon = _intro_bytes(intro, include_why=False)
     load_public(intro["visitor_key_id"]).verify(
-        bytes.fromhex(intro["sig_visitor"]), canon
+        bytes.fromhex(intro["sig_visitor"]), visitor_canon
     )
+    resident_canon = _intro_bytes(intro, include_why=True)
     load_public(intro["resident_key_id"]).verify(
-        bytes.fromhex(intro["sig_resident"]), canon
+        bytes.fromhex(intro["sig_resident"]), resident_canon
     )
     _normalize_hex(intro, "visitor_key_id", "resident_key_id",
                    "sig_visitor", "sig_resident")

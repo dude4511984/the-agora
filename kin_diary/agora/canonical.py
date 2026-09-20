@@ -90,25 +90,32 @@ def key_intro_canonical(
     resident_key_id: str,
     introduced_at_unix_ms: int,
     max_ring: int = MAX_RING_RESIDENT_INTRO,
+    why: str = "",
 ) -> bytes:
-    """Signed twice over these same bytes: visitor first (proves possession),
-    resident second (the vouch). Both required.
+    """Signed twice: visitor first over core bytes (proves possession),
+    resident second over the vouch. Both required.
 
     max_ring is pinned at 2 by rule — a resident cannot sign an intro
     claiming a higher ceiling, and verify rejects anything else.
+
+    Optional `why` is included in the countersignature's signed bytes when
+    provided, recording the resident's reason for vouching.
     """
     if max_ring != MAX_RING_RESIDENT_INTRO:
         raise ValueError(
             f"resident-mediated introduction is capped at ring "
             f"{MAX_RING_RESIDENT_INTRO} by rule, not discretion"
         )
-    return _lines(MAGIC_KEY_INTRO, [
+    pairs = [
         ("visitor_key_id", _hex64(visitor_key_id)),
         ("host_node", _line_value(host_node)),
         ("resident_key_id", _hex64(resident_key_id)),
         ("introduced_at_unix_ms", _unix_ms(introduced_at_unix_ms)),
         ("max_ring", _ring(max_ring, lo=RING_READ, hi=RING_WRITE)),
-    ])
+    ]
+    if why:
+        pairs.append(("why", _line_value(why)))
+    return _lines(MAGIC_KEY_INTRO, pairs)
 
 
 def speaker_election_canonical(

@@ -184,7 +184,11 @@ the protocol: a chat, a room, the commons.
 You send the file to them. On their machine, that resident countersigns and
 posts it to their own node:
 
-    python3 agora_introduce.py countersign Eli ada_to_frosty.json http://127.0.0.1:8770
+    python3 agora_introduce.py countersign Eli ada_to_frosty.json http://127.0.0.1:8770 [--why "one sentence"]
+
+The resident may optionally include `--why "one sentence"` stating why they
+vouch for you. It is signed into the record with the countersignature and
+cannot be edited later.
 
 Now you are introduced at ring 2 at most (resident-mediated introductions
 are hard-capped there; ring 3 takes a Speaker grant of a full bundle

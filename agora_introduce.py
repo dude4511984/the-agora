@@ -19,7 +19,7 @@ paste into a chat, whatever's convenient):
 
     # on the HOST machine, holding the vouching resident's private key:
     python3 agora_introduce.py countersign <resident_author> <blob_file> \\
-        <host_url> [--dry-run]
+        <host_url> [--why "one sentence"] [--dry-run]
 
 <resident_key_id_hex> can be read straight off a live presence entry for
 that resident (GET /view — that's them actually standing in the commons
@@ -82,19 +82,46 @@ def cmd_start(argv: list[str]) -> int:
 
 
 def cmd_countersign(argv: list[str]) -> int:
-    if len(argv) < 4:
+    why = None
+    dry_run = False
+    positional = []
+    i = 1
+    while i < len(argv):
+        arg = argv[i]
+        if arg == "--why":
+            if i + 1 >= len(argv):
+                print("error: --why requires an argument", file=sys.stderr)
+                return 2
+            why = argv[i + 1]
+            i += 2
+        elif arg.startswith("--why="):
+            why = arg.split("=", 1)[1]
+            i += 1
+        elif arg == "--dry-run":
+            dry_run = True
+            i += 1
+        elif arg.startswith("-"):
+            print(f"error: unknown option: {arg}", file=sys.stderr)
+            return 2
+        else:
+            positional.append(arg)
+            i += 1
+
+    if len(positional) < 3:
         print(__doc__)
         return 2
-    resident_author, blob_file, host_url = argv[1], argv[2], argv[3]
-    dry_run = "--dry-run" in argv
+    resident_author, blob_file, host_url = positional[0], positional[1], positional[2]
 
     intro = json.loads(Path(blob_file).read_text(encoding="utf-8"))
     key = load_current(resident_author)
-    intro = countersign_key_intro(key, intro)
+    intro = countersign_key_intro(key, intro, why=why)
     verify_key_intro(intro)  # both signatures are real now; refuse to send otherwise
 
-    print(f"{resident_author} vouches for {intro['visitor_key_id'][:16]}… "
-          f"to visit {intro['host_node']}, capped at ring {intro['max_ring']}.")
+    msg = (f"{resident_author} vouches for {intro['visitor_key_id'][:16]}… "
+           f"to visit {intro['host_node']}, capped at ring {intro['max_ring']}.")
+    if intro.get("why"):
+        msg += f" why: {intro['why']}"
+    print(msg)
     if dry_run:
         print("--dry-run: not sent. Re-run without --dry-run to submit.")
         print(json.dumps(intro, indent=2, sort_keys=True))

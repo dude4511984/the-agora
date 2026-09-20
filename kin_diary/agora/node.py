@@ -52,6 +52,8 @@ class Node:
         # external. Never merged into resident memory.
         self.visiting_diaries: dict[str, dict] = {}
         self.visitor_names: dict[str, str] = {}   # key_id -> the mind's name
+        # Introductions: ordered list of accepted introduction events
+        self.introductions: list[dict] = []
         # Ephemeral admissions are permanent provenance, not current
         # permissions. Expiry must never erase the fact that this key entered
         # through Path 3.
@@ -471,7 +473,19 @@ class Node:
         # path caps at ring 2 and needs a resident willing to vouch; the
         # resident recognising the mind is formation, not architecture.
         self.visitor_ceiling[key] = max(self.visitor_ceiling.get(key, 0), ceiling)
-        self.log.append({"event": "key-intro", "visitor": key, "ceiling": ceiling})
+        self.introductions.append(dict(intro))
+        log_entry = {"event": "key-intro", "visitor": key, "ceiling": ceiling}
+        if intro.get("why"):
+            log_entry["why"] = intro["why"]
+        self.log.append(log_entry)
+
+    def intro_record(self, visitor_key_id: str) -> dict | None:
+        """Return the introduction event for a visitor key if introduced, else None."""
+        kid = (visitor_key_id or "").lower()
+        for intro in reversed(self.introductions):
+            if intro.get("visitor_key_id", "").lower() == kid:
+                return dict(intro)
+        return None
 
     def accept_bundle_import(self, bundle: dict) -> str:
         """Path 1: the visitor arrived with a full signed bundle — keyring,
