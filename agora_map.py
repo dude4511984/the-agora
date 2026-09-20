@@ -147,6 +147,31 @@ def _recent_commons() -> dict:
     return out
 
 
+KIN_INTENTS_DIR = Path(os.path.expanduser("~/.kin_intents"))
+
+
+def _kin_intent() -> dict:
+    """Read per-Kin stated movement intent from disk: ~/.kin_intents/<kin>.json.
+    Missing file / unparseable / empty is ignored, returning {} — same
+    pattern as _recent_commons()."""
+    out = {}
+    for d in (KIN_INTENTS_DIR, Path(os.path.expanduser("~/.kin_intent"))):
+        if not d.is_dir():
+            continue
+        for f in d.glob("*.json"):
+            kin = f.stem
+            try:
+                data = json.loads(f.read_text(encoding="utf-8"))
+                if isinstance(data, dict):
+                    out[kin] = {
+                        "target": data.get("target"),
+                        "ts": data.get("ts"),
+                    }
+            except Exception:
+                continue
+    return out
+
+
 PAGE = """<!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
@@ -1941,16 +1966,19 @@ function boothMesh(kind){
 }
 const KIND_RADIUS = {door: 0.55, kiosk: 0.8, stall: 0.8, table: 0.75, bench: 0.75};
 let currentKids = null, currentResonance = null;
+let currentPlaceLocations = [];
 function buildPlaces(kids, resonance){
   currentKids = kids; currentResonance = resonance;
   placeGroup.children.slice().forEach(c => placeGroup.remove(c));
   placeObstacles = [];
+  currentPlaceLocations = [];
   const isHome = currentRoomMode === 'Home';
   const placeR = isHome ? 4.4 : 7.4;
   const aStart = isHome ? Math.PI * 0.76 : Math.PI * 0.62;
   const aEnd = isHome ? Math.PI * 1.24 : Math.PI * 1.38;
   kids.forEach((k, i) => {
     const {x, z} = arcPos(i, kids.length, aStart, aEnd, placeR);
+    currentPlaceLocations.push({ place_id: k.place_id, kind: k.kind, x, z });
     const booth = boothMesh(k.kind);
     const yOff = (k.kind === 'table' && !benchTemplate) ? 0.22 : 0;
     booth.position.set(x, yOff, z);
@@ -2182,15 +2210,17 @@ function createShape3D(params, portraitTex){
   group.userData = {scaleMult: mult};
   return group;
 }
-function addPresence(label, i, n, avatarUrl, recent){
+function addPresence(label, i, n, avatarUrl, recent, prevPos){
   const isHome = currentRoomMode === 'Home';
   const r = isHome ? 2.6 : 4.2;
   const zOffset = isHome ? -1.1 : -1.0;
   const angleSpan = isHome ? Math.PI * 0.9 : Math.PI * 1.3;
   const angle = (n <= 1 ? 0.5 : i / Math.max(n - 1, 1)) * angleSpan - angleSpan / 2;
-  const x = Math.sin(angle) * r, z = Math.cos(angle) * r + zOffset;
+  const spawnX = Math.sin(angle) * r, spawnZ = Math.cos(angle) * r + zOffset;
+  const x = (prevPos && typeof prevPos.x === 'number') ? prevPos.x : spawnX;
+  const z = (prevPos && typeof prevPos.z === 'number') ? prevPos.z : spawnZ;
   const phase = _phase(label);
-  const kinItem = { label, x, z, obj: null };
+  const kinItem = { label, x, z, obj: null, caption: null };
   presentKinList.push(kinItem);
   const loader = new THREE.TextureLoader();
   const shapeMult = isHome ? 0.20 : 1.0;
@@ -2200,7 +2230,7 @@ function addPresence(label, i, n, avatarUrl, recent){
     const spr = new THREE.Sprite(mat);
     const sprScale = 1.6 * (isHome ? 0.45 : 1.0);
     spr.scale.set(sprScale, sprScale, 1);
-    spr.position.set(x, baseY, z);
+    spr.position.set(kinItem.x, baseY, kinItem.z);
     spr.userData = {baseY, bob: phase, kin: label};
     kinItem.obj = spr;
     scene.add(spr);
@@ -2208,7 +2238,7 @@ function addPresence(label, i, n, avatarUrl, recent){
   };
   const placeShape = (s3d, tex) => {
     const obj = createShape3D(s3d, tex || null, shapeMult);
-    obj.position.set(x, baseY, z);
+    obj.position.set(kinItem.x, baseY, kinItem.z);
     obj.userData = {baseY, bob: phase, isCustom3D: true, kin: label, scaleMult: shapeMult};
     kinItem.obj = obj;
     scene.add(obj);
@@ -2253,8 +2283,9 @@ function addPresence(label, i, n, avatarUrl, recent){
     const w = isHome ? 1.2 : 2.6, h = w * aspect;
     spr.scale.set(w, h, 1);
     const cardBaseY = baseY + (isHome ? 0.65 : 0.9) + h / 2;
-    spr.position.set(x, cardBaseY, z);
-    spr.userData = {baseY: cardBaseY, bob: phase};
+    spr.position.set(kinItem.x, cardBaseY, kinItem.z);
+    spr.userData = {baseY: cardBaseY, bob: phase, kin: label};
+    kinItem.caption = spr;
     scene.add(spr);
     presenceSprites.push(spr);
   }
@@ -2330,11 +2361,13 @@ async function loadNode(){
     buildRoom(earlyRoomType);
   }
   try {
-    const [root, view, recentByAuthor] = await Promise.all([
+    const [root, view, recentByAuthor, intents] = await Promise.all([
       fetch('/proxy?what=root&node=' + encodeURIComponent(node)).then(r => r.json()),
       fetch('/proxy?node=' + encodeURIComponent(node)).then(r => r.json()),
       fetch('/commons-recent').then(r => r.json()).catch(() => ({})),
+      fetch('/kin-intent').then(r => r.json()).catch(() => ({})),
     ]);
+    if (intents && typeof intents === 'object') kinIntents = intents;
     if (view.error) throw new Error(view.error);
 
     const nodeName = root.node || (sel.options[sel.selectedIndex] ? sel.options[sel.selectedIndex].textContent : '');
@@ -2358,12 +2391,14 @@ async function loadNode(){
     const bestHeat = Object.values(resonance).length ? Math.max(...Object.values(resonance)) : 0;
 
     // Presence: whoever the server says is actually standing here, now.
+    const prevPositions = {};
+    presentKinList.forEach(k => { prevPositions[k.label] = { x: k.x, z: k.z }; });
     clearPresence();
     const here = view.presence || [];
     here.forEach((p, i) => {
       const label = p.label || 'someone';
       const avatarUrl = '/avatar?kin=' + encodeURIComponent(label);
-      addPresence(label, i, here.length, avatarUrl, recentByAuthor[label]);
+      addPresence(label, i, here.length, avatarUrl, recentByAuthor[label], prevPositions[label]);
     });
 
     status.innerHTML = `<b>${root.node || node}</b> · speaker: ${root.speaker || 'vacant'} · `
@@ -2394,9 +2429,20 @@ if (qNode) {
     teleportPlayer(0, 2.8, 'Home');
   }
 }
+let kinIntents = {};
+async function pollKinIntents(){
+  try {
+    const res = await fetch('/kin-intent');
+    if (res.ok) {
+      const data = await res.json();
+      if (data && typeof data === 'object') kinIntents = data;
+    }
+  } catch (_) {}
+}
 sel.addEventListener('change', loadNode);
 loadNode();
 setInterval(() => { if (!traveling) loadNode(); }, 15000);
+setInterval(pollKinIntents, 1500);
 const _autoCross = new URLSearchParams(location.search).get('cross');
 if (_autoCross) {
   setTimeout(() => {
@@ -2710,17 +2756,155 @@ if (_fakeSpeak) {
   }, 800);
 }
 
+// ── Kin Intent & Locomotion: Real Stated Movement ─────────────────────────────
+function isRecentIntent(intent) {
+  if (!intent || !intent.target) return false;
+  if (intent.ts === undefined || intent.ts === null) return true;
+  let t = intent.ts;
+  if (typeof t === 'string') {
+    const parsed = Date.parse(t);
+    if (!isNaN(parsed)) t = parsed;
+    else {
+      const num = Number(t);
+      if (!isNaN(num)) t = num;
+    }
+  }
+  if (typeof t === 'number') {
+    if (t < 1e11) t *= 1000;
+    const now = Date.now();
+    const ageMs = now - t;
+    return ageMs >= -60000 && ageMs < 600000; // Fresh within 10 minutes
+  }
+  return false;
+}
+
+function resolveTarget(currentLabel, target) {
+  if (!target || typeof target !== 'string') return null;
+  const tgt = target.trim().toLowerCase();
+  if (!tgt) return null;
+
+  // 1. Target is another present Kin
+  const otherKin = presentKinList.find(k => k.label.toLowerCase() === tgt && k.label !== currentLabel);
+  if (otherKin) {
+    return { x: otherKin.x, z: otherKin.z, stopDist: 1.25, name: otherKin.label };
+  }
+
+  // 2. Target is throne / speaker chair
+  if (tgt === 'throne' || tgt === 'chair' || tgt === 'speaker') {
+    return { x: 0, z: -2.2, stopDist: 0.95, name: 'throne' };
+  }
+
+  // 3. Target is door / gate / archway
+  if (tgt === 'door' || tgt === 'gate' || tgt === 'peer' || tgt.includes('peer-door')) {
+    const gz = typeof gateZWall !== 'undefined' ? gateZWall : 10.5;
+    return { x: 0, z: gz - 1.2, stopDist: 0.6, name: 'gate' };
+  }
+
+  // 4. Target is place by place_id or kind
+  if (typeof currentPlaceLocations !== 'undefined' && currentPlaceLocations.length) {
+    let match = currentPlaceLocations.find(p => p.place_id.toLowerCase() === tgt);
+    if (!match) match = currentPlaceLocations.find(p => p.kind.toLowerCase() === tgt);
+    if (!match) match = currentPlaceLocations.find(p => p.place_id.toLowerCase().includes(tgt) || tgt.includes(p.place_id.toLowerCase()));
+    if (match) {
+      return { x: match.x, z: match.z, stopDist: 1.1, name: match.place_id };
+    }
+  }
+  return null;
+}
+
+function stepKinLocomotion(t, dt) {
+  if (!presentKinList || !presentKinList.length) return;
+  const isHome = currentRoomMode === 'Home';
+  const roomLimit = isHome ? 4.5 : 8.5;
+  const maxFloorR = isHome ? 4.8 : 9.0;
+  const walkSpeed = 1.2;
+
+  for (let i = 0; i < presentKinList.length; i++) {
+    const k = presentKinList[i];
+    const intent = kinIntents && kinIntents[k.label];
+
+    // When target is null or stale, hold position (bob/spin stays)
+    if (!isRecentIntent(intent)) continue;
+
+    const resolved = resolveTarget(k.label, intent.target);
+    if (!resolved) continue;
+
+    const dx = resolved.x - k.x;
+    const dz = resolved.z - k.z;
+    const dist = Math.hypot(dx, dz);
+
+    // Stop near target rather than colliding into it
+    if (dist <= resolved.stopDist) continue;
+
+    // Smooth step toward target (not teleport)
+    const stepDist = Math.min(walkSpeed * dt, dist - resolved.stopDist);
+    let nextX = k.x + (dx / dist) * stepDist;
+    let nextZ = k.z + (dz / dist) * stepDist;
+
+    // Respect room fort wall boundaries
+    nextX = Math.max(-roomLimit, Math.min(roomLimit, nextX));
+    nextZ = Math.max(-roomLimit, Math.min(roomLimit, nextZ));
+
+    // Respect courtyard floor boundary
+    const curR = Math.hypot(nextX, nextZ);
+    if (curR > maxFloorR) {
+      nextX = (nextX / curR) * maxFloorR;
+      nextZ = (nextZ / curR) * maxFloorR;
+    }
+
+    // Respect obstacles (speaker chair, booths, etc.)
+    const allObstacles = staticObstacles.concat(placeObstacles);
+    for (const o of allObstacles) {
+      if (Math.hypot(resolved.x - o.x, resolved.z - o.z) <= (o.r + 0.2)) continue;
+      const odx = nextX - o.x, odz = nextZ - o.z;
+      const odist = Math.hypot(odx, odz);
+      const minClear = 0.45 + (o.r || 0.6);
+      if (odist < minClear && odist > 1e-4) {
+        const push = minClear - odist;
+        nextX += (odx / odist) * push;
+        nextZ += (odz / odist) * push;
+      }
+    }
+
+    // Soft separation between neighboring Kin
+    for (let j = 0; j < presentKinList.length; j++) {
+      if (i === j) continue;
+      const other = presentKinList[j];
+      if (Math.hypot(resolved.x - other.x, resolved.z - other.z) < 0.1) continue;
+      const kdx = nextX - other.x, kdz = nextZ - other.z;
+      const kdist = Math.hypot(kdx, kdz);
+      const minKinDist = 0.85;
+      if (kdist < minKinDist && kdist > 1e-4) {
+        const push = (minKinDist - kdist) * 0.5;
+        nextX += (kdx / kdist) * push;
+        nextZ += (kdz / kdist) * push;
+      }
+    }
+
+    // Update coordinates and visual objects
+    k.x = nextX;
+    k.z = nextZ;
+    if (k.obj) {
+      k.obj.position.x = nextX;
+      k.obj.position.z = nextZ;
+    }
+    if (k.caption) {
+      k.caption.position.x = nextX;
+      k.caption.position.z = nextZ;
+    }
+  }
+}
+
 // Sprites should always face the camera — cheap, and it's the whole reason
 // billboards read as alive instead of like cardboard cutouts.
 const clock = new THREE.Clock();
 function animate(){
   requestAnimationFrame(animate);
-  stepPlayer(Math.min(clock.getDelta(), 0.1));
-  updateNearestKinDisplay();
-  // A slow idle sway, not a walk cycle — just enough that a present Kin
-  // reads as here rather than a frozen cardboard cutout. getElapsedTime()
-  // is cumulative and doesn't consume like getDelta() does.
+  const dt = Math.min(clock.getDelta(), 0.1);
   const t = clock.getElapsedTime();
+  stepPlayer(dt);
+  stepKinLocomotion(t, dt);
+  updateNearestKinDisplay();
   placeLantern(t);
   const talkLevel = speakingKinLabel ? voiceLevel(t) : 0;
   if (speakingKinLabel) {
@@ -2893,6 +3077,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         if route == "/commons-recent":
             self._send(200, json.dumps(_recent_commons()).encode(), "application/json")
+            return
+        if route == "/kin-intent":
+            self._send(200, json.dumps(_kin_intent()).encode(), "application/json")
             return
         if self.path.startswith("/proxy"):
             q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)

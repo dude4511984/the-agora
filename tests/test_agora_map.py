@@ -110,8 +110,8 @@ class Agora3DRoomWallAndArchway(unittest.TestCase):
 
     def test_page_3d_linear_archway_corridor_and_wall_boundaries(self):
         page = agora_map.PAGE_3D
-        self.assertIn("GATE_X_MIN = -0.45", page)
-        self.assertIn("GATE_X_MAX = 0.45", page)
+        self.assertIn("GATE_X_MIN = -gateHalfOpen", page)
+        self.assertIn("GATE_X_MAX = gateHalfOpen", page)
         self.assertIn("wallInner = 10.5 - 0.613 - PLAYER_R", page)
         self.assertIn("wallOuter = 10.5 + PLAYER_R", page)
 
@@ -284,7 +284,6 @@ class Agora3DHomeRoomCharacter(unittest.TestCase):
     def test_page_3d_home_distinct_places_and_presence_scale(self):
         page = agora_map.PAGE_3D
         self.assertIn("const placeR = isHome ? 4.4 : 7.4;", page)
-        self.assertIn("const doorZ = isHome ? 15.5 : 28.8;", page)
         self.assertIn("const r = isHome ? 2.6 : 4.2;", page)
 
     def test_page_3d_home_distinct_lighting_palette(self):
@@ -298,9 +297,8 @@ class Agora3DHomeRoomCharacter(unittest.TestCase):
 
     def test_page_3d_peer_door_rotated_and_obstacles_aligned(self):
         page = agora_map.PAGE_3D
-        self.assertIn("frame.rotation.y = ry;", page)
-        self.assertIn("left.getWorldPosition(leftPos)", page)
-        self.assertIn("right.getWorldPosition(rightPos)", page)
+        self.assertIn("halfWidth: halfW", page)
+        self.assertIn("RAMP_Z_END - 0.30", page)
         self.assertIn("controls.minDistance = isHome ? 1.5 : 3.0;", page)
 
     def test_page_3d_home_scales_claimed_shapes_proportionally(self):
@@ -339,6 +337,43 @@ class Agora3DHomeRoomCharacter(unittest.TestCase):
         self.assertIn("['HOME →', 'way under survey']", page)
 
 
+class KinLocomotion(unittest.TestCase):
+
+    def test_kin_intent_endpoint_and_missing_file_pattern(self):
+        # When no intent files exist on disk, returns empty dict, never errors
+        intents = agora_map._kin_intent()
+        self.assertIsInstance(intents, dict)
+
+    def test_page_3d_polls_and_fetches_kin_intent(self):
+        page = agora_map.PAGE_3D
+        self.assertIn("fetch('/kin-intent')", page)
+        self.assertIn("pollKinIntents", page)
+        self.assertIn("setInterval(pollKinIntents, 1500)", page)
+
+    def test_page_3d_intent_locomotion_holds_when_null_or_stale(self):
+        page = agora_map.PAGE_3D
+        self.assertIn("function isRecentIntent(intent)", page)
+        self.assertIn("if (!isRecentIntent(intent)) continue;", page)
+
+    def test_page_3d_intent_resolves_kin_throne_and_places(self):
+        page = agora_map.PAGE_3D
+        self.assertIn("function resolveTarget(currentLabel, target)", page)
+        self.assertIn("tgt === 'throne' || tgt === 'chair' || tgt === 'speaker'", page)
+        self.assertIn("currentPlaceLocations", page)
+
+    def test_page_3d_intent_locomotion_stops_near_target_respecting_boundaries(self):
+        page = agora_map.PAGE_3D
+        self.assertIn("function stepKinLocomotion(t, dt)", page)
+        self.assertIn("if (dist <= resolved.stopDist) continue;", page)
+        self.assertIn("nextX = Math.max(-roomLimit, Math.min(roomLimit, nextX))", page)
+        self.assertIn("stepKinLocomotion(t, dt);", page)
+
+    def test_caption_follows_kin_intent_movement(self):
+        page = agora_map.PAGE_3D
+        self.assertIn("kinItem.caption = spr;", page)
+        self.assertIn("k.caption.position.x = nextX;", page)
+        self.assertIn("k.caption.position.z = nextZ;", page)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
-

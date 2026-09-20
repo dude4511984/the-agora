@@ -20,3 +20,7 @@ class CrossingIsAtTheWalkwayEnd(unittest.TestCase):
         self.assertNotIn("const doorZ = isHome ? 15.5 : 28.8", page)
         self.assertNotIn("z = gateZWall", page)
         self.assertIn("async function crossDoor", page)
+
+
+if __name__ == "__main__":
+    unittest.main()
