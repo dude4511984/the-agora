@@ -301,7 +301,7 @@ class Agora3DHomeRoomCharacter(unittest.TestCase):
     def test_page_3d_peer_door_rotated_and_obstacles_aligned(self):
         page = agora_map.PAGE_3D
         self.assertIn("halfWidth: halfW", page)
-        self.assertIn("RAMP_Z_END - 0.30", page)
+        self.assertIn("isHome ? 15.5 : 28.8", page)
         self.assertIn("controls.minDistance = isHome ? 1.5 : 3.0;", page)
 
     def test_page_3d_home_scales_claimed_shapes_proportionally(self):

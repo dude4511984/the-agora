@@ -2037,24 +2037,16 @@ function buildDoors(doors){
   doorGroup.children.slice().forEach(c => doorGroup.remove(c));
   doorObstacles = [];
   doorTriggers = [];
-  // Crossing lives at the end of the walkway, not in a wall cutout.
-  // Frosty: last plank of the west rampart (RAMP_Z_END). Home has no
-  // rampart — a floor plaque at the south-west inside corner.
-  let x, z, y, halfW, depth;
-  if (hasRamparts) {
-    x = (RAMP_X_MIN + RAMP_X_MAX) / 2;
-    z = RAMP_Z_END - 0.30;
-    y = RAMPART_DECK_H;
-    halfW = (RAMP_X_MAX - RAMP_X_MIN) / 2 - 0.08;
-    depth = 0.45;
-  } else {
-    x = -currentHalf + 1.2;
-    z = currentHalf - 1.2;
-    y = 0;
-    halfW = 0.70;
-    depth = 0.70;
-  }
-  doors.forEach((d) => {
+  // Crossing lives at the end of the south walkway, beside the chalkboard sign:
+  const isHome = currentRoomMode === 'Home';
+  const z = isHome ? 15.5 : 28.8;
+  const y = 0;
+  const halfW = 0.80;
+  const depth = 0.50;
+  const doorSpan = 2.2;
+  const startX = -(doors.length - 1) * doorSpan / 2;
+  doors.forEach((d, i) => {
+    const x = startX + i * doorSpan;
     if (d.url) {
       doorTriggers.push({
         x, z,
