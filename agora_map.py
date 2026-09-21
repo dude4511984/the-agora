@@ -636,6 +636,24 @@ const errBox = document.getElementById('err');
 
 function showErr(msg){ errBox.style.display='block'; errBox.textContent = msg; }
 
+// The one honest way to know a URL's node identity: an exact match
+// (trailing slash ignored) against PRESETS, the same name<->url map the
+// server resolves against in _node_name(). Never a substring guess —
+// `url.includes('120')` matches Home's IP octet today and any future
+// coincidence tomorrow (another node's port, a path segment, anything).
+// Returns null for a URL with no matching preset — there is no third
+// room shape to guess into, so callers treat null as "not Home" and fall
+// back to Frosty's, same as before, just without pretending a guess was
+// a fact.
+function nodeNameForUrl(url){
+  if (!url) return null;
+  const norm = String(url).replace(/\\/+$/, '');
+  for (const [name, presetUrl] of PRESETS) {
+    if (String(presetUrl).replace(/\\/+$/, '') === norm) return name;
+  }
+  return null;
+}
+
 // ── scene: precomputed once, static geometry never rebuilt per frame ──────
 const scene = new THREE.Scene();
 // Dusk void, not a black cutout. Poly Haven Qwantani Dusk 1 Pure Sky (CC0),
@@ -680,7 +698,7 @@ controls.enablePan = false;   // panning would fight the walk-follow below
 // the camera every frame, so moving the camera here is a no-op; move
 // the player and let the existing offset sit inside the walls.
 if (new URLSearchParams(location.search).get('view') === 'inside') {
-  const isHomeView = location.search.includes('120') || location.search.toLowerCase().includes('home');
+  const isHomeView = nodeNameForUrl(new URLSearchParams(location.search).get('node')) === 'Home';
   player.position.set(0, 0, 0);
   camera.position.set(0, isHomeView ? 3.6 : 4.4, isHomeView ? 5.0 : 6.5);
   controls.target.set(0, 1, 0);
@@ -2172,7 +2190,12 @@ async function crossDoor(t){
     sel.appendChild(opt);
   }
   sel.value = opt.value;
-  const isDestHome = (t.peer && t.peer.toLowerCase().includes('home')) || (t.url && t.url.includes('120'));
+  // The destination's real identity, from its URL — never a guess from
+  // the door's free-text peer label or a substring of an IP. loadNode()
+  // below re-confirms this against the destination's own signed root.node
+  // once the fetch lands, but the room built here (and where the walker
+  // is teleported) must already be right, not corrected a beat later.
+  const isDestHome = nodeNameForUrl(t.url) === 'Home';
   buildRoom(isDestHome ? 'Home' : 'Frosty');
   teleportPlayer(0, isDestHome ? 2.8 : 6, isDestHome ? 'Home' : 'Frosty');
   try {
@@ -2418,8 +2441,9 @@ async function loadNode(){
   status.textContent = 'loading…';
   errBox.style.display = 'none';
   const node = sel.value;
-  const optText = sel.options[sel.selectedIndex] ? sel.options[sel.selectedIndex].textContent : '';
-  const earlyRoomType = (optText.toLowerCase().includes('home') || node.includes('120')) ? 'Home' : 'Frosty';
+  // sel.value IS the destination's URL — an exact PRESETS match is a real
+  // fact, not a guess at the dropdown's display text or the URL's digits.
+  const earlyRoomType = nodeNameForUrl(node) === 'Home' ? 'Home' : 'Frosty';
   if (currentRoomMode !== earlyRoomType) {
     buildRoom(earlyRoomType);
   }
@@ -2433,8 +2457,12 @@ async function loadNode(){
     if (intents && typeof intents === 'object') kinIntents = intents;
     if (view.error) throw new Error(view.error);
 
+    // root.node is the destination's own signed name — the actual
+    // identity, straight from the source, not a guess at all. Exact
+    // compare, and only fall back to the URL lookup if the node didn't
+    // answer with a name (root.node missing/empty).
     const nodeName = root.node || (sel.options[sel.selectedIndex] ? sel.options[sel.selectedIndex].textContent : '');
-    const roomType = (nodeName.toLowerCase().includes('home') || node.includes('120')) ? 'Home' : 'Frosty';
+    const roomType = (nodeName === 'Home' || (!root.node && nodeNameForUrl(node) === 'Home')) ? 'Home' : 'Frosty';
     if (currentRoomMode !== roomType) {
       buildRoom(roomType);
     }
@@ -2485,15 +2513,16 @@ for (const [name, url] of PRESETS) {
 }
 const qNode = new URLSearchParams(location.search).get('node');
 if (qNode) {
+  const qNodeName = nodeNameForUrl(qNode);
   let opt = [...sel.options].find(o => o.value.replace(/\\/$/, '') === qNode.replace(/\\/$/, ''));
   if (!opt) {
     opt = document.createElement('option');
     opt.value = qNode;
-    opt.textContent = qNode.includes('120') ? 'Home' : qNode;
+    opt.textContent = qNodeName || qNode;
     sel.appendChild(opt);
   }
   sel.value = opt.value;
-  if (qNode.includes('120') || (opt.textContent && opt.textContent.includes('Home'))) {
+  if (qNodeName === 'Home') {
     currentRoomMode = 'Home';
     teleportPlayer(0, 2.8, 'Home');
   }
