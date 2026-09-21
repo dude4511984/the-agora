@@ -809,6 +809,7 @@ const gateThresholdGroup = new THREE.Group();
 scene.add(gateThresholdGroup);
 let gateThresholdRevision = 0;
 let thresholdWayfinderTemplate = null;
+let peerDoorTemplate = null;
 
 new THREE.GLTFLoader().load(
   '/models/standing_chalkboard_01/standing_chalkboard_01.gltf',
@@ -818,6 +819,25 @@ new THREE.GLTFLoader().load(
   },
   undefined,
   (err) => console.warn('threshold wayfinder asset load error:', err)
+);
+
+new THREE.GLTFLoader().load(
+  '/models/large_castle_door/large_castle_door.gltf',
+  (gltf) => {
+    peerDoorTemplate = gltf.scene;
+    const raw = new THREE.Box3().setFromObject(peerDoorTemplate).getSize(new THREE.Vector3());
+    peerDoorTemplate.scale.setScalar(2.70 / Math.max(raw.y, 0.01));
+    peerDoorTemplate.traverse((o) => {
+      if (o.name === 'large_castle_door_left') {
+        o.rotation.y = -Math.PI * 0.45;
+      } else if (o.name === 'large_castle_door_right') {
+        o.rotation.y = Math.PI * 0.45;
+      }
+    });
+    if (currentPeerDoors && currentPeerDoors.length) buildDoors(currentPeerDoors);
+  },
+  undefined,
+  (err) => console.warn('peer door asset load error:', err)
 );
 
 function thresholdMat(repeatX, repeatZ) {
@@ -839,11 +859,10 @@ function buildGateThreshold(isHome) {
 
   // Gate collision permits centered passage; the broad path begins beyond the
   // jambs, where walking naturally opens into this 2.4m approach out to the peer door.
-  const path = isHome
-    ? new THREE.Mesh(new THREE.PlaneGeometry(2.4, 8.6), thresholdMat(1.2, 4.3))
-    : new THREE.Mesh(new THREE.PlaneGeometry(2.4, 19.0), thresholdMat(1.2, 9.5));
+  // Both walkways are sized so walking from archway to door takes roughly the same steps.
+  const path = new THREE.Mesh(new THREE.PlaneGeometry(2.4, 19.0), thresholdMat(1.2, 9.5));
   path.rotation.x = -Math.PI / 2;
-  path.position.set(0, 0.012, isHome ? 11.2 : 20.2);
+  path.position.set(0, 0.012, isHome ? 16.38 : 20.2);
   gateThresholdGroup.add(path);
 
   const marker = new THREE.Mesh(
@@ -851,7 +870,7 @@ function buildGateThreshold(isHome) {
     thresholdMat(1.45, 1.45)
   );
   marker.rotation.x = -Math.PI / 2;
-  marker.position.set(0, 0.018, isHome ? 15.5 : 29.7);
+  marker.position.set(0, 0.018, isHome ? 25.88 : 29.7);
   gateThresholdGroup.add(marker);
 
   // Poly Haven's Standing Chalkboard 01 (CC0) marks the end of the walkway
@@ -861,7 +880,7 @@ function buildGateThreshold(isHome) {
     const raw = new THREE.Box3().setFromObject(wayfinder).getSize(new THREE.Vector3());
     wayfinder.scale.setScalar(1.35 / Math.max(raw.y, 0.01));
     const bounds = new THREE.Box3().setFromObject(wayfinder);
-    const wayZ = isHome ? 15.5 : 28.8;
+    const wayZ = isHome ? 25.0 : 28.8;
     wayfinder.position.set(1.7, -bounds.min.y, wayZ);
     wayfinder.rotation.y = Math.PI;
     gateThresholdGroup.add(wayfinder);
@@ -873,7 +892,7 @@ function buildGateThreshold(isHome) {
 
   // The physical lantern meshes and the pools of light along the walkway.
   const lanternCoords = isHome
-    ? [[-1.65, 11.2], [1.65, 11.2]]
+    ? [[-1.65, 11.5], [1.65, 11.5], [-1.65, 20.5], [1.65, 20.5]]
     : [[-1.65, 15.2], [1.65, 15.2], [-1.65, 24.4], [1.65, 24.4]];
   lanternCoords.forEach(([x, z]) => {
     const light = new THREE.PointLight(0xffb366, 1.0, 7.0, 2);
@@ -2032,14 +2051,16 @@ function buildPlaces(kids, resonance){
 let doorGroup = new THREE.Group();
 scene.add(doorGroup);
 let doorTriggers = [];
+let currentPeerDoors = [];
 let traveling = false;
 function buildDoors(doors){
+  currentPeerDoors = doors || [];
   doorGroup.children.slice().forEach(c => doorGroup.remove(c));
   doorObstacles = [];
   doorTriggers = [];
   // Crossing lives at the end of the south walkway, beside the chalkboard sign:
   const isHome = currentRoomMode === 'Home';
-  const z = isHome ? 15.5 : 28.8;
+  const z = isHome ? 25.0 : 28.8;
   const y = 0;
   const halfW = 0.80;
   const depth = 0.50;
@@ -2058,6 +2079,27 @@ function buildDoors(doors){
         peer: d.peer || 'peer'
       });
     }
+
+    // Doorway frame at the trigger position
+    if (peerDoorTemplate) {
+      const doorMesh = peerDoorTemplate.clone(true);
+      const bounds = new THREE.Box3().setFromObject(doorMesh);
+      doorMesh.position.set(x, -bounds.min.y, z);
+      doorGroup.add(doorMesh);
+    } else {
+      const frameGroup = new THREE.Group();
+      frameGroup.position.set(x, 0, z);
+      const postGeo = new THREE.BoxGeometry(0.32, 2.7, 0.32);
+      const lintelGeo = new THREE.BoxGeometry(2.24, 0.36, 0.36);
+      const fMat = thresholdMat(0.5, 2.5);
+      const pL = new THREE.Mesh(postGeo, fMat); pL.position.set(-0.96, 1.35, 0);
+      const pR = new THREE.Mesh(postGeo, fMat); pR.position.set(0.96, 1.35, 0);
+      const lintel = new THREE.Mesh(lintelGeo, fMat); lintel.position.set(0, 2.7 + 0.18, 0);
+      frameGroup.add(pL, pR, lintel);
+      doorGroup.add(frameGroup);
+    }
+
+    // Floor crossing pad
     const pad = new THREE.Mesh(
       new THREE.CircleGeometry(0.72, 24),
       new THREE.MeshStandardMaterial({
@@ -2067,10 +2109,12 @@ function buildDoors(doors){
     pad.rotation.x = -Math.PI / 2;
     pad.position.set(x, y + 0.05, z);
     doorGroup.add(pad);
+
+    // Overhead sign label
     const label = labelSprite(['→ ' + (d.peer || 'peer'), d.locked ? 'locked' : 'open'],
                                 d.locked ? '#c9a75f' : '#67c98a');
     label.scale.set(1.05, 0.4, 1);
-    label.position.set(x, y + 1.25, z);
+    label.position.set(x, y + 3.1, z);
     doorGroup.add(label);
   });
 }
@@ -2112,7 +2156,7 @@ async function crossDoor(t){
   }
   sel.value = opt.value;
   const isDestHome = (t.peer && t.peer.toLowerCase().includes('home')) || (t.url && t.url.includes('120'));
-  currentRoomMode = isDestHome ? 'Home' : 'Frosty';
+  buildRoom(isDestHome ? 'Home' : 'Frosty');
   teleportPlayer(0, isDestHome ? 2.8 : 6, isDestHome ? 'Home' : 'Frosty');
   try {
     await loadNode();

@@ -301,7 +301,7 @@ class Agora3DHomeRoomCharacter(unittest.TestCase):
     def test_page_3d_peer_door_rotated_and_obstacles_aligned(self):
         page = agora_map.PAGE_3D
         self.assertIn("halfWidth: halfW", page)
-        self.assertIn("isHome ? 15.5 : 28.8", page)
+        self.assertIn("isHome ? 25.0 : 28.8", page)
         self.assertIn("controls.minDistance = isHome ? 1.5 : 3.0;", page)
 
     def test_page_3d_home_scales_claimed_shapes_proportionally(self):
@@ -324,7 +324,7 @@ class Agora3DHomeRoomCharacter(unittest.TestCase):
         page = agora_map.PAGE_3D
         self.assertIn("function buildGateThreshold(isHome)", page)
         self.assertIn("new THREE.PlaneGeometry(2.4, 19.0)", page)
-        self.assertIn("path.position.set(0, 0.012, isHome ? 11.2 : 20.2)", page)
+        self.assertIn("path.position.set(0, 0.012, isHome ? 16.38 : 20.2)", page)
         self.assertIn("new THREE.CircleGeometry(1.45, 32)", page)
         self.assertIn("'/models/lantern_01/lantern_01.gltf'", page)
         self.assertIn("gateThresholdRevision", page)
