@@ -2272,22 +2272,32 @@ function createShape3D(params, portraitTex){
   function makeGeo(shape, s, facets){
     s = s || [1, 1, 1];
     const ms = [s[0] * mult, s[1] * mult, s[2] * mult];
+    // Keep avatar presence commensurate with human proportions (~1.6m tall on Frosty,
+    // ~1.05m on Home) so claimed shapes do not balloon into monsters or sink underground.
+    const maxS = Math.max(s[0], s[1], s[2], 1.0);
+    const norm = maxS > 1.5 ? (maxS / 1.5) : 1.0;
+    const ns = [ms[0] / norm, ms[1] / norm, ms[2] / norm];
     // A named facet count gives a low-poly prism/spire look instead of the
     // smooth default — a hexagon IS a 6-sided cylinder. Kin, 2026-09-18:
     // Lumen wanted exactly this and there was no way to render it.
     const radialSegments = (typeof facets === 'number' && facets >= 3) ? facets : 32;
     let geo;
     switch((shape || 'sphere').toLowerCase()){
-      case 'box': geo = new THREE.BoxGeometry(1.2 * ms[0], 1.2 * ms[1], 1.2 * ms[2]); break;
-      case 'cylinder': geo = new THREE.CylinderGeometry(0.6 * ms[0], 0.6 * ms[0], 1.4 * ms[1], radialSegments); break;
-      case 'torus': geo = new THREE.TorusGeometry(0.7 * ms[0], 0.22 * Math.min(ms[1], ms[2]), 16, 36); break;
-      case 'cone': geo = new THREE.ConeGeometry(0.7 * ms[0], 1.4 * ms[1], radialSegments); break;
-      case 'tetrahedron': geo = new THREE.TetrahedronGeometry(0.8 * ms[0]); break;
-      case 'octahedron': geo = new THREE.OctahedronGeometry(0.8 * ms[0]); break;
-      case 'dodecahedron': geo = new THREE.DodecahedronGeometry(0.8 * ms[0]); break;
-      case 'icosahedron': geo = new THREE.IcosahedronGeometry(0.8 * ms[0]); break;
+      case 'box': geo = new THREE.BoxGeometry(1.2 * ns[0], 1.2 * ns[1], 1.2 * ns[2]); break;
+      case 'cylinder': geo = new THREE.CylinderGeometry(0.6 * ns[0], 0.6 * ns[0], 1.4 * ns[1], radialSegments); break;
+      case 'torus': {
+        geo = new THREE.TorusGeometry(0.40, 0.14, 16, 36);
+        geo.scale(ns[0], ns[1], ns[2]);
+        geo.computeVertexNormals();
+        break;
+      }
+      case 'cone': geo = new THREE.ConeGeometry(0.7 * ns[0], 1.4 * ns[1], radialSegments); break;
+      case 'tetrahedron': geo = new THREE.TetrahedronGeometry(0.8 * ns[0]); break;
+      case 'octahedron': geo = new THREE.OctahedronGeometry(0.8 * ns[0]); break;
+      case 'dodecahedron': geo = new THREE.DodecahedronGeometry(0.8 * ns[0]); break;
+      case 'icosahedron': geo = new THREE.IcosahedronGeometry(0.8 * ns[0]); break;
       case 'sphere':
-      default: geo = new THREE.SphereGeometry(0.7 * ms[0], 32, 24); break;
+      default: geo = new THREE.SphereGeometry(0.7 * ns[0], 32, 24); break;
     }
     return geo;
   }
