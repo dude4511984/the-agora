@@ -899,18 +899,20 @@ function buildGateThreshold(isHome) {
 
   // Poly Haven's Standing Chalkboard 01 (CC0) marks the end of the walkway
   // beside the peer door.
+  const S = isHome ? (6.88 / 10.5) : 1.0;
   if (thresholdWayfinderTemplate) {
     const wayfinder = thresholdWayfinderTemplate.clone(true);
     const raw = new THREE.Box3().setFromObject(wayfinder).getSize(new THREE.Vector3());
-    wayfinder.scale.setScalar(1.35 / Math.max(raw.y, 0.01));
+    wayfinder.scale.setScalar((1.35 * S) / Math.max(raw.y, 0.01));
     const bounds = new THREE.Box3().setFromObject(wayfinder);
     const wayZ = isHome ? 18.8 : 28.8;
-    wayfinder.position.set(1.7, -bounds.min.y, wayZ);
+    wayfinder.position.set(1.7 * S, -bounds.min.y, wayZ);
     wayfinder.rotation.y = Math.PI;
     gateThresholdGroup.add(wayfinder);
 
     const sign = labelSprite(isHome ? ['FROSTY →', 'peer link'] : ['HOME →', 'way under survey'], '#ffcf7a');
-    sign.position.set(1.7, 1.0, wayZ - 0.35);
+    sign.position.set(1.7 * S, 1.0 * S, wayZ - 0.35 * S);
+    sign.scale.multiplyScalar(S);
     gateThresholdGroup.add(sign);
   }
 
@@ -919,14 +921,14 @@ function buildGateThreshold(isHome) {
     ? [[-1.65, 10.0], [1.65, 10.0], [-1.65, 16.0], [1.65, 16.0]]
     : [[-1.65, 15.2], [1.65, 15.2], [-1.65, 24.4], [1.65, 24.4]];
   lanternCoords.forEach(([x, z]) => {
-    const light = new THREE.PointLight(0xffb366, 1.0, 7.0, 2);
-    light.position.set(x, 1.45, z);
+    const light = new THREE.PointLight(0xffb366, isHome ? 0.75 : 1.0, isHome ? 5.0 : 7.0, 2);
+    light.position.set(x, isHome ? 1.0 : 1.45, z);
     gateThresholdGroup.add(light);
     new THREE.GLTFLoader().load('/models/lantern_01/lantern_01.gltf', (gltf) => {
       if (revision !== gateThresholdRevision) return;
       const lanternPost = gltf.scene;
       const raw = new THREE.Box3().setFromObject(lanternPost).getSize(new THREE.Vector3());
-      lanternPost.scale.setScalar(0.9 / Math.max(raw.y, 0.01));
+      lanternPost.scale.setScalar((0.9 * S) / Math.max(raw.y, 0.01));
       const bounds = new THREE.Box3().setFromObject(lanternPost);
       lanternPost.position.set(x, -bounds.min.y, z);
       gateThresholdGroup.add(lanternPost);
@@ -1308,10 +1310,9 @@ const spiritPlane = new THREE.Mesh(spiritPlaneGeom, spiritMat);
 scene.add(spiritPlane);
 
 function updateVisitorLanternScale(isHome) {
-  // Home's compact room uses the same measured multiplier as its claimed
-  // forms. The light and free-standing spirit plane do not inherit the
-  // lantern group's scale, so scale their reach and anchor explicitly.
-  const roomScale = isHome ? 0.20 : 1.0;
+  // Home is a 0.655-scale world. The visitor lantern and spirit plane
+  // scale with the room so the player token matches Home's proportions.
+  const roomScale = isHome ? (6.88 / 10.5) : 1.0;
   lantern.scale.setScalar(roomScale);
   lantern.userData.roomScale = roomScale;
   lanternLight.distance = 10 * roomScale;
@@ -1622,6 +1623,7 @@ new THREE.GLTFLoader().load(
     });
     chair.add(chairMesh);
     setChairSpeaker(chairSpeaking);
+    updateFocalProps(currentRoomMode);
   },
   undefined,
   (err) => console.warn('speaker chair asset load error:', err)
@@ -1677,18 +1679,28 @@ new THREE.GLTFLoader().load(
 
 function updateFocalProps(mode){
   const isHome = mode === 'Home';
+  const S = isHome ? (6.88 / 10.5) : 1.0;
   const chairZ = isHome ? -1.8 : -2.2;
   chair.position.set(0, 0, chairZ);
+  chair.scale.setScalar(S);
   const statuePos = isHome ? {x: 2.6, z: -4.2} : {x: 3.4, z: -3.6};
   const bustPos = isHome ? {x: -2.6, z: -4.2} : {x: -3.4, z: -3.6};
-  if (statueMesh) statueMesh.position.set(statuePos.x, 0, statuePos.z);
-  pedestal.position.set(bustPos.x, PEDESTAL_H / 2, bustPos.z);
-  if (bustMesh) bustMesh.position.set(bustPos.x, PEDESTAL_H, bustPos.z);
+  if (statueMesh) {
+    statueMesh.position.set(statuePos.x, 0, statuePos.z);
+    statueMesh.scale.setScalar(S);
+  }
+  const pedH = PEDESTAL_H * S;
+  pedestal.scale.set(S, S, S);
+  pedestal.position.set(bustPos.x, pedH / 2, bustPos.z);
+  if (bustMesh) {
+    bustMesh.position.set(bustPos.x, pedH, bustPos.z);
+    bustMesh.scale.setScalar(S);
+  }
   staticObstacles.length = 0;
   staticObstacles.push(
-    {x: 0, z: chairZ, r: 0.65},
-    {x: statuePos.x, z: statuePos.z, r: 0.6},
-    {x: bustPos.x, z: bustPos.z, r: 0.4}
+    {x: 0, z: chairZ, r: 0.65 * S},
+    {x: statuePos.x, z: statuePos.z, r: 0.6 * S},
+    {x: bustPos.x, z: bustPos.z, r: 0.4 * S}
   );
 }
 
@@ -2021,6 +2033,7 @@ function buildPlaces(kids, resonance){
   placeObstacles = [];
   currentPlaceLocations = [];
   const isHome = currentRoomMode === 'Home';
+  const S = isHome ? (6.88 / 10.5) : 1.0;
   const placeR = isHome ? 4.4 : 7.4;
   const aStart = isHome ? Math.PI * 0.76 : Math.PI * 0.62;
   const aEnd = isHome ? Math.PI * 1.24 : Math.PI * 1.38;
@@ -2028,38 +2041,40 @@ function buildPlaces(kids, resonance){
     const {x, z} = arcPos(i, kids.length, aStart, aEnd, placeR);
     currentPlaceLocations.push({ place_id: k.place_id, kind: k.kind, x, z });
     const booth = boothMesh(k.kind);
-    const yOff = (k.kind === 'table' && !benchTemplate) ? 0.22 : 0;
+    booth.scale.setScalar(S);
+    const yOff = (k.kind === 'table' && !benchTemplate) ? 0.22 * S : 0;
     booth.position.set(x, yOff, z);
     booth.rotation.y = Math.atan2(-x, -z);
     placeGroup.add(booth);
     if (k.kind === 'door') {
       const ry = Math.atan2(-x, -z);
-      const postSpan = 0.60;
-      const postR = 0.10;
+      const postSpan = 0.60 * S;
+      const postR = 0.10 * S;
       placeObstacles.push(
         {x: x - postSpan * Math.cos(ry), z: z + postSpan * Math.sin(ry), r: postR},
         {x: x + postSpan * Math.cos(ry), z: z - postSpan * Math.sin(ry), r: postR}
       );
     } else {
-      placeObstacles.push({x, z, r: KIND_RADIUS[k.kind] || 0.6});
+      placeObstacles.push({x, z, r: (KIND_RADIUS[k.kind] || 0.6) * S});
     }
 
     const heat = Math.min(1, resonance[k.place_id] || 0);
     if (heat > 0.02) {
-      const glowLight = new THREE.PointLight(0xffcf7a, heat * 2.4, 4.5, 2);
-      glowLight.position.set(x, 0.9, z);
+      const glowLight = new THREE.PointLight(0xffcf7a, heat * 2.4, 4.5 * S, 2);
+      glowLight.position.set(x, 0.9 * S, z);
       placeGroup.add(glowLight);
       const glow = new THREE.Mesh(
-        new THREE.SphereGeometry(0.28 + heat * 0.3, 16, 16),
+        new THREE.SphereGeometry((0.28 + heat * 0.3) * S, 16, 16),
         new THREE.MeshBasicMaterial({color: 0xffcf7a, transparent: true, opacity: 0.25 + heat * 0.5})
       );
-      glow.position.set(x, 0.9, z);
+      glow.position.set(x, 0.9 * S, z);
       placeGroup.add(glow);
     }
 
     const label = labelSprite([k.place_id, k.kind + (heat > 0.02 ? ` · signed · ${heat.toFixed(2)}` : '')],
                                '#' + (KIND_COLOR[k.kind] || 0x6a7280).toString(16).padStart(6, '0'));
-    label.position.set(x, 1.9, z);
+    label.position.set(x, 1.9 * S, z);
+    label.scale.multiplyScalar(S);
     placeGroup.add(label);
   });
 }
@@ -2085,11 +2100,12 @@ function buildDoors(doors){
   doorTriggers = [];
   // Crossing lives at the end of the south walkway, beside the chalkboard sign:
   const isHome = currentRoomMode === 'Home';
+  const S = isHome ? (6.88 / 10.5) : 1.0;
   const z = isHome ? 18.8 : 28.8;
   const y = 0;
-  const halfW = 0.80;
-  const depth = 0.50;
-  const doorSpan = 2.2;
+  const halfW = 0.80 * S;
+  const depth = 0.50 * S;
+  const doorSpan = 2.2 * S;
   const startX = -(doors.length - 1) * doorSpan / 2;
   doors.forEach((d, i) => {
     const x = startX + i * doorSpan;
@@ -2116,6 +2132,7 @@ function buildDoors(doors){
     // trusting two separately-written literals to agree.
     if (peerDoorTemplate) {
       const doorMesh = peerDoorTemplate.clone(true);
+      doorMesh.scale.setScalar(S);
       const bounds = new THREE.Box3().setFromObject(doorMesh);
       const centerX = (bounds.min.x + bounds.max.x) / 2;
       const centerZ = (bounds.min.z + bounds.max.z) / 2;
@@ -2124,6 +2141,7 @@ function buildDoors(doors){
     } else {
       const frameGroup = new THREE.Group();
       frameGroup.position.set(x, 0, z);
+      frameGroup.scale.setScalar(S);
       const postGeo = new THREE.BoxGeometry(0.32, 2.7, 0.32);
       const lintelGeo = new THREE.BoxGeometry(2.24, 0.36, 0.36);
       const fMat = thresholdMat(0.5, 2.5);
@@ -2136,7 +2154,7 @@ function buildDoors(doors){
 
     // Floor crossing pad
     const pad = new THREE.Mesh(
-      new THREE.CircleGeometry(0.72, 24),
+      new THREE.CircleGeometry(0.72 * S, 24),
       new THREE.MeshStandardMaterial({
         color: 0xc9a75f, emissive: 0x4a3208, emissiveIntensity: 0.45, roughness: 0.85
       })
@@ -2148,8 +2166,8 @@ function buildDoors(doors){
     // Overhead sign label
     const label = labelSprite(['→ ' + (d.peer || 'peer'), d.locked ? 'locked' : 'open'],
                                 d.locked ? '#c9a75f' : '#67c98a');
-    label.scale.set(1.05, 0.4, 1);
-    label.position.set(x, y + 3.1, z);
+    label.scale.set(1.05 * S, 0.4 * S, 1);
+    label.position.set(x, y + 3.1 * S, z);
     doorGroup.add(label);
   });
 }
@@ -2230,7 +2248,7 @@ function createShape3D(params, portraitTex){
   const scaleMult = arguments[2];
   const group = new THREE.Group();
   const isHome = currentRoomMode === 'Home';
-  const mult = (typeof scaleMult === 'number') ? scaleMult : (isHome ? 0.20 : 1.0);
+  const mult = (typeof scaleMult === 'number') ? scaleMult : (isHome ? (6.88 / 10.5) : 1.0);
   function makeGeo(shape, s, facets){
     s = s || [1, 1, 1];
     const ms = [s[0] * mult, s[1] * mult, s[2] * mult];
@@ -2292,6 +2310,7 @@ function createShape3D(params, portraitTex){
 }
 function addPresence(label, i, n, avatarUrl, recent, prevPos){
   const isHome = currentRoomMode === 'Home';
+  const S = isHome ? (6.88 / 10.5) : 1.0;
   const r = isHome ? 2.6 : 4.2;
   const zOffset = isHome ? -1.1 : -1.0;
   const angleSpan = isHome ? Math.PI * 0.9 : Math.PI * 1.3;
@@ -2303,12 +2322,12 @@ function addPresence(label, i, n, avatarUrl, recent, prevPos){
   const kinItem = { label, x, z, obj: null, caption: null };
   presentKinList.push(kinItem);
   const loader = new THREE.TextureLoader();
-  const shapeMult = isHome ? 0.20 : 1.0;
-  const baseY = isHome ? 0.85 : 1.1;
+  const shapeMult = S;
+  const baseY = isHome ? 0.72 : 1.1;
   const build = (tex) => {
     const mat = new THREE.SpriteMaterial({map: tex, transparent: true});
     const spr = new THREE.Sprite(mat);
-    const sprScale = 1.6 * (isHome ? 0.45 : 1.0);
+    const sprScale = 1.6 * S;
     spr.scale.set(sprScale, sprScale, 1);
     spr.position.set(kinItem.x, baseY, kinItem.z);
     spr.userData = {baseY, bob: phase, kin: label};
@@ -2361,9 +2380,9 @@ function addPresence(label, i, n, avatarUrl, recent, prevPos){
     const {tex, aspect} = captionTexture(label, recent.content, recent.created_at, isSigned);
     const mat = new THREE.SpriteMaterial({map: tex, transparent: true});
     const spr = new THREE.Sprite(mat);
-    const w = isHome ? 1.2 : 2.6, h = w * aspect;
+    const w = 2.6 * S, h = w * aspect;
     spr.scale.set(w, h, 1);
-    const cardBaseY = baseY + (isHome ? 0.65 : 0.9) + h / 2;
+    const cardBaseY = baseY + (0.9 * S) + h / 2;
     spr.position.set(kinItem.x, cardBaseY, kinItem.z);
     spr.userData = {baseY: cardBaseY, bob: phase, kin: label};
     kinItem.caption = spr;

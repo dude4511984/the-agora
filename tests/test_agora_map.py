@@ -307,14 +307,14 @@ class Agora3DHomeRoomCharacter(unittest.TestCase):
     def test_page_3d_home_scales_claimed_shapes_proportionally(self):
         page = agora_map.PAGE_3D
         self.assertIn("function createShape3D(params, portraitTex)", page)
-        self.assertIn("const mult = (typeof scaleMult === 'number') ? scaleMult : (isHome ? 0.20 : 1.0);", page)
+        self.assertIn("const mult = (typeof scaleMult === 'number') ? scaleMult : (isHome ? (6.88 / 10.5) : 1.0);", page)
         self.assertIn("const ms = [s[0] * mult, s[1] * mult, s[2] * mult];", page)
-        self.assertIn("const shapeMult = isHome ? 0.20 : 1.0;", page)
+        self.assertIn("const shapeMult = S;", page)
 
     def test_page_3d_home_scales_the_visitor_lantern_and_spirit(self):
         page = agora_map.PAGE_3D
         self.assertIn("function updateVisitorLanternScale(isHome)", page)
-        self.assertIn("const roomScale = isHome ? 0.20 : 1.0;", page)
+        self.assertIn("const roomScale = isHome ? (6.88 / 10.5) : 1.0;", page)
         self.assertIn("lantern.scale.setScalar(roomScale);", page)
         self.assertIn("lanternLight.distance = 10 * roomScale;", page)
         self.assertIn("spiritPlane.scale.setScalar(roomScale);", page)
