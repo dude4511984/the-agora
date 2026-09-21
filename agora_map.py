@@ -2087,11 +2087,21 @@ function buildDoors(doors){
       });
     }
 
-    // Doorway frame at the trigger position
+    // Doorway frame at the trigger position. Lifted onto the floor by
+    // bounds.min.y (unchanged) but ALSO centred on its own bounding box
+    // in x/z — the GLTF's authored origin isn't at the footprint's
+    // center once the two door leaves are rotated open, so without this
+    // the visible frame sits offset from (x, z) while the trigger sits
+    // exactly there: a person walks through empty space next to the
+    // door they can see, or bumps into a door they can't reach. Trigger
+    // and frame now share the same center by construction, not by
+    // trusting two separately-written literals to agree.
     if (peerDoorTemplate) {
       const doorMesh = peerDoorTemplate.clone(true);
       const bounds = new THREE.Box3().setFromObject(doorMesh);
-      doorMesh.position.set(x, -bounds.min.y, z);
+      const centerX = (bounds.min.x + bounds.max.x) / 2;
+      const centerZ = (bounds.min.z + bounds.max.z) / 2;
+      doorMesh.position.set(x - centerX, -bounds.min.y, z - centerZ);
       doorGroup.add(doorMesh);
     } else {
       const frameGroup = new THREE.Group();
