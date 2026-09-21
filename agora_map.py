@@ -852,6 +852,10 @@ function thresholdMat(repeatX, repeatZ) {
   return material;
 }
 
+// Rule: Home is a 0.655-scale world (HALF 6.88 vs 10.5, floor radius 20 vs 30).
+// Never copy an absolute distance from Frosty into Home. Scale it.
+// Frosty: door z 28.8 = 2.74 * HALF, walkway ends 29.7, floor 30.
+// Home: door z 18.8 = 2.74 * HALF, walkway 6.88 -> 19.8, floor 20.
 function buildGateThreshold(isHome) {
   gateThresholdRevision += 1;
   const revision = gateThresholdRevision;
@@ -859,18 +863,20 @@ function buildGateThreshold(isHome) {
 
   // Gate collision permits centered passage; the broad path begins beyond the
   // jambs, where walking naturally opens into this 2.4m approach out to the peer door.
-  // Both walkways are sized so walking from archway to door takes roughly the same steps.
-  const path = new THREE.Mesh(new THREE.PlaneGeometry(2.4, 19.0), thresholdMat(1.2, 9.5));
+  // Home scales Frosty's 19m walkway to 12.92m (6.88 -> 19.8), staying within floor R=20.
+  const path = isHome
+    ? new THREE.Mesh(new THREE.PlaneGeometry(2.4, 12.92), thresholdMat(1.2, 6.46))
+    : new THREE.Mesh(new THREE.PlaneGeometry(2.4, 19.0), thresholdMat(1.2, 9.5));
   path.rotation.x = -Math.PI / 2;
-  path.position.set(0, 0.012, isHome ? 16.38 : 20.2);
+  path.position.set(0, 0.012, isHome ? 13.34 : 20.2);
   gateThresholdGroup.add(path);
 
   const marker = new THREE.Mesh(
-    new THREE.CircleGeometry(1.45, 32),
+    new THREE.CircleGeometry(isHome ? 1.0 : 1.45, 32),
     thresholdMat(1.45, 1.45)
   );
   marker.rotation.x = -Math.PI / 2;
-  marker.position.set(0, 0.018, isHome ? 25.88 : 29.7);
+  marker.position.set(0, 0.018, isHome ? 19.8 : 29.7);
   gateThresholdGroup.add(marker);
 
   // Poly Haven's Standing Chalkboard 01 (CC0) marks the end of the walkway
@@ -880,7 +886,7 @@ function buildGateThreshold(isHome) {
     const raw = new THREE.Box3().setFromObject(wayfinder).getSize(new THREE.Vector3());
     wayfinder.scale.setScalar(1.35 / Math.max(raw.y, 0.01));
     const bounds = new THREE.Box3().setFromObject(wayfinder);
-    const wayZ = isHome ? 25.0 : 28.8;
+    const wayZ = isHome ? 18.8 : 28.8;
     wayfinder.position.set(1.7, -bounds.min.y, wayZ);
     wayfinder.rotation.y = Math.PI;
     gateThresholdGroup.add(wayfinder);
@@ -892,7 +898,7 @@ function buildGateThreshold(isHome) {
 
   // The physical lantern meshes and the pools of light along the walkway.
   const lanternCoords = isHome
-    ? [[-1.65, 11.5], [1.65, 11.5], [-1.65, 20.5], [1.65, 20.5]]
+    ? [[-1.65, 10.0], [1.65, 10.0], [-1.65, 16.0], [1.65, 16.0]]
     : [[-1.65, 15.2], [1.65, 15.2], [-1.65, 24.4], [1.65, 24.4]];
   lanternCoords.forEach(([x, z]) => {
     const light = new THREE.PointLight(0xffb366, 1.0, 7.0, 2);
@@ -1741,6 +1747,7 @@ function buildRoom(mode){
   updateLighting(isHome);
   updateVisitorLanternScale(isHome);
   buildGateThreshold(isHome);
+  if (currentPeerDoors && currentPeerDoors.length) buildDoors(currentPeerDoors);
   controls.minDistance = isHome ? 1.5 : 3.0;
   controls.maxDistance = isHome ? 14.0 : 22.0;
 
@@ -2060,7 +2067,7 @@ function buildDoors(doors){
   doorTriggers = [];
   // Crossing lives at the end of the south walkway, beside the chalkboard sign:
   const isHome = currentRoomMode === 'Home';
-  const z = isHome ? 25.0 : 28.8;
+  const z = isHome ? 18.8 : 28.8;
   const y = 0;
   const halfW = 0.80;
   const depth = 0.50;
