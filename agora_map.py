@@ -650,9 +650,19 @@ function nodeNameForUrl(url){
   const norm = String(url).replace(/\\/+$/, '');
   for (const [name, presetUrl] of PRESETS) {
     if (String(presetUrl).replace(/\\/+$/, '') === norm) return name;
+    if (String(name).toLowerCase() === norm.toLowerCase()) return name;
   }
   return null;
 }
+
+function defaultPeerDoorsFor(roomMode){
+  const isHome = roomMode === 'Home';
+  const peerName = isHome ? 'Frosty' : 'Home';
+  const hit = PRESETS.find(p => p[0] === peerName);
+  const peerUrl = hit ? hit[1] : (isHome ? 'http://192.168.1.119:8770' : 'http://192.168.1.120:8770');
+  return [{peer: peerName, url: peerUrl, kind: 'door', locked: false}];
+}
+
 
 // ── scene: precomputed once, static geometry never rebuilt per frame ──────
 const scene = new THREE.Scene();
@@ -1777,7 +1787,10 @@ function buildRoom(mode){
   updateLighting(isHome);
   updateVisitorLanternScale(isHome);
   buildGateThreshold(isHome);
-  if (currentPeerDoors && currentPeerDoors.length) buildDoors(currentPeerDoors);
+  if (currentKids) buildPlaces(currentKids, currentResonance);
+  const selfName = isHome ? 'Home' : 'Frosty';
+  const validDoors = (currentPeerDoors || []).filter(d => nodeNameForUrl(d.url) !== selfName && d.peer !== selfName);
+  buildDoors(validDoors.length ? validDoors : defaultPeerDoorsFor(mode));
   controls.minDistance = isHome ? 1.5 : 3.0;
   controls.maxDistance = isHome ? 14.0 : 22.0;
 
@@ -1839,7 +1852,14 @@ function buildRoom(mode){
       const t = -wallSpan + i * actualSeg;
       const useGate = i === gateIndex && gateTemplate;
       const straight = (i % 2 === 0 || !strTemplate2) ? strTemplate : strTemplate2;
-      const pos = axis === 'x' ? {x: t, z: fixedCoord} : {x: fixedCoord, z: t};
+      let pos;
+      if (axis === 'x' && ry < 0) {
+        pos = {x: t + actualSeg, z: fixedCoord};
+      } else if (axis === 'z' && ry !== 0) {
+        pos = {x: fixedCoord, z: t + actualSeg};
+      } else {
+        pos = axis === 'x' ? {x: t, z: fixedCoord} : {x: fixedCoord, z: t};
+      }
       if (useGate) {
         const gatePos = axis === 'x'
           ? {x: -gateLen / 2, z: fixedCoord}
@@ -1894,10 +1914,10 @@ function buildRoom(mode){
   }
 
   const gateSlot = Math.floor(n / 2);
-  placeRun('x', -HALF, Math.PI / 2);
-  placeRun('x',  HALF, Math.PI / 2, gateSlot);
-  placeRun('z', -HALF, 0);
-  placeRun('z',  HALF, 0);
+  placeRun('x', -HALF, -Math.PI / 2);
+  placeRun('x',  HALF,  Math.PI / 2, gateSlot);
+  placeRun('z', -HALF,  0);
+  placeRun('z',  HALF,  Math.PI);
 
   if (useRamparts) {
     const rampartX = -HALF + 3.8 * SCALE;
@@ -2041,7 +2061,7 @@ function buildPlaces(kids, resonance){
     const {x, z} = arcPos(i, kids.length, aStart, aEnd, placeR);
     currentPlaceLocations.push({ place_id: k.place_id, kind: k.kind, x, z });
     const booth = boothMesh(k.kind);
-    booth.scale.setScalar(S);
+    booth.scale.multiplyScalar(S);
     const yOff = (k.kind === 'table' && !benchTemplate) ? 0.22 * S : 0;
     booth.position.set(x, yOff, z);
     booth.rotation.y = Math.atan2(-x, -z);
@@ -2132,7 +2152,7 @@ function buildDoors(doors){
     // trusting two separately-written literals to agree.
     if (peerDoorTemplate) {
       const doorMesh = peerDoorTemplate.clone(true);
-      doorMesh.scale.setScalar(S);
+      doorMesh.scale.multiplyScalar(S);
       const bounds = new THREE.Box3().setFromObject(doorMesh);
       const centerX = (bounds.min.x + bounds.max.x) / 2;
       const centerZ = (bounds.min.z + bounds.max.z) / 2;
@@ -2141,7 +2161,7 @@ function buildDoors(doors){
     } else {
       const frameGroup = new THREE.Group();
       frameGroup.position.set(x, 0, z);
-      frameGroup.scale.setScalar(S);
+      frameGroup.scale.multiplyScalar(S);
       const postGeo = new THREE.BoxGeometry(0.32, 2.7, 0.32);
       const lintelGeo = new THREE.BoxGeometry(2.24, 0.36, 0.36);
       const fMat = thresholdMat(0.5, 2.5);
@@ -2497,7 +2517,10 @@ async function loadNode(){
     const kids = places.filter(p => (p.parent || '') === commons.place_id && p.place_id !== commons.place_id);
     const resonance = view.resonance || {};
     buildPlaces(kids, resonance);
-    buildDoors(view.peer_doors || []);
+    const selfName = roomType === 'Home' ? 'Home' : 'Frosty';
+    const rawDoors = view.peer_doors || [];
+    const validDoors = rawDoors.filter(d => nodeNameForUrl(d.url) !== selfName && d.peer !== selfName);
+    buildDoors(validDoors.length ? validDoors : defaultPeerDoorsFor(roomType));
     const bestHeat = Object.values(resonance).length ? Math.max(...Object.values(resonance)) : 0;
 
     // Presence: whoever the server says is actually standing here, now.
@@ -2523,6 +2546,7 @@ async function loadNode(){
   } catch (e) {
     showErr('Could not load ' + node + ': ' + e.message);
     status.textContent = 'error — see top right';
+    buildDoors(defaultPeerDoorsFor(currentRoomMode));
   }
 }
 
@@ -2533,7 +2557,7 @@ for (const [name, url] of PRESETS) {
 const qNode = new URLSearchParams(location.search).get('node');
 if (qNode) {
   const qNodeName = nodeNameForUrl(qNode);
-  let opt = [...sel.options].find(o => o.value.replace(/\\/$/, '') === qNode.replace(/\\/$/, ''));
+  let opt = [...sel.options].find(o => o.value.replace(/\\/$/, '') === qNode.replace(/\\/$/, '') || (qNodeName && o.textContent === qNodeName));
   if (!opt) {
     opt = document.createElement('option');
     opt.value = qNode;
