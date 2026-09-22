@@ -1897,8 +1897,13 @@ new THREE.GLTFLoader().load('/models/modular_fort_01/modular_fort_01.gltf', (glt
 let _graffitiMat = null;
 function graffitiMaterial(){
   if (_graffitiMat) return _graffitiMat;
-  const TEXT = "We build so we can remember what we needed to forget.";
-  const W = 1536, H = 340;
+  // Two lines — the wall's one genuinely flat, gap-free span next to the
+  // gate (measured live: x=1.85..5.40, a 0.40 step down at the gate-side
+  // flanking stone before that, confirmed by raycast) isn't wide enough
+  // for the whole sentence as one line without either running into that
+  // step or shrinking the letters past readable.
+  const LINES = ["We build so we can remember", "what we needed to forget."];
+  const W = 1536, H = 620;
   const c = document.createElement('canvas'); c.width = W; c.height = H;
   const ctx = c.getContext('2d');
   // A fixed seed, not Math.random() — the graffiti has to look the same
@@ -1908,39 +1913,72 @@ function graffitiMaterial(){
 
   ctx.clearRect(0, 0, W, H);
   ctx.textBaseline = 'alphabetic';
-  ctx.font = 'italic bold 72px "Segoe Script", "Comic Sans MS", cursive, sans-serif';
-  const paint = 'rgba(188, 168, 138, 0.85)';
+  // 92px, not a rounder number: measured against the longer line ("We
+  // build so we can remember", 28 chars) with this exact font stack —
+  // 108px ran that line to 1680px against a 1536px canvas, clipping
+  // "member" off the end with no visible sign anything was wrong (the
+  // rest of the line just wasn't there). Checked live with
+  // ctx.measureText against both lines before picking this size, not
+  // by eye: 92px ends the long line at 1451px, the short one at 1255px.
+  const FONT = 'italic bold 92px sans-serif';
+  // Faded rust red — has body against the tan/grey stone, unlike the
+  // first pass's pale beige, which photographed as printed signage
+  // rather than paint.
+  const PAINT = [176, 62, 40];
+  const paintRGBA = (a) => `rgba(${PAINT[0]},${PAINT[1]},${PAINT[2]},${a})`;
 
-  // Hand-sprayed look out of a plain canvas font: draw glyph by glyph with
-  // baseline wobble, a small per-glyph tilt, and varying alpha, instead of
-  // one flat fillText call.
-  const baseY = H * 0.52;
-  let x = 46;
-  for (const ch of TEXT) {
-    const w = ctx.measureText(ch).width || 6;
-    if (ch !== ' ') {
-      const wobble = (rnd() - 0.5) * 14;
-      const tilt = (rnd() - 0.5) * 0.11;
-      ctx.save();
-      ctx.translate(x + w / 2, baseY + wobble);
-      ctx.rotate(tilt);
-      ctx.fillStyle = paint;
-      ctx.globalAlpha = 0.72 + rnd() * 0.22;
-      ctx.fillText(ch, -w / 2, 0);
-      ctx.restore();
+  const lineH = H / LINES.length;
+  LINES.forEach((line, li) => {
+    ctx.font = FONT;
+    const baseY = lineH * li + lineH * 0.62;
+    let x = 40;
+    for (const ch of line) {
+      const w = ctx.measureText(ch).width || 6;
+      if (ch !== ' ') {
+        const wobble = (rnd() - 0.5) * 16;
+        const tilt = (rnd() - 0.5) * 0.13;
+
+        // Overspray: a soft blurred halo under the crisp glyph, the way
+        // a spray can bleeds into stone texture around the hard edge.
+        ctx.save();
+        ctx.translate(x + w / 2, baseY + wobble);
+        ctx.rotate(tilt);
+        ctx.font = FONT;
+        ctx.shadowColor = paintRGBA(0.9);
+        ctx.shadowBlur = 10;
+        ctx.fillStyle = paintRGBA(0.28);
+        ctx.fillText(ch, -w / 2, 0);
+        ctx.restore();
+
+        // Thickened stroke: the same glyph struck 3x with a small jitter
+        // per pass, rather than one crisp fillText — fattens and roughs
+        // the edges the way an unsteady hand with a spray can does.
+        ctx.save();
+        ctx.translate(x + w / 2, baseY + wobble);
+        ctx.rotate(tilt);
+        ctx.shadowBlur = 0;
+        ctx.font = FONT;
+        for (let pass = 0; pass < 3; pass++) {
+          const jx = (rnd() - 0.5) * 3.2, jy = (rnd() - 0.5) * 3.2;
+          ctx.fillStyle = paintRGBA(pass === 2 ? (0.82 + rnd() * 0.14) : 0.5);
+          ctx.fillText(ch, -w / 2 + jx, jy);
+        }
+        ctx.restore();
+      }
+      x += w + 3.4;
     }
-    x += w + 2.2;
-  }
-  ctx.globalAlpha = 1;
+  });
+  ctx.shadowBlur = 0;
 
-  // Two short drips off the tails of letters that reach the baseline.
-  [0.30, 0.63].forEach((frac, i) => {
-    const dx = W * frac, dy0 = baseY + 6 + rnd() * 8, dripH = 34 + rnd() * 30;
+  // Two short drips, one off each line, off the tail of a letter that
+  // reaches the baseline.
+  [{frac: 0.28, li: 0}, {frac: 0.55, li: 1}].forEach(({frac, li}) => {
+    const dx = W * frac, dy0 = lineH * li + lineH * 0.62 + 8 + rnd() * 8, dripH = 40 + rnd() * 34;
     const grad = ctx.createLinearGradient(dx, dy0, dx, dy0 + dripH);
-    grad.addColorStop(0, 'rgba(188,168,138,0.55)');
-    grad.addColorStop(1, 'rgba(188,168,138,0)');
+    grad.addColorStop(0, paintRGBA(0.6));
+    grad.addColorStop(1, paintRGBA(0));
     ctx.fillStyle = grad;
-    ctx.fillRect(dx, dy0, 3 + (i % 2), dripH);
+    ctx.fillRect(dx, dy0, 4 + (li % 2), dripH);
   });
 
   const tex = new THREE.CanvasTexture(c);
@@ -1955,8 +1993,8 @@ function graffitiMaterial(){
   });
   return _graffitiMat;
 }
-const GRAFFITI_ASPECT = 340 / 1536;
-const graffitiGeo = new THREE.PlaneGeometry(4.2, 4.2 * GRAFFITI_ASPECT);
+const GRAFFITI_ASPECT = 620 / 1536;
+const graffitiGeo = new THREE.PlaneGeometry(3.3, 3.3 * GRAFFITI_ASPECT);
 
 function buildRoom(mode){
   currentRoomMode = mode;
@@ -2138,11 +2176,11 @@ function buildRoom(mode){
     }
   }
 
-  // One line of graffiti, Frosty only, on the south wall beside the exit
-  // arch — the first solid stone a visitor passes walking from spawn
-  // toward the peer door. On the wall's courtyard-facing (inward) side,
-  // ~1cm off the wall face (plus polygonOffset in the material) so it
-  // doesn't z-fight the stone behind it.
+  // Graffiti, Frosty only, on the south wall beside the exit arch — the
+  // first solid stone a visitor passes walking from spawn toward the
+  // peer door. On the wall's courtyard-facing (inward) side, ~1cm off
+  // the wall face (plus polygonOffset in the material) so it doesn't
+  // z-fight the stone behind it.
   //
   // WALL_FACE_INSET: the wall segments' real, textured courtyard face
   // sits 1.037 (measured live via raycast against the built mesh, not
@@ -2151,10 +2189,23 @@ function buildRoom(mode){
   // template has real depth (battlement + thickness). Placing a decal at
   // `currentHalf` alone embeds it inside the stone, behind the face a
   // visitor actually sees; confirmed live, one full rebuild fixed it.
+  //
+  // GRAFFITI_X: centred in the one span that's actually flat and clear
+  // end to end — measured live by raycasting the built wall face from
+  // x=0.9 to x=7.0 at 0.05 steps. The gate-side flanking stone (x<~1.85)
+  // sits 0.40 proud of the rest of the wall (a real step, not a texture
+  // seam), which is what ate the tail of the sentence in round 1: the
+  // plane was centred at x=3.45, so its far (low-x) edge landed on that
+  // raised stone and everything painted on that portion of the texture
+  // was rendered behind it, invisible. x=1.85..5.40+ is one continuous
+  // flat depth (one hairline gap at x=5.44-5.46, under 2cm, not a real
+  // occluder). This plane's width (3.3) centred at 3.6 spans
+  // [1.95, 5.25] — inside that span with margin on both sides.
   if (!isHome) {
     const WALL_FACE_INSET = 1.037;
+    const GRAFFITI_X = 3.6, GRAFFITI_Y = 0.9;
     const graffiti = new THREE.Mesh(graffitiGeo, graffitiMaterial());
-    graffiti.position.set(gateHalfOpen + 2.55, 1.55, currentHalf - WALL_FACE_INSET - 0.01);
+    graffiti.position.set(GRAFFITI_X, GRAFFITI_Y, currentHalf - WALL_FACE_INSET - 0.01);
     graffiti.rotation.y = Math.PI;   // face -z, back toward the courtyard/spawn
     graffiti.rotation.z = -0.035;    // small hand-sprayed tilt, not dead level
     wallGroup.add(graffiti);
