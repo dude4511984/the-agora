@@ -274,6 +274,7 @@ let STATE = null;        // last {data, byId, roots}
 const PALETTE = ['#67b9cd','#d98a5e','#a99ad6','#67c98a','#e8b661','#e0748c','#7fb4e0','#c0a35e'];
 function colorFor(name){ let h=0; const s=String(name); for(let i=0;i<s.length;i++) h=(h*31+s.charCodeAt(i))>>>0; return PALETTE[h % PALETTE.length]; }
 function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function plural(n, word){ return n + ' ' + word + (n === 1 ? '' : 's'); }
 function short(k){ return (k||'').slice(0,8) + (k?'…':''); }
 function avatarURL(name){ return '/avatar?kin=' + encodeURIComponent(name || ''); }
 function relTime(iso){
@@ -507,7 +508,7 @@ async function load(){
     const when = data.as_of_unix_ms ? new Date(data.as_of_unix_ms).toLocaleTimeString() : '';
     const signed = data.signature ? ' · <span class="ok">signed</span>' : '';
     st.innerHTML = `<span class="ok">${esc((root&&root.node)||data.node||'node')}</span> · ${(data.places||[]).length} places · `
-      + `${(data.presence||[]).length} here · ${(data.peer_doors||[]).length} doors · ${when}${signed}`;
+      + `${(data.presence||[]).length} here · ${plural((data.peer_doors||[]).length, 'door')} · ${when}${signed}`;
   }catch(e){
     st.innerHTML = '<span class="err">' + esc(e.message) + '</span>';
   }
@@ -2739,6 +2740,7 @@ function addPresence(label, i, n, avatarUrl, recent, prevPos){
     presenceSprites.push(spr);
   }
 }
+function plural(n, word){ return n + ' ' + word + (n === 1 ? '' : 's'); }
 function relTime(iso){
   const then = Date.parse(iso || '');
   if (isNaN(then)) return '';
@@ -2870,7 +2872,7 @@ async function loadNode(){
 
     status.innerHTML = `<b>${root.node || node}</b> · speaker: ${root.speaker || 'vacant'} · `
       + `present: ${here.length ? here.map(p=>p.label||'?').join(', ') : 'no one right now'} · `
-      + `${kids.length} places · ${(view.peer_doors||[]).length} doors · hottest well (signed): ${bestHeat.toFixed(3)}`
+      + `${kids.length} places · ${plural((view.peer_doors||[]).length, 'door')} · hottest well (signed): ${bestHeat.toFixed(3)}`
       + govPart;
   } catch (e) {
     showErr('Could not load ' + node + ': ' + e.message);
