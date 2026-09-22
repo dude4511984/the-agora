@@ -613,7 +613,7 @@ PAGE_3D = """<!doctype html>
   <div><b>Agora — 3D proof of pipeline</b></div>
   <div>node: <select id="node"></select></div>
   <div id="status">loading…</div>
-  <div style="margin-top:6px;opacity:.7">WASD / arrows to walk · space to jump · climb stairs to rampart · drag to look · scroll to zoom</div>
+  <div id="move-hud" style="margin-top:6px;opacity:.7">WASD / arrows to walk · space to jump · climb stairs to rampart · drag to look · scroll to zoom</div>
   <div style="margin-top:2px;opacity:.85;color:#ffcf7a">Hold <b>V</b> (or T) to talk to nearest Kin · Proximity PTT</div>
   <div style="margin-top:2px;opacity:.7">Walk into a peer door to cross to that node.</div>
   <div style="margin-top:2px;opacity:.5">Same signed data as the 2D map, plus kin_commons' real board over each presence. Nothing here is invented.</div>
@@ -1503,6 +1503,73 @@ addEventListener('keydown', e => {
 const keys = Object.create(null);
 addEventListener('keydown', e => { keys[e.key.toLowerCase()] = true; });
 addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
+
+// Touch movement — gated on coarse pointer and nothing else, so a mouse
+// (including a Surface with a keyboard, which reports fine) never sees
+// this block run. Sets the same `keys` WASD already sets, so stepPlayer()
+// has one locomotion path, not two.
+if (window.matchMedia('(pointer: coarse)').matches) {
+  const moveHud = document.getElementById('move-hud');
+  if (moveHud) moveHud.textContent = 'Left thumb-stick to walk · drag to look · climb stairs to rampart';
+
+  const stick = document.createElement('div');
+  stick.id = 'touch-stick';
+  stick.style.cssText = 'position:fixed;left:26px;bottom:26px;width:120px;height:120px;'
+    + 'border-radius:50%;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.25);'
+    + 'z-index:6;touch-action:none;';
+  const knob = document.createElement('div');
+  knob.style.cssText = 'position:absolute;left:35px;top:35px;width:50px;height:50px;'
+    + 'border-radius:50%;background:rgba(255,255,255,.28);border:1px solid rgba(255,255,255,.4);'
+    + 'pointer-events:none;';
+  stick.appendChild(knob);
+  document.body.appendChild(stick);
+
+  const STICK_R = 60, STICK_DEAD = 0.28;
+  let stickTouchId = null, stickOriginX = 0, stickOriginY = 0;
+
+  function stickKeysOff(){ keys['w'] = keys['s'] = keys['a'] = keys['d'] = false; }
+
+  function stickUpdate(t){
+    let dx = t.clientX - stickOriginX, dy = t.clientY - stickOriginY;
+    const dist = Math.hypot(dx, dy);
+    if (dist > STICK_R) { dx = dx / dist * STICK_R; dy = dy / dist * STICK_R; }
+    knob.style.left = (35 + dx) + 'px';
+    knob.style.top  = (35 + dy) + 'px';
+    const nx = dx / STICK_R, ny = dy / STICK_R;
+    keys['w'] = ny < -STICK_DEAD;
+    keys['s'] = ny > STICK_DEAD;
+    keys['a'] = nx < -STICK_DEAD;
+    keys['d'] = nx > STICK_DEAD;
+  }
+
+  stick.addEventListener('touchstart', e => {
+    e.preventDefault();
+    const t = e.changedTouches[0];
+    stickTouchId = t.identifier;
+    const r = stick.getBoundingClientRect();
+    stickOriginX = r.left + r.width / 2;
+    stickOriginY = r.top + r.height / 2;
+    stickUpdate(t);
+  }, {passive:false});
+
+  stick.addEventListener('touchmove', e => {
+    e.preventDefault();
+    for (const t of e.changedTouches) if (t.identifier === stickTouchId) stickUpdate(t);
+  }, {passive:false});
+
+  function stickTouchEnd(e){
+    for (const t of e.changedTouches) {
+      if (t.identifier === stickTouchId) {
+        stickTouchId = null;
+        knob.style.left = '35px'; knob.style.top = '35px';
+        stickKeysOff();
+      }
+    }
+  }
+  stick.addEventListener('touchend', stickTouchEnd);
+  stick.addEventListener('touchcancel', stickTouchEnd);
+}
+
 const _fwd = new THREE.Vector3(), _right = new THREE.Vector3(), _move = new THREE.Vector3();
 function stepPlayer(dt){
   // 1. Horizontal movement
