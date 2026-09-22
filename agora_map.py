@@ -2020,7 +2020,17 @@ function buildRoom(mode){
   gateZWall = HALF;
   gateZMin = isHome ? 5.6 : 9.2;
   gateZMax = isHome ? 7.8 : 11.2;
-  wallInner = HALF - 0.613 - PLAYER_R;
+  // 0.613 is Frosty-tuned wall thickness — a fixed stone-course
+  // measurement, not a proportion, so it doesn't scale with HALF on its
+  // own. The wall mesh itself now does scale by S on Home (the n=5 fix
+  // above), so this fixed inset needs the same S or it's still sized
+  // for the old, thicker Frosty-shaped wall: measured live, Home's
+  // visible inner face sits at z=6.201, but the unscaled inset put
+  // wallInner at 5.917 — a visitor stopped 0.284 short of the stone, in
+  // open air. Frosty's own number is untouched; PLAYER_R is a real
+  // physical visitor size and doesn't scale with the room either way.
+  const S = isHome ? HALF / 10.5 : 1.0;
+  wallInner = HALF - 0.613 * S - PLAYER_R;
   wallOuter = HALF + PLAYER_R;
   hasRamparts = useRamparts;
 
