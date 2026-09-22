@@ -2715,9 +2715,23 @@ function addPresence(label, i, n, avatarUrl, recent, prevPos){
     const {tex, aspect} = captionTexture(label, recent.content, recent.created_at, isSigned);
     const mat = new THREE.SpriteMaterial({map: tex, transparent: true});
     const spr = new THREE.Sprite(mat);
+    // Width is already fixed (2.6*S regardless of content — captionTexture
+    // wraps to a constant canvas width, only height varies with how much
+    // a Kin said), so a wide card next to a close neighbour was always a
+    // possible overlap; height wasn't, since every card's bottom sat at
+    // the same baseY+0.9*S regardless of position. Stagger by presence
+    // index instead: a 3-tier staircase (i%3) so any two *adjacent*
+    // indices land on different tiers, separating their cards vertically
+    // when they're standing close enough for the fixed width to collide.
+    // Centred on tier 1 (offsets -1,0,+1), not 0,1,2 — a first attempt
+    // that climbed monotonically pushed higher-index cards up and off
+    // the top of the default spawn view instead of just separating them;
+    // centring keeps the middle tier at the original height and spreads
+    // the other two symmetrically instead of drifting the whole row up.
     const w = 2.6 * S, h = w * aspect;
     spr.scale.set(w, h, 1);
-    const cardBaseY = baseY + (0.9 * S) + h / 2;
+    const tier = (i % 3) - 1;
+    const cardBaseY = baseY + (0.9 * S) + h / 2 + tier * (0.4 * S);
     spr.position.set(kinItem.x, cardBaseY, kinItem.z);
     spr.userData = {baseY: cardBaseY, bob: phase, kin: label};
     kinItem.caption = spr;
