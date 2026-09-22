@@ -829,6 +829,90 @@ function updateFloor(radius, ringInner, ringOuter, repeats){
   if (floorMat.roughnessMap) floorMat.roughnessMap.repeat.set(repeats, repeats);
 }
 
+// ── Holodeck Simulation Grid (Outside the Fort Walls) ──────────────────────
+// "Make-believe is labelled; the living room is real."
+// Outside the stone fort walls sits the simulation grid: a dark floor
+// with glowing Star Trek holodeck lattice lines fading into the horizon fog.
+// Amber is TNG canon; ?grid=cyan selects cool cyan.
+const qGrid = new URLSearchParams(location.search).get('grid');
+const isCyanGrid = qGrid === 'cyan';
+const holodeckLineColor = isCyanGrid ? new THREE.Color(0x28d8ed) : new THREE.Color(0xffb535);
+
+const holodeckVert = `
+  varying vec3 vWorldPos;
+  void main() {
+    vec4 wp = modelMatrix * vec4(position, 1.0);
+    vWorldPos = wp.xyz;
+    gl_Position = projectionMatrix * viewMatrix * wp;
+  }
+`;
+
+const holodeckFrag = `
+  uniform vec3 uLineColor;
+  uniform vec3 uBaseColor;
+  uniform vec3 uFogColor;
+  uniform float uGridSize;
+  uniform float uInnerRadius;
+  uniform float uFadeStart;
+  uniform float uFadeEnd;
+  varying vec3 vWorldPos;
+
+  void main() {
+    float r = length(vWorldPos.xz);
+    if (r < uInnerRadius || r > uFadeEnd) discard;
+
+    // Distance to nearest grid line along X and Z
+    vec2 coord = abs(fract(vWorldPos.xz / uGridSize) - 0.5) * uGridSize;
+    float d = min(coord.x, coord.y);
+
+    // Sharp glowing core line + soft ambient glow
+    float lw = 0.038 * (uGridSize / 2.0);
+    float core = smoothstep(lw, lw * 0.25, d);
+    float glow = smoothstep(lw * 4.5, 0.0, d) * 0.45;
+    float line = clamp(core + glow, 0.0, 1.0);
+
+    // Fade lines and blend floor into dusk fog towards horizon
+    float fogBlend = smoothstep(uFadeStart, uFadeEnd, r);
+    float alpha = 1.0 - smoothstep(uFadeStart * 1.4, uFadeEnd, r);
+
+    vec3 col = mix(uBaseColor, uLineColor, line * (1.0 - fogBlend * 0.75));
+    col = mix(col, uFogColor, fogBlend * 0.95);
+
+    gl_FragColor = vec4(col, alpha);
+  }
+`;
+
+const holodeckMat = new THREE.ShaderMaterial({
+  uniforms: {
+    uLineColor:   { value: holodeckLineColor },
+    uBaseColor:   { value: new THREE.Color(0x0c0e12) },
+    uFogColor:    { value: new THREE.Color(DUSK_FOG) },
+    uGridSize:    { value: 2.0 },
+    uInnerRadius: { value: 14.5 },
+    uFadeStart:   { value: 45.0 },
+    uFadeEnd:     { value: 220.0 }
+  },
+  vertexShader: holodeckVert,
+  fragmentShader: holodeckFrag,
+  transparent: true,
+  depthWrite: false,
+  side: THREE.DoubleSide
+});
+
+const holodeckGeo = new THREE.PlaneGeometry(500, 500);
+const holodeckMesh = new THREE.Mesh(holodeckGeo, holodeckMat);
+holodeckMesh.rotation.x = -Math.PI / 2;
+holodeckMesh.position.y = -0.005;
+scene.add(holodeckMesh);
+
+function updateHolodeck(isHome) {
+  const S = isHome ? (6.88 / 10.5) : 1.0;
+  holodeckMat.uniforms.uGridSize.value = 2.0 * S;
+  holodeckMat.uniforms.uInnerRadius.value = isHome ? 9.4 : 14.5;
+  holodeckMat.uniforms.uFadeStart.value = 45.0 * S;
+  holodeckMat.uniforms.uFadeEnd.value = 220.0 * S;
+}
+
 // Frosty's south gate opens onto a real threshold rather than the old sky-only
 // plain. It uses the same locally served Poly Haven CC0 pavement as the
 // courtyard, narrowed to the gate's passable collision corridor and lit by
@@ -2049,6 +2133,7 @@ function buildRoom(mode){
   hasRamparts = useRamparts;
 
   updateFloor(isHome ? 9.8 : 15, isHome ? 9.5 : 14.7, isHome ? 9.8 : 15, isHome ? 8 : 12);
+  updateHolodeck(isHome);
   updateLighting(isHome);
   updateVisitorLanternScale(isHome);
   buildGateThreshold(isHome);
