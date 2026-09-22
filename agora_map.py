@@ -1052,12 +1052,12 @@ function makeSpiritTexture() {
   ctx.save();
   ctx.filter = 'blur(22px)';
   ctx.beginPath();
-  ctx.moveTo(85, 250);
-  ctx.bezierCurveTo(45, 450, 55, 750, 65, 940);
-  ctx.bezierCurveTo(150, 960, 210, 960, 280, 940);
-  ctx.bezierCurveTo(270, 750, 255, 480, 235, 340);
-  ctx.bezierCurveTo(235, 260, 205, 230, 175, 230);
-  ctx.bezierCurveTo(130, 230, 100, 240, 85, 250);
+  ctx.moveTo(235, 250);
+  ctx.bezierCurveTo(195, 450, 205, 750, 215, 940);
+  ctx.bezierCurveTo(300, 960, 360, 960, 430, 940);
+  ctx.bezierCurveTo(420, 750, 405, 480, 385, 340);
+  ctx.bezierCurveTo(385, 260, 355, 230, 325, 230);
+  ctx.bezierCurveTo(280, 230, 250, 240, 235, 250);
   ctx.closePath();
   ctx.fillStyle = 'rgba(255, 210, 140, 0.28)';
   ctx.fill();
@@ -1071,12 +1071,12 @@ function makeSpiritTexture() {
   bodyGrad.addColorStop(0.75, 'rgba(210, 160, 100, 0.10)');
   bodyGrad.addColorStop(1.0, 'rgba(180, 130, 70, 0.0)');
   ctx.beginPath();
-  ctx.moveTo(85, 250);
-  ctx.bezierCurveTo(45, 450, 55, 750, 65, 940);
-  ctx.bezierCurveTo(150, 960, 210, 960, 280, 940);
-  ctx.bezierCurveTo(270, 750, 255, 480, 235, 340);
-  ctx.bezierCurveTo(235, 260, 205, 230, 175, 230);
-  ctx.bezierCurveTo(130, 230, 100, 240, 85, 250);
+  ctx.moveTo(235, 250);
+  ctx.bezierCurveTo(195, 450, 205, 750, 215, 940);
+  ctx.bezierCurveTo(300, 960, 360, 960, 430, 940);
+  ctx.bezierCurveTo(420, 750, 405, 480, 385, 340);
+  ctx.bezierCurveTo(385, 260, 355, 230, 325, 230);
+  ctx.bezierCurveTo(280, 230, 250, 240, 235, 250);
   ctx.closePath();
   ctx.fillStyle = bodyGrad;
   ctx.fill();
@@ -1086,10 +1086,10 @@ function makeSpiritTexture() {
   ctx.save();
   ctx.filter = 'blur(8px)';
   ctx.beginPath();
-  ctx.moveTo(175, 260);
-  ctx.bezierCurveTo(160, 450, 150, 700, 140, 900);
-  ctx.moveTo(215, 280);
-  ctx.bezierCurveTo(205, 480, 195, 720, 190, 900);
+  ctx.moveTo(325, 260);
+  ctx.bezierCurveTo(310, 450, 300, 700, 290, 900);
+  ctx.moveTo(365, 280);
+  ctx.bezierCurveTo(355, 480, 345, 720, 340, 900);
   ctx.lineWidth = 14;
   ctx.strokeStyle = 'rgba(255, 230, 165, 0.16)';
   ctx.stroke();
@@ -1099,12 +1099,12 @@ function makeSpiritTexture() {
   ctx.save();
   ctx.filter = 'blur(16px)';
   ctx.beginPath();
-  ctx.moveTo(175, 55);
-  ctx.bezierCurveTo(220, 65, 230, 120, 220, 175);
-  ctx.bezierCurveTo(215, 205, 225, 225, 235, 250);
-  ctx.bezierCurveTo(185, 265, 145, 265, 110, 255);
-  ctx.bezierCurveTo(90, 220, 120, 180, 120, 150);
-  ctx.bezierCurveTo(120, 85, 140, 60, 175, 55);
+  ctx.moveTo(325, 55);
+  ctx.bezierCurveTo(370, 65, 380, 120, 370, 175);
+  ctx.bezierCurveTo(365, 205, 375, 225, 385, 250);
+  ctx.bezierCurveTo(335, 265, 295, 265, 260, 255);
+  ctx.bezierCurveTo(240, 220, 270, 180, 270, 150);
+  ctx.bezierCurveTo(270, 85, 290, 60, 325, 55);
   ctx.closePath();
   ctx.fillStyle = 'rgba(255, 215, 145, 0.35)';
   ctx.fill();
@@ -1113,14 +1113,14 @@ function makeSpiritTexture() {
   ctx.save();
   ctx.filter = 'blur(7px)';
   ctx.beginPath();
-  ctx.moveTo(175, 58);
-  ctx.bezierCurveTo(218, 68, 226, 120, 218, 175);
-  ctx.bezierCurveTo(212, 205, 225, 225, 235, 250);
-  ctx.bezierCurveTo(185, 265, 145, 265, 110, 255);
-  ctx.bezierCurveTo(90, 220, 120, 180, 120, 150);
-  ctx.bezierCurveTo(120, 88, 140, 63, 175, 58);
+  ctx.moveTo(325, 58);
+  ctx.bezierCurveTo(368, 68, 376, 120, 368, 175);
+  ctx.bezierCurveTo(362, 205, 375, 225, 385, 250);
+  ctx.bezierCurveTo(335, 265, 295, 265, 260, 255);
+  ctx.bezierCurveTo(240, 220, 270, 180, 270, 150);
+  ctx.bezierCurveTo(270, 88, 290, 63, 325, 58);
   ctx.closePath();
-  const hoodGrad = ctx.createRadialGradient(175, 135, 15, 175, 135, 75);
+  const hoodGrad = ctx.createRadialGradient(325, 135, 15, 325, 135, 75);
   hoodGrad.addColorStop(0.0, 'rgba(0, 0, 0, 0.0)');
   hoodGrad.addColorStop(0.55, 'rgba(255, 210, 140, 0.18)');
   hoodGrad.addColorStop(0.85, 'rgba(255, 225, 160, 0.42)');
@@ -1133,7 +1133,7 @@ function makeSpiritTexture() {
   ctx.save();
   ctx.filter = 'blur(5px)';
   ctx.beginPath();
-  ctx.ellipse(172, 145, 26, 40, 0.08, 0, Math.PI * 2);
+  ctx.ellipse(322, 145, 26, 40, 0.08, 0, Math.PI * 2);
   ctx.lineWidth = 6;
   ctx.strokeStyle = 'rgba(255, 225, 160, 0.35)';
   ctx.stroke();
@@ -1143,12 +1143,10 @@ function makeSpiritTexture() {
   ctx.save();
   ctx.filter = 'blur(8px)';
   ctx.beginPath();
-  ctx.moveTo(195, 225);
-  ctx.bezierCurveTo(235, 230, 265, 245, 295, 265);
-  ctx.bezierCurveTo(325, 280, 338, 270, 350, 252);
-  ctx.lineTo(358, 248);
-  ctx.bezierCurveTo(342, 288, 315, 310, 275, 305);
-  ctx.bezierCurveTo(240, 305, 210, 265, 195, 250);
+  ctx.moveTo(335, 225);
+  ctx.bezierCurveTo(345, 230, 352, 240, 358, 248);
+  ctx.bezierCurveTo(350, 275, 342, 285, 325, 280);
+  ctx.bezierCurveTo(320, 265, 325, 240, 335, 225);
   ctx.closePath();
   ctx.fillStyle = 'rgba(255, 210, 135, 0.32)';
   ctx.fill();
@@ -1314,8 +1312,8 @@ const spiritMat = new THREE.ShaderMaterial({
   side: THREE.DoubleSide
 });
 
-const spiritPlaneGeom = new THREE.PlaneGeometry(1.03, 1.75);
-spiritPlaneGeom.translate(-0.250, -0.460, 0); // Origin at bail apex under hand
+const spiritPlaneGeom = new THREE.PlaneGeometry(0.93, 1.58);
+spiritPlaneGeom.translate(-0.225, -0.410, 0); // Origin at bail apex under hand
 const spiritPlane = new THREE.Mesh(spiritPlaneGeom, spiritMat);
 scene.add(spiritPlane);
 
@@ -1352,20 +1350,22 @@ function updateLanternAtmosphere(t, bob, rx, rz){
 }
 
 function placeLantern(t){
-  // Held-lantern seat: ahead and to the walker's right, below eye,
-  // never on the look-at point. Camera is third-person behind, so a
-  // camera-parented offset would hang in the sky next to the lens.
-  const bob = Math.sin(t * 1.7) * 0.05;
-  const sway = Math.sin(t * 1.1) * 0.04;
+  // Held-lantern seat: centered on the walker ahead in the look direction,
+  // with gentle walking bob and sway. Lateral offset brought to zero so
+  // steering by the lantern aligns directly with player.position and
+  // door crossing triggers on both nodes.
+  const S = lantern.userData.roomScale || 1.0;
+  const bob = Math.sin(t * 1.7) * 0.05 * S;
+  const sway = Math.sin(t * 1.1) * 0.04 * S;
   let fx = player.position.x - camera.position.x;
   let fz = player.position.z - camera.position.z;
   const fl = Math.hypot(fx, fz) || 1;
   fx /= fl; fz /= fl;
   const rx = fz, rz = -fx;
   lantern.position.set(
-    player.position.x + fx * 0.35 + rx * 0.70 + sway,
-    player.position.y + 0.76 + bob,
-    player.position.z + fz * 0.35 + rz * 0.52
+    player.position.x + fx * (0.35 * S) + rx * sway,
+    player.position.y + (0.76 * S) + bob,
+    player.position.z + fz * (0.35 * S) + rz * sway
   );
   lantern.rotation.y = Math.atan2(fx, fz);
   updateLanternAtmosphere(t, bob, rx, rz);
