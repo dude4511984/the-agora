@@ -2875,6 +2875,29 @@ if (_autoCross) {
   }, 2000);
 }
 
+// ensurePulseBase lives here, not inside the voice-chat block below, on
+// purpose: render_3d_page(is_public=True) strips that whole block out of
+// the public HTML and replaces it with a stub. animate() calls this for
+// every presence sprite every frame, on both public and private pages,
+// so it can never be one of the things a public-mode strip removes —
+// that's what turned every Kin caption/avatar invisible on the public
+// site (scale.set(undefined * sc, ...) -> NaN -> three.js silently
+// drops the object). Kept next to the block since it reads like it
+// belongs to the same pulse-on-talk feature, just outside the cut line.
+function ensurePulseBase(obj){
+  if (!obj || obj.userData.pulseReady) return;
+  obj.userData.pulseReady = true;
+  obj.userData.baseSX = obj.scale.x;
+  obj.userData.baseSY = obj.scale.y;
+  obj.userData.baseSZ = obj.scale.z;
+  obj.traverse(o => {
+    if (o.isMesh && o.material) {
+      o.userData.baseEI = o.material.emissiveIntensity || 0;
+      o.userData.baseEm = o.material.emissive ? o.material.emissive.clone() : new THREE.Color(0,0,0);
+    }
+  });
+}
+
 // ── Proximity Voice Chat (Push-To-Talk) ───────────────────────────────────────
 const VOICE_ENDPOINT = '/voice_chat';
 let mediaStream = null;
@@ -2947,19 +2970,6 @@ function voiceLevel(t){
     return Math.min(1, (s / voiceFreq.length) / 80);
   }
   return 0.4 + 0.6 * Math.abs(Math.sin(t * 10));
-}
-function ensurePulseBase(obj){
-  if (!obj || obj.userData.pulseReady) return;
-  obj.userData.pulseReady = true;
-  obj.userData.baseSX = obj.scale.x;
-  obj.userData.baseSY = obj.scale.y;
-  obj.userData.baseSZ = obj.scale.z;
-  obj.traverse(o => {
-    if (o.isMesh && o.material) {
-      o.userData.baseEI = o.material.emissiveIntensity || 0;
-      o.userData.baseEm = o.material.emissive ? o.material.emissive.clone() : new THREE.Color(0,0,0);
-    }
-  });
 }
 const talkLight = new THREE.PointLight(0xffcf7a, 0, 6, 2);
 scene.add(talkLight);
@@ -3459,8 +3469,7 @@ def render_3d_page(is_public: bool = False) -> str:
             "function voiceLevel(){ return 0; }\n"
             "let speakingKinLabel = null;\n"
             "const talkLight = new THREE.PointLight(0xffcf7a, 0, 6, 2);\n"
-            "scene.add(talkLight);\n"
-            "function ensurePulseBase(obj){}\n\n"
+            "scene.add(talkLight);\n\n"
         )
         html = part1 + stubs + voice_end + part2
 
