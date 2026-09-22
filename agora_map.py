@@ -1571,7 +1571,55 @@ if (window.matchMedia('(pointer: coarse)').matches) {
 }
 
 const _fwd = new THREE.Vector3(), _right = new THREE.Vector3(), _move = new THREE.Vector3();
+// Slab test: does the segment (x0,z0)-(x1,z1) intersect the axis-aligned
+// box [-halfW,halfW] x [-depth,depth]? Both points must already be in the
+// trigger's own local frame (rotation is linear, so transforming each
+// endpoint once and running an axis-aligned test on the pair is exact, not
+// an approximation). A point that ends inside the box still hits this
+// (t=1 is always in range), so normal-framerate behaviour is unchanged;
+// this only adds the space between two samples that a single-point check
+// at low framerate skips entirely.
+function segmentHitsBox(x0, z0, x1, z1, halfW, depth){
+  let tmin = 0, tmax = 1;
+  const dx = x1 - x0, dz = z1 - z0;
+  if (Math.abs(dx) < 1e-9) {
+    if (x0 < -halfW || x0 > halfW) return false;
+  } else {
+    let t1 = (-halfW - x0) / dx, t2 = (halfW - x0) / dx;
+    if (t1 > t2) { const tmp = t1; t1 = t2; t2 = tmp; }
+    tmin = Math.max(tmin, t1);
+    tmax = Math.min(tmax, t2);
+    if (tmin > tmax) return false;
+  }
+  if (Math.abs(dz) < 1e-9) {
+    if (z0 < -depth || z0 > depth) return false;
+  } else {
+    let t1 = (-depth - z0) / dz, t2 = (depth - z0) / dz;
+    if (t1 > t2) { const tmp = t1; t1 = t2; t2 = tmp; }
+    tmin = Math.max(tmin, t1);
+    tmax = Math.min(tmax, t2);
+    if (tmin > tmax) return false;
+  }
+  return tmin <= tmax;
+}
+
+// Same idea for the circle-trigger branch: closest point on the segment to
+// the trigger centre, clamped to the segment, tested against the radius.
+function segmentHitsCircle(x0, z0, x1, z1, cx, cz, r){
+  const dx = x1 - x0, dz = z1 - z0;
+  const lenSq = dx * dx + dz * dz;
+  let t = lenSq > 1e-9 ? ((cx - x0) * dx + (cz - z0) * dz) / lenSq : 0;
+  t = Math.max(0, Math.min(1, t));
+  const px = x0 + t * dx, pz = z0 + t * dz;
+  return Math.hypot(px - cx, pz - cz) < r;
+}
+
 function stepPlayer(dt){
+  // Sampled before any movement this frame — the far end of last frame's
+  // segment is the near end of this one, so the swept test below covers
+  // the walker's whole path continuously, not just where it lands each tick.
+  const startX = player.position.x, startZ = player.position.z;
+
   // 1. Horizontal movement
   camera.getWorldDirection(_fwd); _fwd.y = 0; _fwd.normalize();
   _right.crossVectors(_fwd, camera.up).normalize();
@@ -1629,18 +1677,23 @@ function stepPlayer(dt){
   if (!traveling) {
     for (const t of doorTriggers) {
       if (t.rotY !== undefined) {
-        const dx = player.position.x - t.x;
-        const dz = player.position.z - t.z;
-        const locX = dx * Math.cos(t.rotY) - dz * Math.sin(t.rotY);
-        const locZ = dx * Math.sin(t.rotY) + dz * Math.cos(t.rotY);
+        const dx0 = startX - t.x, dz0 = startZ - t.z;
+        const locX0 = dx0 * Math.cos(t.rotY) - dz0 * Math.sin(t.rotY);
+        const locZ0 = dx0 * Math.sin(t.rotY) + dz0 * Math.cos(t.rotY);
+        const dx1 = player.position.x - t.x, dz1 = player.position.z - t.z;
+        const locX1 = dx1 * Math.cos(t.rotY) - dz1 * Math.sin(t.rotY);
+        const locZ1 = dx1 * Math.sin(t.rotY) + dz1 * Math.cos(t.rotY);
         const halfW = t.halfWidth || 0.80;
         const depth = t.thresholdDepth || 0.35;
-        if (Math.abs(locX) <= halfW && Math.abs(locZ) <= depth) {
+        if (segmentHitsBox(locX0, locZ0, locX1, locZ1, halfW, depth)) {
           crossDoor(t);
           break;
         }
       } else {
-        if (Math.hypot(player.position.x - t.x, player.position.z - t.z) < t.r) { crossDoor(t); break; }
+        if (segmentHitsCircle(startX, startZ, player.position.x, player.position.z, t.x, t.z, t.r)) {
+          crossDoor(t);
+          break;
+        }
       }
     }
   }
