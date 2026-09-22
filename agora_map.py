@@ -1839,17 +1839,21 @@ function buildRoom(mode){
   });
 
   const wallSpan = HALF - cornerSpan;
-  const wallRun = wallSpan * 2;
+  // Overlap: push straight pieces slightly into the corner pieces so the
+  // different edge profiles (crenellations vs flat cut) don't leave a
+  // visible seam of sky.  ~4 cm is hidden behind the corner geometry.
+  const overlap = cornerSpan * 0.03;
+  const wallRun = (wallSpan + overlap) * 2;
   const actualSeg = wallRun / n;
   const segLen = rawStrLen * SCALE;
   const gateLen = rawGateLen * SCALE;
   const flankLen = (actualSeg - gateLen) / 2;
-  // Mesh is 7.41m along-wall including jambs. Leave a sliver of stone
-  // each side. Walkable slot == the arch you see.
-  gateHalfOpen = Math.max(0.4, gateLen / 2 - 0.08);
+  // Mesh is 7.41m along-wall including jambs. Walkable slot matches the
+  // visible arch opening with minimal stone margin.
+  gateHalfOpen = Math.max(0.4, gateLen / 2 - 0.02);
   function placeRun(axis, fixedCoord, ry, gateIndex) {
     for (let i = 0; i < n; i++) {
-      const t = -wallSpan + i * actualSeg;
+      const t = -(wallSpan + overlap) + i * actualSeg;
       const useGate = i === gateIndex && gateTemplate;
       const straight = (i % 2 === 0 || !strTemplate2) ? strTemplate : strTemplate2;
       let pos;
@@ -2141,22 +2145,24 @@ function buildDoors(doors){
       });
     }
 
-    // Doorway frame at the trigger position. Lifted onto the floor by
-    // bounds.min.y (unchanged) but ALSO centred on its own bounding box
-    // in x/z — the GLTF's authored origin isn't at the footprint's
-    // center once the two door leaves are rotated open, so without this
-    // the visible frame sits offset from (x, z) while the trigger sits
-    // exactly there: a person walks through empty space next to the
-    // door they can see, or bumps into a door they can't reach. Trigger
-    // and frame now share the same center by construction, not by
-    // trusting two separately-written literals to agree.
+    // Doorway frame at the trigger position. Centred on the midpoint
+    // between the two door-leaf hinges (the visual opening you walk
+    // through), not the overall bounding box — the GLTF frame mesh is
+    // asymmetric (~5 cm wider on the left post), so bbox centering
+    // places the visible gap slightly left of the trigger.
     if (peerDoorTemplate) {
       const doorMesh = peerDoorTemplate.clone(true);
       doorMesh.scale.multiplyScalar(S);
       const bounds = new THREE.Box3().setFromObject(doorMesh);
-      const centerX = (bounds.min.x + bounds.max.x) / 2;
+      // Find hinge positions from the door leaf children
+      let hingeL = bounds.min.x, hingeR = bounds.max.x;
+      doorMesh.traverse(o => {
+        if (o.name === 'large_castle_door_left')  hingeL = o.position.x * S;
+        if (o.name === 'large_castle_door_right') hingeR = o.position.x * S;
+      });
+      const openingCenterX = (hingeL + hingeR) / 2;
       const centerZ = (bounds.min.z + bounds.max.z) / 2;
-      doorMesh.position.set(x - centerX, -bounds.min.y, z - centerZ);
+      doorMesh.position.set(x - openingCenterX, -bounds.min.y, z - centerZ);
       doorGroup.add(doorMesh);
     } else {
       const frameGroup = new THREE.Group();
