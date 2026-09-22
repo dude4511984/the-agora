@@ -1884,6 +1884,80 @@ new THREE.GLTFLoader().load('/models/modular_fort_01/modular_fort_01.gltf', (glt
   buildRoom(currentRoomMode);
 }, undefined, (err) => showErr('fort walls failed to load: ' + err.message));
 
+// Frosty-only graffiti on the south wall, beside the exit arch — Don's
+// line, sprayed on stone. Built once and cached (geometry + material +
+// texture), not regenerated on every buildRoom() rebuild: the room
+// rebuilds itself every 15s (see the loadNode() poll below), and a fresh
+// CanvasTexture on each of those would leak GPU memory with nothing ever
+// freeing it, the way the file's other per-rebuild canvas textures
+// already do (labelSprite/captionTexture/placardTexture — none of them
+// dispose either). Same mesh keeps getting re-added to wallGroup each
+// rebuild since the group itself is fully cleared, but nothing new is
+// ever allocated to do it.
+let _graffitiMat = null;
+function graffitiMaterial(){
+  if (_graffitiMat) return _graffitiMat;
+  const TEXT = "We build so we can remember what we needed to forget.";
+  const W = 1536, H = 340;
+  const c = document.createElement('canvas'); c.width = W; c.height = H;
+  const ctx = c.getContext('2d');
+  // A fixed seed, not Math.random() — the graffiti has to look the same
+  // every time the wall rebuilds, not re-roll its wobble every 15s.
+  let seed = 90125;
+  const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
+
+  ctx.clearRect(0, 0, W, H);
+  ctx.textBaseline = 'alphabetic';
+  ctx.font = 'italic bold 72px "Segoe Script", "Comic Sans MS", cursive, sans-serif';
+  const paint = 'rgba(188, 168, 138, 0.85)';
+
+  // Hand-sprayed look out of a plain canvas font: draw glyph by glyph with
+  // baseline wobble, a small per-glyph tilt, and varying alpha, instead of
+  // one flat fillText call.
+  const baseY = H * 0.52;
+  let x = 46;
+  for (const ch of TEXT) {
+    const w = ctx.measureText(ch).width || 6;
+    if (ch !== ' ') {
+      const wobble = (rnd() - 0.5) * 14;
+      const tilt = (rnd() - 0.5) * 0.11;
+      ctx.save();
+      ctx.translate(x + w / 2, baseY + wobble);
+      ctx.rotate(tilt);
+      ctx.fillStyle = paint;
+      ctx.globalAlpha = 0.72 + rnd() * 0.22;
+      ctx.fillText(ch, -w / 2, 0);
+      ctx.restore();
+    }
+    x += w + 2.2;
+  }
+  ctx.globalAlpha = 1;
+
+  // Two short drips off the tails of letters that reach the baseline.
+  [0.30, 0.63].forEach((frac, i) => {
+    const dx = W * frac, dy0 = baseY + 6 + rnd() * 8, dripH = 34 + rnd() * 30;
+    const grad = ctx.createLinearGradient(dx, dy0, dx, dy0 + dripH);
+    grad.addColorStop(0, 'rgba(188,168,138,0.55)');
+    grad.addColorStop(1, 'rgba(188,168,138,0)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(dx, dy0, 3 + (i % 2), dripH);
+  });
+
+  const tex = new THREE.CanvasTexture(c);
+  tex.needsUpdate = true;
+  _graffitiMat = new THREE.MeshBasicMaterial({
+    map: tex,
+    transparent: true,
+    depthWrite: false,
+    polygonOffset: true,
+    polygonOffsetFactor: -4,
+    polygonOffsetUnits: -4
+  });
+  return _graffitiMat;
+}
+const GRAFFITI_ASPECT = 340 / 1536;
+const graffitiGeo = new THREE.PlaneGeometry(4.2, 4.2 * GRAFFITI_ASPECT);
+
 function buildRoom(mode){
   currentRoomMode = mode;
   updateFocalProps(mode);
@@ -2062,6 +2136,28 @@ function buildRoom(mode){
       w2.rotation.y = 0;
       wallGroup.add(w2);
     }
+  }
+
+  // One line of graffiti, Frosty only, on the south wall beside the exit
+  // arch — the first solid stone a visitor passes walking from spawn
+  // toward the peer door. On the wall's courtyard-facing (inward) side,
+  // ~1cm off the wall face (plus polygonOffset in the material) so it
+  // doesn't z-fight the stone behind it.
+  //
+  // WALL_FACE_INSET: the wall segments' real, textured courtyard face
+  // sits 1.037 (measured live via raycast against the built mesh, not
+  // assumed) in front of `HALF`/`currentHalf` — that constant is a
+  // corner-placement reference, not the surface itself, because the wall
+  // template has real depth (battlement + thickness). Placing a decal at
+  // `currentHalf` alone embeds it inside the stone, behind the face a
+  // visitor actually sees; confirmed live, one full rebuild fixed it.
+  if (!isHome) {
+    const WALL_FACE_INSET = 1.037;
+    const graffiti = new THREE.Mesh(graffitiGeo, graffitiMaterial());
+    graffiti.position.set(gateHalfOpen + 2.55, 1.55, currentHalf - WALL_FACE_INSET - 0.01);
+    graffiti.rotation.y = Math.PI;   // face -z, back toward the courtyard/spawn
+    graffiti.rotation.z = -0.035;    // small hand-sprayed tilt, not dead level
+    wallGroup.add(graffiti);
   }
 }
 
