@@ -1486,6 +1486,13 @@ function resolveCollisions(pos, prevX){
 // A real Y-coordinate for the player, unifying jump and elevation.
 // Walking onto the stairs ascends step-by-step; walking along the ramparts
 // holds deck height; stepping off drops with gravity back to the courtyard.
+// Frosty-scale base values — both get multiplied by the current room's
+// roomScale at the point of use (jump-key and gravity-integration below),
+// not baked in here, since the room can change without a page reload.
+// Scaling both by the same factor keeps jump *timing* the same (a scaled
+// g and a scaled v0 both scale time-to-apex by the same amount, which
+// cancels) while the *height* (v0^2/2g) scales by roomScale, same as
+// everything else the visitor stands next to on Home.
 const GRAVITY = -18, JUMP_VELOCITY = 6.5;
 let playerVY = 0;
 let isGrounded = true;
@@ -1494,7 +1501,7 @@ addEventListener('keydown', e => {
   if (e.code === 'Space') {
     e.preventDefault();
     if (isGrounded) {
-      playerVY = JUMP_VELOCITY;
+      playerVY = JUMP_VELOCITY * (lantern.userData.roomScale || 1.0);
       isGrounded = false;
     }
   }
@@ -1629,7 +1636,13 @@ function stepPlayer(dt){
   if (keys['d'] || keys['arrowright']) _move.add(_right);
   if (keys['a'] || keys['arrowleft'])  _move.sub(_right);
   if (_move.lengthSq() > 0) {
-    _move.normalize().multiplyScalar(4.5 * dt);
+    // 4.5 m/s is Frosty-scale. Home's visitor, room, and everything in
+    // it are drawn at roomScale (0.655) — without scaling speed too, the
+    // walker covers the same *absolute* ground per second regardless of
+    // room, which relative to their own (scaled-down) size and Home's
+    // (scaled-down) courtyard is ~1.53x too fast. Same roomScale the
+    // lantern and spirit already use, not a second copy of 6.88/10.5.
+    _move.normalize().multiplyScalar(4.5 * (lantern.userData.roomScale || 1.0) * dt);
     const prevX = player.position.x;
     player.position.add(_move);
     resolveCollisions(player.position, prevX);
@@ -1658,7 +1671,7 @@ function stepPlayer(dt){
     }
   } else {
     // Airborne (jumping or falling)
-    playerVY += GRAVITY * dt;
+    playerVY += GRAVITY * (lantern.userData.roomScale || 1.0) * dt;
     player.position.y += playerVY * dt;
     if (player.position.y <= groundY) {
       player.position.y = groundY;
