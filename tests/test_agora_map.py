@@ -280,7 +280,7 @@ class Agora3DHomeRoomCharacter(unittest.TestCase):
         self.assertIn("function buildRoom(mode)", page)
         self.assertIn("const isHome = mode === 'Home';", page)
         self.assertIn("const HALF = isHome ? 6.88 : 10.5;", page)
-        self.assertIn("const n = isHome ? 3 : 5;", page)
+        self.assertIn("const n = 5;", page)
         self.assertIn("const useTowers = !isHome;", page)
         self.assertIn("const useRamparts = !isHome;", page)
 

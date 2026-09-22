@@ -2003,7 +2003,16 @@ function buildRoom(mode){
   const isHome = mode === 'Home';
   const HALF = isHome ? 6.88 : 10.5;
   currentHalf = HALF;
-  const n = isHome ? 3 : 5;
+  // n=5 on both nodes, on purpose — matching Frosty's segment count is
+  // what lets SCALE (below) fall out to Frosty's own SCALE times S
+  // (Home's 0.655 world ratio). n=3 was tuned to make the module count
+  // divide evenly into Home's smaller perimeter, but the SCALE formula
+  // doesn't know "smaller n" was standing in for "smaller S" — it just
+  // solves for whatever n modules fit the perimeter, so a smaller n
+  // cancelled the scale-down instead of applying it: Home's walls were
+  // measured at Frosty's exact height (2.119m vs the 1.388m S should
+  // give), full-size stone around a scaled-down visitor and courtyard.
+  const n = 5;
   const useTowers = !isHome;
   const useRamparts = !isHome;
 
