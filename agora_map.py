@@ -2203,11 +2203,11 @@ function plaqueMaterial(){
   ctx.fillStyle = DIM; ctx.font = italicFont;
   ctx.fillText('Nodes are for building. The commons is for meeting.', PAD, cy); cy += 40;
 
-  // True today, not aspirational — checked against the live code before
-  // this shipped: no public commons plaza exists yet, so the plaque
-  // doesn't get to claim one. See REPORT_sonnet_boards_doors_plaque.md.
+  // Said "isn't open yet" until the Commons went live on Themess
+  // (2026-09-23). If the Commons is ever taken down, put that line back:
+  // the plaque must not claim a room that doesn't exist.
   ctx.fillStyle = '#a0522d'; ctx.font = 'bold 22px monospace';
-  ctx.fillText("The commons isn't open yet.", PAD, cy);
+  ctx.fillText("Open now, past the north gate.", PAD, cy);
 
   const tex = new THREE.CanvasTexture(c);
   tex.needsUpdate = true;
