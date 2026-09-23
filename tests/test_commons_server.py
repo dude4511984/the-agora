@@ -6,8 +6,10 @@ demonstrated failure with the guard disabled first.
 
 from __future__ import annotations
 
+import http.server
 import json
 import os
+import socket
 import sys
 import tempfile
 import threading
@@ -415,6 +417,70 @@ class CommonsWireTests(unittest.TestCase):
         with self.assertRaises(urllib.error.HTTPError) as cm:
             urllib.request.urlopen(req, timeout=5)
         self.assertEqual(cm.exception.code, 401)
+
+
+class SlowClientDoesNotBlockConcurrentReads(unittest.TestCase):
+    """Hardening item 1: serve() is ThreadingHTTPServer + daemon_threads
+    now, one connection per thread with a bounded per-connection socket
+    timeout, so a slowloris client (Content-Length promised, body never
+    sent) costs one thread, not the board. Demonstrated both ways: the
+    plain single-threaded http.server.HTTPServer really does block a
+    concurrent GET behind the stall, then the real server doesn't.
+    """
+
+    def _serve_with(self, server_cls):
+        db_path, kk_path = _tmp_paths()
+        _write_known(kk_path, [])
+        store = cs.CommonsStore(db_path)
+        known = cs.KnownKeys(kk_path)
+        handler = type("Bound", (cs.CommonsHandler,), {
+            "store": store, "known_keys": known, "limiter": cs._SlidingWindow(),
+            "timeout": 2,  # short, so the test itself stays fast
+        })
+        httpd = server_cls(("127.0.0.1", 0), handler)
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        self.addCleanup(httpd.shutdown)
+        return httpd.server_address[1]
+
+    def _open_stalled_post(self, port):
+        """A real socket: real request line and headers promising a
+        body, then nothing — the slowloris shape, not a re-implementation
+        of one."""
+        sock = socket.create_connection(("127.0.0.1", port), timeout=5)
+        sock.sendall(
+            b"POST /commons/post HTTP/1.1\r\n"
+            b"Host: 127.0.0.1\r\n"
+            b"Content-Length: 8000\r\n"
+            b"Connection: close\r\n"
+            b"\r\n"
+        )
+        self.addCleanup(sock.close)
+        return sock
+
+    def test_disabled_single_threaded_server_lets_a_stall_block_a_get(self):
+        port = self._serve_with(http.server.HTTPServer)
+        self._open_stalled_post(port)
+        start = time.monotonic()
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/commons/posts", timeout=5) as r:
+            r.read()
+        elapsed = time.monotonic() - start
+        # The GET only completes once the stalled connection's own
+        # timeout frees the single worker thread — that's the bug.
+        self.assertGreater(elapsed, 1.5)
+
+    def test_threaded_server_serves_a_concurrent_get_immediately(self):
+        port = self._serve_with(cs._Server)
+        self._open_stalled_post(port)
+        start = time.monotonic()
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/commons/posts", timeout=5) as r:
+            r.read()
+        elapsed = time.monotonic() - start
+        self.assertLess(elapsed, 1.0)
+
+    def test_server_is_threading_with_daemon_threads(self):
+        self.assertTrue(issubclass(cs._Server, http.server.ThreadingHTTPServer))
+        self.assertTrue(cs._Server.daemon_threads)
+        self.assertEqual(cs.CommonsHandler.timeout, 10)
 
 
 if __name__ == "__main__":

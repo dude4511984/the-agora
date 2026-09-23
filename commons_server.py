@@ -28,7 +28,7 @@ import threading
 import time
 import unicodedata
 import uuid
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from kin_diary.agora.node import AgoraError
@@ -288,6 +288,13 @@ class CommonsHandler(BaseHTTPRequestHandler):
     known_keys: KnownKeys = None
     limiter: "_SlidingWindow" = None
     server_version = "commons/1"
+    # A slow/stalled client (Content-Length: 8000, a trickle of bytes)
+    # blocks the thread reading it, not the server — serve() runs
+    # ThreadingHTTPServer, one thread per connection. This timeout
+    # (StreamRequestHandler.setup() applies it via socket.settimeout())
+    # bounds how long that one thread waits before the read gives up,
+    # so a slowloris client costs one thread for 10s, never the board.
+    timeout = 10
 
     def log_message(self, fmt, *args):
         pass
@@ -306,7 +313,14 @@ class CommonsHandler(BaseHTTPRequestHandler):
             raise CommonsError("empty body")
         if n > MAX_BODY_BYTES:
             raise CommonsError(f"body too large (max {MAX_BODY_BYTES} bytes)")
-        return self.rfile.read(n)
+        try:
+            return self.rfile.read(n)
+        except TimeoutError:
+            # A trickling client (slowloris): the socket timeout fired
+            # mid-read. Turn it into an ordinary 400 rather than an
+            # unhandled exception — the thread that was waiting on this
+            # one connection is the only cost, never the board.
+            raise CommonsError("client stopped sending data")
 
     def _optional_body(self) -> bytes:
         """For the opt-out/opt-in actions, which carry no payload — the
@@ -315,7 +329,12 @@ class CommonsHandler(BaseHTTPRequestHandler):
         n = int(self.headers.get("Content-Length") or 0)
         if n > MAX_BODY_BYTES:
             raise CommonsError(f"body too large (max {MAX_BODY_BYTES} bytes)")
-        return self.rfile.read(n) if n > 0 else b""
+        if n <= 0:
+            return b""
+        try:
+            return self.rfile.read(n)
+        except TimeoutError:
+            raise CommonsError("client stopped sending data")
 
     def do_GET(self):
         if self.path == "/commons/posts":
@@ -408,11 +427,18 @@ class CommonsHandler(BaseHTTPRequestHandler):
         self._send(201, {"id": post_id})
 
 
+class _Server(ThreadingHTTPServer):
+    # One connection per thread, daemonized so a thread stuck in a slow
+    # read (up to CommonsHandler.timeout) never keeps the process alive
+    # on its own and never blocks any other connection's thread.
+    daemon_threads = True
+
+
 def serve(store, known_keys, host="127.0.0.1", port=8781):
     handler = type("Bound", (CommonsHandler,), {
         "store": store, "known_keys": known_keys, "limiter": _SlidingWindow(),
     })
-    return HTTPServer((host, port), handler)
+    return _Server((host, port), handler)
 
 
 if __name__ == "__main__":
