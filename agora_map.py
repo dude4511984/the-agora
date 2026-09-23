@@ -63,6 +63,17 @@ PRESET_NODES = [
 FETCH_TIMEOUT = 5
 MAP_KEY_AUTHOR = "Marvin"
 
+# The Commons (commons_server.py / SPEC_commons.md) — a public ad board
+# outside every node. NOT kin_commons (COMMONS_DB above, the Kin's own
+# private board): different thing, deliberately named "public_commons"
+# throughout this file so the two never get confused in code or logs.
+# Reading needs no key — a plain GET, same as any other public asset.
+PUBLIC_COMMONS_URL = os.environ.get("PUBLIC_COMMONS_URL", "http://127.0.0.1:8781")
+PUBLIC_COMMONS_FALLBACK_LABEL = (
+    "UNSAFE. Open to anyone, nothing here is verified. Ads only — what "
+    "you're working on, why, how to ask in. Never the artifact itself."
+)
+
 
 def _map_key():
     """The map is an authorized reader, never an anonymous proxy."""
@@ -174,6 +185,29 @@ def _kin_intent() -> dict:
             except Exception:
                 continue
     return out
+
+
+def _public_commons_ads() -> dict:
+    """GET /commons/posts off The Commons — public, no key needed, a
+    completely different service from kin_commons (see PUBLIC_COMMONS_URL's
+    own comment). Same graceful-failure rule as _recent_commons() /
+    _kin_intent(): the plaza is a nice-to-have overlay on the 3D room, never
+    something the room's own rendering depends on, so any failure here
+    (Commons not running, network down) returns the label alone with an
+    empty post list rather than raising.
+    """
+    fallback = {"label": PUBLIC_COMMONS_FALLBACK_LABEL, "posts": []}
+    try:
+        req = urllib.request.Request(
+            PUBLIC_COMMONS_URL.rstrip("/") + "/commons/posts",
+            headers={"User-Agent": "agora-map/1"})
+        with urllib.request.urlopen(req, timeout=FETCH_TIMEOUT) as resp:
+            data = json.loads(resp.read(512 * 1024).decode())
+    except Exception:
+        return fallback
+    if not isinstance(data, dict) or not isinstance(data.get("posts"), list):
+        return fallback
+    return data
 
 
 PAGE = """<!doctype html>
@@ -2199,6 +2233,191 @@ function buildPlaque(){
   return group;
 }
 
+// The public Commons plaza — SPEC_commons.md step 3, round 2 item 3.
+// Frosty only, out past the new north gate on Gem's holodeck grid.
+// Ad content changes independently of buildRoom()'s own rebuild cadence
+// (which only fires on an actual node switch, not every tick), so this
+// lives in its own persistent group, added to the scene once and only
+// ever updated in place — never cleared the way wallGroup is.
+const publicCommonsGroup = new THREE.Group();
+publicCommonsGroup.visible = false;
+scene.add(publicCommonsGroup);
+let publicCommonsAds = {label: '', posts: []};
+
+function shortKey(k){ return (k || '').slice(0, 8) + (k ? '…' : ''); }
+
+// The UNSAFE plate at the gate, inside the courtyard so a visitor reads
+// it before stepping through — informed consent, not a warning read on
+// the way out. Rebuilt only when the label text itself changes.
+let _plateMat = null, _plateAspect = null, _plateLabelText = null;
+function plateMaterial(labelText){
+  if (_plateMat && _plateLabelText === labelText) return {mat: _plateMat, aspect: _plateAspect};
+  if (_plateMat) { _plateMat.map.dispose(); _plateMat.dispose(); }
+  const W = 760, PAD = 42;
+  const c = document.createElement('canvas'); c.width = W; c.height = 400;
+  const ctx = c.getContext('2d');
+  ctx.font = '24px monospace';
+  const bodyLines = _wrapLines(ctx, labelText, W - PAD * 2, 6);
+  const LINE_H = 32;
+  const H = PAD * 2 + 60 + bodyLines.length * LINE_H;
+  c.height = H;
+  ctx.fillStyle = '#241a14'; ctx.fillRect(0, 0, W, H);
+  ctx.strokeStyle = '#c8781f'; ctx.lineWidth = 8; ctx.strokeRect(4, 4, W - 8, H - 8);
+  ctx.textBaseline = 'top'; ctx.textAlign = 'left';
+  let cy = PAD - 10;
+  ctx.fillStyle = '#ff9a3d'; ctx.font = 'bold 46px monospace';
+  ctx.fillText('UNSAFE', PAD, cy); cy += 60;
+  ctx.fillStyle = '#d8cfc0'; ctx.font = '24px monospace';
+  bodyLines.forEach(ln => { ctx.fillText(ln, PAD, cy); cy += LINE_H; });
+  const tex = new THREE.CanvasTexture(c);
+  tex.needsUpdate = true;
+  _plateMat = new THREE.MeshBasicMaterial({map: tex, transparent: true});
+  _plateAspect = H / W;
+  _plateLabelText = labelText;
+  return {mat: _plateMat, aspect: _plateAspect};
+}
+const PLATE_W = 2.9;
+const platePostMat = new THREE.MeshStandardMaterial({color: 0x3a3630, roughness: 0.9});
+const PLATE_BOARD_BOTTOM_Y = 1.1;
+const platePostGeo = new THREE.BoxGeometry(0.14, PLATE_BOARD_BOTTOM_Y + 0.05, 0.14);
+let _plateGeoAspect = null, _plateGeo = null;
+function buildPlate(labelText){
+  const {mat, aspect} = plateMaterial(labelText);
+  if (!_plateGeo || _plateGeoAspect !== aspect) {
+    if (_plateGeo) _plateGeo.dispose();
+    _plateGeo = new THREE.PlaneGeometry(PLATE_W, PLATE_W * aspect);
+    _plateGeoAspect = aspect;
+  }
+  const group = new THREE.Group();
+  const boardH = PLATE_W * aspect;
+  const board = new THREE.Mesh(_plateGeo, mat);
+  board.position.set(0, PLATE_BOARD_BOTTOM_Y + boardH / 2, 0);
+  // Default rotation (normal +z): visible to a visitor standing further
+  // south, inside the courtyard, looking north toward the gate — read
+  // before crossing, not after.
+  group.add(board);
+  const half = PLATE_W * 0.42;
+  [-half, half].forEach(px => {
+    const post = new THREE.Mesh(platePostGeo, platePostMat);
+    post.position.set(px, (PLATE_BOARD_BOTTOM_Y + 0.05) / 2, 0);
+    group.add(post);
+  });
+  return group;
+}
+
+// Ad boards: one per live post, capped so the plaza never costs more
+// draw calls than a handful of boards regardless of how many ads exist
+// (the onn tablet is the test). Cached by post id + a content signature,
+// so a rebuild only touches boards whose ad actually changed, and stale
+// entries (post expired/hidden/scrolled out of the cap) are disposed,
+// not just dropped — the same geometry-leak discipline as the graffiti
+// and plaque work.
+const AD_BOARD_MAX = 4;
+const AD_BOARD_W = 1.7;
+const adBoardGeo = new THREE.PlaneGeometry(AD_BOARD_W, AD_BOARD_W * 0.72);
+const adPostMat = new THREE.MeshStandardMaterial({color: 0x33302a, roughness: 0.9});
+const adPostGeo = new THREE.BoxGeometry(0.1, 0.85, 0.1);
+const _adBoardCache = new Map(); // post.id -> {sig, mesh, mat}
+
+function _adSignature(p){ return p.what + '\\u0001' + p.why + '\\u0001' + p.how_to_ask; }
+
+function _buildAdTexture(p){
+  const W = 620, PAD = 30;
+  const c = document.createElement('canvas'); c.width = W; c.height = 360;
+  const ctx = c.getContext('2d');
+  ctx.font = 'bold 28px monospace';
+  const whatLines = _wrapLines(ctx, p.what, W - PAD * 2, 2);
+  ctx.font = '22px monospace';
+  const whyLines = _wrapLines(ctx, p.why, W - PAD * 2, 5);
+  ctx.font = 'italic 20px monospace';
+  const howLines = _wrapLines(ctx, 'ask: ' + p.how_to_ask, W - PAD * 2, 3);
+  const LINE_H1 = 34, LINE_H2 = 28, LINE_H3 = 26;
+  const H = PAD * 2 + whatLines.length * LINE_H1 + 14
+          + whyLines.length * LINE_H2 + 14
+          + howLines.length * LINE_H3 + 40;
+  c.height = H;
+  ctx.fillStyle = '#1c1c1c'; ctx.fillRect(0, 0, W, H);
+  ctx.strokeStyle = '#5a5a5a'; ctx.lineWidth = 4; ctx.strokeRect(2, 2, W - 4, H - 4);
+  ctx.textBaseline = 'top'; ctx.textAlign = 'left';
+  let cy = PAD;
+  ctx.fillStyle = '#f0e6d2'; ctx.font = 'bold 28px monospace';
+  whatLines.forEach(ln => { ctx.fillText(ln, PAD, cy); cy += LINE_H1; });
+  cy += 14;
+  ctx.fillStyle = '#c8c0b0'; ctx.font = '22px monospace';
+  whyLines.forEach(ln => { ctx.fillText(ln, PAD, cy); cy += LINE_H2; });
+  cy += 14;
+  ctx.fillStyle = '#9a8f78'; ctx.font = 'italic 20px monospace';
+  howLines.forEach(ln => { ctx.fillText(ln, PAD, cy); cy += LINE_H3; });
+  cy += 8;
+  ctx.fillStyle = '#b05a2a'; ctx.font = '18px monospace';
+  ctx.fillText('unverified · key ' + shortKey(p.key_id), PAD, cy);
+  const tex = new THREE.CanvasTexture(c);
+  tex.needsUpdate = true;
+  return {mat: new THREE.MeshBasicMaterial({map: tex, transparent: true}), aspect: H / W};
+}
+
+function _disposeAdEntry(entry){
+  entry.mat.map.dispose();
+  entry.mat.dispose();
+  entry.mesh.geometry.dispose();
+}
+
+function updatePublicCommonsPlaza(){
+  const onFrosty = currentRoomMode !== 'Home';
+  publicCommonsGroup.visible = onFrosty;
+  if (!onFrosty) return;
+
+  publicCommonsGroup.children.slice().forEach(c => publicCommonsGroup.remove(c));
+
+  const plate = buildPlate(publicCommonsAds.label || 'UNSAFE. Open to anyone, nothing here is verified.');
+  // Just past the wall line, not inside the courtyard: the courtyard's
+  // own kiosk arc (buildPlaces(), one per live place) is real, dynamic
+  // content that can occupy anywhere out to about z=-7 depending on how
+  // many places exist — a fixed courtyard position risks colliding with
+  // it under different live data. Right at the threshold is clear of
+  // that arc by construction (kiosks live inside the wall) and still
+  // reads before a visitor is more than a step past the gate.
+  // z=-10.9 (right at the wall line) put the board inside the gate's
+  // own archway depth, mostly hidden behind the stone — measured live
+  // via screenshot, the same lesson the graffiti work already learned
+  // about wall-face depth. Clear of the arch at z=-13, still the first
+  // thing visible stepping through onto the grid.
+  plate.position.set(-1.2, 0, -13.0);
+  plate.rotation.y = 0.3; // angled slightly back toward the gate
+  publicCommonsGroup.add(plate);
+
+  const live = (publicCommonsAds.posts || []).filter(p => !p.hidden && p.what);
+  const shown = live.slice(0, AD_BOARD_MAX);
+  const keepIds = new Set(shown.map(p => p.id));
+  for (const [id, entry] of _adBoardCache) {
+    if (!keepIds.has(id)) { _disposeAdEntry(entry); _adBoardCache.delete(id); }
+  }
+
+  const BOARD_Z = -17.5, SPACING = 2.3;
+  const startX = -((shown.length - 1) * SPACING) / 2;
+  shown.forEach((p, i) => {
+    const sig = _adSignature(p);
+    let entry = _adBoardCache.get(p.id);
+    if (!entry || entry.sig !== sig) {
+      if (entry) _disposeAdEntry(entry);
+      const {mat, aspect} = _buildAdTexture(p);
+      const geo = new THREE.PlaneGeometry(AD_BOARD_W, AD_BOARD_W * aspect);
+      const mesh = new THREE.Mesh(geo, mat);
+      entry = {sig, mat, mesh};
+      _adBoardCache.set(p.id, entry);
+    }
+    const group = new THREE.Group();
+    const boardH = entry.mesh.geometry.parameters.height;
+    entry.mesh.position.set(0, 0.85 + boardH / 2, 0);
+    group.add(entry.mesh);
+    const post = new THREE.Mesh(adPostGeo, adPostMat);
+    post.position.set(0, 0.42, 0);
+    group.add(post);
+    group.position.set(startX + i * SPACING, 0, BOARD_Z);
+    publicCommonsGroup.add(group);
+  });
+}
+
 function buildRoom(mode){
   currentRoomMode = mode;
   updateFocalProps(mode);
@@ -2357,6 +2576,18 @@ function buildRoom(mode){
           } else {
             wallObstacles.push({x: t + actualSeg * 0.5, z: pos.z, r: actualSeg * 0.55});
           }
+        } else if (axis === 'x' && fixedCoord === -HALF) {
+          // The north gate to the public Commons plaza (Frosty only,
+          // gateIndex undefined elsewhere so this never triggers there) —
+          // same tighter flanking radius the south gate uses, so the
+          // collision circle doesn't intrude into the opening.
+          if (i === gateIndex - 1) {
+            wallObstacles.push({x: t + actualSeg * 0.35, z: pos.z, r: actualSeg * 0.45});
+          } else if (i === gateIndex + 1) {
+            wallObstacles.push({x: t + actualSeg * 0.65, z: pos.z, r: actualSeg * 0.45});
+          } else {
+            wallObstacles.push({x: t + actualSeg * 0.5, z: pos.z, r: actualSeg * 0.55});
+          }
         } else if (axis === 'z' && fixedCoord === -HALF) {
           if (!useRamparts || i < 2) {
             wallObstacles.push({x: pos.x, z: t + actualSeg * 0.5, r: actualSeg * 0.55});
@@ -2373,7 +2604,12 @@ function buildRoom(mode){
   }
 
   const gateSlot = Math.floor(n / 2);
-  placeRun('x', -HALF, -Math.PI / 2);
+  // North gate, Frosty only — the public Commons plaza sits out past it
+  // on the holodeck grid. Same gateSlot index as the south gate, which
+  // is what makes the hardcoded x=-gateLen/2 centering in the useGate
+  // branch land on x=0 here too (only true for n odd — see the n=4
+  // history above; n stays 5 for both walls).
+  placeRun('x', -HALF, -Math.PI / 2, isHome ? undefined : gateSlot);
   placeRun('x',  HALF,  Math.PI / 2, gateSlot);
   placeRun('z', -HALF,  0);
   placeRun('z',  HALF,  Math.PI);
@@ -3018,13 +3254,18 @@ async function loadNode(){
     buildRoom(earlyRoomType);
   }
   try {
-    const [root, view, recentByAuthor, intents] = await Promise.all([
+    const [root, view, recentByAuthor, intents, publicAds] = await Promise.all([
       fetch('/proxy?what=root&node=' + encodeURIComponent(node)).then(r => r.json()),
       fetch('/proxy?node=' + encodeURIComponent(node)).then(r => r.json()),
       fetch('/commons-recent').then(r => r.json()).catch(() => ({})),
       fetch('/kin-intent').then(r => r.json()).catch(() => ({})),
+      fetch('/public-commons-ads').then(r => r.json()).catch(() => null),
     ]);
     if (intents && typeof intents === 'object') kinIntents = intents;
+    if (publicAds && typeof publicAds === 'object' && Array.isArray(publicAds.posts)) {
+      publicCommonsAds = publicAds;
+    }
+    updatePublicCommonsPlaza();
     if (view.error) throw new Error(view.error);
 
     // root.node is the destination's own signed name — the actual
@@ -3813,6 +4054,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         if route == "/kin-intent":
             self._send(200, json.dumps(_kin_intent()).encode(), "application/json")
+            return
+        if route == "/public-commons-ads":
+            self._send(200, json.dumps(_public_commons_ads()).encode(), "application/json")
             return
         if self.path.startswith("/proxy"):
             q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)

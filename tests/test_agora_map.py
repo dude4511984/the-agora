@@ -447,5 +447,119 @@ class PublicCourtyardMode(unittest.TestCase):
         self.assertEqual(h.code, 403)
 
 
+class PublicCommonsPlaza(unittest.TestCase):
+    """The Commons round 2 item 3: a north gate to a labelled plaza out on
+    Gem's holodeck grid, Frosty only, reading commons_server.py's ads
+    through this file's own /public-commons-ads proxy — a different
+    service from kin_commons (COMMONS_DB), deliberately named
+    "public_commons" throughout so the two are never confused.
+    """
+
+    def test_public_commons_ads_fetches_and_returns_the_real_shape(self):
+        import http.server
+        import json
+        import threading
+
+        posts = [{"id": "abc", "what": "w", "why": "y", "how_to_ask": "h",
+                  "key_id": "k" * 10, "posted_at_unix_ms": 1, "expires_at_unix_ms": 2,
+                  "hidden": None}]
+        payload = json.dumps({"label": "UNSAFE test label", "posts": posts}).encode()
+
+        class FakeCommons(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *a): pass
+            def do_GET(self):
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+
+        httpd = http.server.HTTPServer(("127.0.0.1", 0), FakeCommons)
+        port = httpd.server_address[1]
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        try:
+            with patch.object(agora_map, "PUBLIC_COMMONS_URL", f"http://127.0.0.1:{port}"):
+                self.assertEqual(agora_map._public_commons_ads(),
+                                  {"label": "UNSAFE test label", "posts": posts})
+        finally:
+            httpd.shutdown()
+
+    def test_public_commons_ads_falls_back_when_unreachable(self):
+        """Same graceful-failure rule as _recent_commons() / _kin_intent():
+        Commons not running is a nice-to-have overlay missing, never an
+        error the 3D room's rendering has to handle."""
+        with patch.object(agora_map, "PUBLIC_COMMONS_URL", "http://127.0.0.1:1"):
+            self.assertEqual(agora_map._public_commons_ads(),
+                              {"label": agora_map.PUBLIC_COMMONS_FALLBACK_LABEL, "posts": []})
+
+    def test_public_commons_ads_falls_back_on_malformed_response(self):
+        import http.server
+        import threading
+
+        class BadCommons(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *a): pass
+            def do_GET(self):
+                body = b'{"not": "the right shape"}'
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+        httpd = http.server.HTTPServer(("127.0.0.1", 0), BadCommons)
+        port = httpd.server_address[1]
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        try:
+            with patch.object(agora_map, "PUBLIC_COMMONS_URL", f"http://127.0.0.1:{port}"):
+                self.assertEqual(agora_map._public_commons_ads(),
+                                  {"label": agora_map.PUBLIC_COMMONS_FALLBACK_LABEL, "posts": []})
+        finally:
+            httpd.shutdown()
+
+    def test_public_commons_ads_route_serves_the_fetch_result(self):
+        class MockHandler:
+            def __init__(self, path):
+                self.path = path
+                self.code = None
+                self.body = None
+                self.ctype = None
+            def _send(self, code, body, ctype):
+                self.code = code
+                self.body = body
+                self.ctype = ctype
+
+        fake = {"label": "x", "posts": []}
+        with patch.object(agora_map, "_public_commons_ads", lambda: fake):
+            h = MockHandler("/public-commons-ads")
+            agora_map.Handler.do_GET(h)
+        self.assertEqual(h.code, 200)
+        self.assertEqual(h.ctype, "application/json")
+        import json
+        self.assertEqual(json.loads(h.body.decode("utf-8")), fake)
+
+    def test_page_3d_opens_a_gate_in_the_north_wall_frosty_only(self):
+        page = agora_map.PAGE_3D
+        self.assertIn(
+            "placeRun('x', -HALF, -Math.PI / 2, isHome ? undefined : gateSlot);", page)
+        # The south gate (unconditional) must be untouched by this change.
+        self.assertIn("placeRun('x',  HALF,  Math.PI / 2, gateSlot);", page)
+
+    def test_page_3d_defines_the_plaza_group_and_update_function(self):
+        page = agora_map.PAGE_3D
+        self.assertIn("const publicCommonsGroup = new THREE.Group();", page)
+        self.assertIn("function updatePublicCommonsPlaza()", page)
+        self.assertIn("publicCommonsGroup.visible = onFrosty;", page)
+        self.assertIn("const AD_BOARD_MAX = 4;", page)
+
+    def test_page_3d_fetches_ads_every_loadnode_tick(self):
+        page = agora_map.PAGE_3D
+        self.assertIn("fetch('/public-commons-ads')", page)
+        self.assertIn("updatePublicCommonsPlaza();", page)
+
+    def test_holodeck_fog_uses_the_measured_horizon_color_not_dusk_fog(self):
+        page = agora_map.PAGE_3D
+        self.assertIn("uFogColor:    { value: new THREE.Color(HOLODECK_HORIZON_COLOR) },", page)
+        self.assertNotIn("uFogColor:    { value: new THREE.Color(DUSK_FOG) },", page)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
