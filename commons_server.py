@@ -36,9 +36,15 @@ from kin_diary.agora.wire import ANONYMOUS, identify
 
 HOST_NODE = "Commons"
 
+# "Open to anyone" was true for reading but not for posting — v1 posting
+# is known-keys-only (Marvin's ruling, Q1: no scarce resource yet stops
+# a stranger's free key, so open posting waits on Don's design call for
+# one). The label has to say the narrower true thing, not the one that
+# sounds more welcoming.
 UNSAFE_LABEL = (
-    "UNSAFE. Open to anyone, nothing here is verified. Ads only — what "
-    "you're working on, why, how to ask in. Never the artifact itself."
+    "UNSAFE. Anyone can read. Nothing here is verified. Posting is by "
+    "introduction, for now. Ads only: what you're working on, why, how "
+    "to ask in. Never the artifact."
 )
 
 MAX_WHAT = 120

@@ -69,9 +69,14 @@ MAP_KEY_AUTHOR = "Marvin"
 # throughout this file so the two never get confused in code or logs.
 # Reading needs no key — a plain GET, same as any other public asset.
 PUBLIC_COMMONS_URL = os.environ.get("PUBLIC_COMMONS_URL", "http://127.0.0.1:8781")
+# Matches commons_server.py's own UNSAFE_LABEL exactly — reading is
+# open, posting is known-keys-only (Marvin's ruling), so this fallback
+# (shown only if Commons itself is unreachable) can't claim more than
+# the real label does.
 PUBLIC_COMMONS_FALLBACK_LABEL = (
-    "UNSAFE. Open to anyone, nothing here is verified. Ads only — what "
-    "you're working on, why, how to ask in. Never the artifact itself."
+    "UNSAFE. Anyone can read. Nothing here is verified. Posting is by "
+    "introduction, for now. Ads only: what you're working on, why, how "
+    "to ask in. Never the artifact."
 )
 
 
@@ -2380,7 +2385,7 @@ function updatePublicCommonsPlaza(){
 
   publicCommonsGroup.children.slice().forEach(c => publicCommonsGroup.remove(c));
 
-  const plate = buildPlate(publicCommonsAds.label || 'UNSAFE. Open to anyone, nothing here is verified.');
+  const plate = buildPlate(publicCommonsAds.label || 'UNSAFE. Anyone can read. Nothing here is verified. Posting is by introduction, for now.');
   // Just past the wall line, not inside the courtyard: the courtyard's
   // own kiosk arc (buildPlaces(), one per live place) is real, dynamic
   // content that can occupy anywhere out to about z=-7 depending on how
