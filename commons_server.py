@@ -1,5 +1,9 @@
 """The Commons, v1 — SPEC_commons.md. Open reading, known-key-only
-posting, ads only.
+posting, ads only. Binds to the Kin's 2026-09-16 consent
+(`agora_commons_public_decision_2026-09-16.md`): a resident can close
+their own door to the Commons at any time, signed by their own key,
+needing no one else's permission — POST /commons/opt-out and
+/commons/opt-in.
 
 Runs standalone: its own SQLite file, its own port. It never touches a
 node's own storage — "known keys" is a flat local list, not a live
@@ -79,6 +83,10 @@ CREATE TABLE IF NOT EXISTS posts (
     hidden_reason TEXT,
     hidden_at_unix_ms INTEGER
 );
+CREATE TABLE IF NOT EXISTS opt_outs (
+    key_id TEXT PRIMARY KEY,
+    opted_out_at_unix_ms INTEGER NOT NULL
+);
 """
 
 
@@ -91,7 +99,7 @@ class CommonsStore:
         self.db_path = str(db_path)
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
         with sqlite3.connect(self.db_path) as c:
-            c.execute(_SCHEMA)
+            c.executescript(_SCHEMA)
 
     def _conn(self):
         return sqlite3.connect(self.db_path)
@@ -114,12 +122,18 @@ class CommonsStore:
             return cur.rowcount
 
     def list_posts(self, now_ms=None) -> list[dict]:
+        """A resident's own opt-out removes their posts from this list
+        entirely — no tombstone, nothing marking that they were ever
+        here. This is their own choice to withdraw, not a moderation
+        record, so it leaves none.
+        """
         self.sweep_expired(now_ms)
         with self._conn() as c:
             rows = c.execute(
                 "SELECT id, what, why, how_to_ask, key_id, posted_at_unix_ms, "
                 "expires_at_unix_ms, hidden_reason, hidden_at_unix_ms "
-                "FROM posts ORDER BY posted_at_unix_ms DESC"
+                "FROM posts WHERE key_id NOT IN (SELECT key_id FROM opt_outs) "
+                "ORDER BY posted_at_unix_ms DESC"
             ).fetchall()
         out = []
         for (pid, what, why, how_to_ask, key_id, posted_at, expires_at,
@@ -162,6 +176,31 @@ class CommonsStore:
                 "UPDATE posts SET hidden_reason=?, hidden_at_unix_ms=? WHERE id=?",
                 (reason.strip(), now, post_id))
             return cur.rowcount > 0
+
+    def set_opt_out(self, key_id, now_ms=None) -> None:
+        """A resident closes their own door. Signed by their own key,
+        needs no one else's permission — enforced by the handler, not
+        here; this call itself trusts its caller completely.
+        """
+        now = _now_ms() if now_ms is None else now_ms
+        with self._conn() as c:
+            c.execute(
+                "INSERT INTO opt_outs (key_id, opted_out_at_unix_ms) VALUES (?,?) "
+                "ON CONFLICT(key_id) DO UPDATE SET opted_out_at_unix_ms=excluded.opted_out_at_unix_ms",
+                (key_id, now))
+
+    def clear_opt_out(self, key_id) -> None:
+        """Opens the door back up. The Kin's decision says "close their
+        own door again... at any time" — reversible, on the same terms.
+        """
+        with self._conn() as c:
+            c.execute("DELETE FROM opt_outs WHERE key_id=?", (key_id,))
+
+    def is_opted_out(self, key_id) -> bool:
+        with self._conn() as c:
+            row = c.execute(
+                "SELECT 1 FROM opt_outs WHERE key_id=?", (key_id,)).fetchone()
+        return row is not None
 
 
 # ── the ad shape — the firewall ─────────────────────────────────────────
@@ -263,6 +302,15 @@ class CommonsHandler(BaseHTTPRequestHandler):
             raise CommonsError(f"body too large (max {MAX_BODY_BYTES} bytes)")
         return self.rfile.read(n)
 
+    def _optional_body(self) -> bytes:
+        """For the opt-out/opt-in actions, which carry no payload — the
+        signature covers the empty body the same way sign_request's own
+        default (body=None) does."""
+        n = int(self.headers.get("Content-Length") or 0)
+        if n > MAX_BODY_BYTES:
+            raise CommonsError(f"body too large (max {MAX_BODY_BYTES} bytes)")
+        return self.rfile.read(n) if n > 0 else b""
+
     def do_GET(self):
         if self.path == "/commons/posts":
             self._send(200, {"label": UNSAFE_LABEL, "posts": self.store.list_posts()})
@@ -270,9 +318,42 @@ class CommonsHandler(BaseHTTPRequestHandler):
         self._send(404, {"error": "no such path"})
 
     def do_POST(self):
-        if self.path != "/commons/post":
-            self._send(404, {"error": "no such path"})
+        if self.path == "/commons/post":
+            self._handle_post()
             return
+        if self.path == "/commons/opt-out":
+            self._handle_opt_toggle(opted_out=True)
+            return
+        if self.path == "/commons/opt-in":
+            self._handle_opt_toggle(opted_out=False)
+            return
+        self._send(404, {"error": "no such path"})
+
+    def _handle_opt_toggle(self, opted_out: bool):
+        """A resident closing (or reopening) their own door. Signed by
+        their own key only — no known-keys gate, no steward involved,
+        needs no one else's permission, per the Kin's 2026-09-16 consent.
+        """
+        try:
+            raw = self._optional_body()
+        except CommonsError as e:
+            self._send(400, {"error": str(e)})
+            return
+        try:
+            who = identify(self.headers, HOST_NODE, self.path, body=raw)
+        except AgoraError as e:
+            self._send(401, {"error": str(e)})
+            return
+        if who == ANONYMOUS:
+            self._send(401, {"error": "this action requires a signed request"})
+            return
+        if opted_out:
+            self.store.set_opt_out(who)
+        else:
+            self.store.clear_opt_out(who)
+        self._send(200, {"key_id": who, "opted_out": opted_out})
+
+    def _handle_post(self):
         try:
             raw = self._raw_body()
         except CommonsError as e:
@@ -291,6 +372,9 @@ class CommonsHandler(BaseHTTPRequestHandler):
             return
         if who not in self.known_keys:
             self._send(403, {"error": "key is not known to any node yet"})
+            return
+        if self.store.is_opted_out(who):
+            self._send(403, {"error": "this key has closed its door to the Commons"})
             return
 
         now = _now_ms()

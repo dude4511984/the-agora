@@ -328,6 +328,94 @@ class CommonsWireTests(unittest.TestCase):
         self._post_expect(base, body, h, 403)
         self.assertEqual(len(store.list_posts()), 1)
 
+    # ── per-resident opt-out ─────────────────────────────────────────
+
+    def _toggle(self, base, path, headers=None):
+        req = urllib.request.Request(f"{base}{path}", data=b"",
+                                      headers=headers or {}, method="POST")
+        return urllib.request.urlopen(req, timeout=5)
+
+    def test_opted_out_key_cannot_post(self):
+        """Disabled: post before the opt-out lands, showing it would
+        otherwise succeed. Then opt out with the resident's own key and
+        show the identical post refused. That is the guard.
+        """
+        k = key("Resident")
+        _, base, store, _ = self._serve([k.key_id])
+        body = json.dumps({"what": "a", "why": "b", "how_to_ask": "c"}).encode()
+        h = sign_request(k, cs.HOST_NODE, "/commons/post", body=body)
+        with self._post(base, body, h):
+            pass
+        self.assertEqual(len(store.list_posts()), 1)
+
+        oh = sign_request(k, cs.HOST_NODE, "/commons/opt-out", body=b"")
+        with self._toggle(base, "/commons/opt-out", oh) as r:
+            self.assertEqual(json.load(r), {"key_id": k.key_id, "opted_out": True})
+
+        h2 = sign_request(k, cs.HOST_NODE, "/commons/post", body=body)
+        self._post_expect(base, body, h2, 403)
+
+    def test_opted_out_residents_posts_are_filtered_not_shown(self):
+        k = key("Resident2")
+        _, base, store, _ = self._serve([k.key_id])
+        store.insert_post(k.key_id, "what", "why", "how")
+        self.assertEqual(len(store.list_posts()), 1)
+
+        oh = sign_request(k, cs.HOST_NODE, "/commons/opt-out", body=b"")
+        with self._toggle(base, "/commons/opt-out", oh):
+            pass
+        self.assertEqual(store.list_posts(), [])
+
+    def test_opt_in_reverses_opt_out(self):
+        k = key("Resident3")
+        _, base, store, _ = self._serve([k.key_id])
+        store.insert_post(k.key_id, "what", "why", "how")
+
+        oh = sign_request(k, cs.HOST_NODE, "/commons/opt-out", body=b"")
+        with self._toggle(base, "/commons/opt-out", oh):
+            pass
+        self.assertEqual(store.list_posts(), [])
+
+        ih = sign_request(k, cs.HOST_NODE, "/commons/opt-in", body=b"")
+        with self._toggle(base, "/commons/opt-in", ih) as r:
+            self.assertEqual(json.load(r), {"key_id": k.key_id, "opted_out": False})
+        self.assertEqual(len(store.list_posts()), 1)
+
+    def test_opt_out_needs_no_ones_permission_not_even_known_keys(self):
+        """A key that has never posted, and isn't in known_keys at all,
+        can still close its own door — this isn't gated on being a
+        recognised poster, only on proving it owns the key."""
+        k = key("NeverIntroduced")
+        _, base, store, _ = self._serve([])  # nobody known
+        oh = sign_request(k, cs.HOST_NODE, "/commons/opt-out", body=b"")
+        with self._toggle(base, "/commons/opt-out", oh) as r:
+            self.assertEqual(r.status, 200)
+
+    def test_unsigned_opt_out_is_refused(self):
+        """Disabled: patch ANONYMOUS so an unsigned request is treated
+        as a real, checkable identity instead of being caught by the
+        anonymous check — the unsigned toggle now goes through. That is
+        the guard.
+        """
+        _, base, store, _ = self._serve()
+        with patch.object(cs, "ANONYMOUS", "f" * 64):
+            # wire.identify() itself still returns the REAL anonymous
+            # value ("0"*64) for a headerless request; only commons_
+            # server's own `who == ANONYMOUS` check is fooled, which is
+            # exactly the guard being disabled here.
+            with self._toggle(base, "/commons/opt-out") as r:
+                self.assertEqual(json.load(r)["key_id"], ANONYMOUS)
+        self.assertTrue(store.is_opted_out(ANONYMOUS))
+
+        # Guard restored: the same unsigned request (no headers) is
+        # refused for real, and nothing about "anonymous" got opted out
+        # by the disabled-guard call above leaking into real behaviour.
+        req = urllib.request.Request(f"{base}/commons/opt-out", data=b"",
+                                      method="POST")
+        with self.assertRaises(urllib.error.HTTPError) as cm:
+            urllib.request.urlopen(req, timeout=5)
+        self.assertEqual(cm.exception.code, 401)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
