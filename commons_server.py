@@ -57,6 +57,21 @@ RATE_PER_KEY_MAX = 1
 RATE_PER_IP_WINDOW_MS = 24 * 60 * 60 * 1000
 RATE_PER_IP_MAX = 20
 
+# Hardening item 3: opt-out/opt-in are deliberately gated on nothing but
+# proving key ownership (no known-keys check — see _handle_opt_toggle),
+# which is exactly right for a resident closing their own door but also
+# means a stranger can mint a free key and write a row per call, forever
+# (Wall 12: keys cost nothing). Per-key stays generous — a resident
+# toggling back and forth a few times in ten minutes is normal use, not
+# abuse — the global cap is the real backstop against a flood of distinct
+# minted keys. Either limit is high enough that a real resident's own
+# first opt-out, ever, always succeeds instantly: a fresh bucket is never
+# already at its ceiling.
+RATE_OPT_PER_KEY_WINDOW_MS = 10 * 60 * 1000
+RATE_OPT_PER_KEY_MAX = 5
+RATE_OPT_GLOBAL_WINDOW_MS = 60 * 60 * 1000
+RATE_OPT_GLOBAL_MAX = 100
+
 MAX_BODY_BYTES = 8192  # a post is three short fields, not a payload
 
 DEFAULT_DB_PATH = Path.home() / ".config" / "kin_diary" / "commons.db"
@@ -371,6 +386,15 @@ class CommonsHandler(BaseHTTPRequestHandler):
             return
         if who == ANONYMOUS:
             self._send(401, {"error": "this action requires a signed request"})
+            return
+        try:
+            now = _now_ms()
+            self.limiter.check(f"opt-key:{who}", RATE_OPT_PER_KEY_WINDOW_MS,
+                                RATE_OPT_PER_KEY_MAX, now)
+            self.limiter.check("opt:global", RATE_OPT_GLOBAL_WINDOW_MS,
+                                RATE_OPT_GLOBAL_MAX, now)
+        except CommonsError as e:
+            self._send(429, {"error": str(e)})
             return
         if opted_out:
             self.store.set_opt_out(who)

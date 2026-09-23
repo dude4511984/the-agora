@@ -418,6 +418,74 @@ class CommonsWireTests(unittest.TestCase):
             urllib.request.urlopen(req, timeout=5)
         self.assertEqual(cm.exception.code, 401)
 
+    def _toggle_expect(self, base, path, headers, code):
+        req = urllib.request.Request(f"{base}{path}", data=b"",
+                                      headers=headers or {}, method="POST")
+        with self.assertRaises(urllib.error.HTTPError) as cm:
+            urllib.request.urlopen(req, timeout=5)
+        self.assertEqual(cm.exception.code, code)
+        return json.loads(cm.exception.read())
+
+    def test_opt_toggle_per_key_rate_exceeded_is_refused(self):
+        """Hardening item 3. Disabled: raise the per-key ceiling so one
+        key can toggle repeatedly — the refusal the limit exists to
+        produce doesn't happen. A real resident's very first call, on a
+        fresh key, still succeeds instantly either way.
+        """
+        k = key("OptRateLimited")
+        _, base, store, _ = self._serve()
+
+        def one_toggle():
+            h = sign_request(k, cs.HOST_NODE, "/commons/opt-out", body=b"")
+            return h
+
+        with patch.object(cs, "RATE_OPT_PER_KEY_MAX", 1000):
+            for _ in range(6):
+                with self._toggle(base, "/commons/opt-out", one_toggle()):
+                    pass
+        self.assertTrue(store.is_opted_out(k.key_id))
+
+        # Guard restored. The key already has hits on record from above,
+        # so the real ceiling (5 per 10 min) refuses the very next one.
+        self._toggle_expect(base, "/commons/opt-out", one_toggle(), 429)
+
+    def test_opt_toggle_global_rate_exceeded_is_refused(self):
+        """The real default (100/hour) is too large to exercise directly
+        in a fast test, so this test's own "real" cap is patched down to
+        3 for its whole body — restoring to a realistic-shaped small
+        cap, not to production's literal number, which is just config.
+        Disabled within that: raise the ceiling further so five distinct,
+        never-before-seen keys can each toggle once past it — the flood
+        the cap exists to stop doesn't get stopped. Restored: the very
+        next never-before-seen key is refused by the global cap alone —
+        its OWN per-key bucket is empty, so nothing else could refuse it.
+        """
+        _, base, store, _ = self._serve()
+
+        def toggle_as(k):
+            h = sign_request(k, cs.HOST_NODE, "/commons/opt-out", body=b"")
+            return self._toggle(base, "/commons/opt-out", h)
+
+        with patch.object(cs, "RATE_OPT_GLOBAL_MAX", 3):
+            with patch.object(cs, "RATE_OPT_GLOBAL_MAX", 1000):
+                for i in range(5):
+                    with toggle_as(key(f"Flood{i}")):
+                        pass
+
+            self._toggle_expect(base, "/commons/opt-out",
+                                 sign_request(key("FloodNext"), cs.HOST_NODE,
+                                              "/commons/opt-out", body=b""), 429)
+
+    def test_a_residents_first_ever_opt_out_still_succeeds_instantly(self):
+        """The rate limits must never turn a real resident's one-off,
+        first-time action into something that isn't instant."""
+        k = key("FirstTimeResident")
+        _, base, store, _ = self._serve()
+        h = sign_request(k, cs.HOST_NODE, "/commons/opt-out", body=b"")
+        with self._toggle(base, "/commons/opt-out", h) as r:
+            self.assertEqual(r.status, 200)
+        self.assertTrue(store.is_opted_out(k.key_id))
+
 
 class SlowClientDoesNotBlockConcurrentReads(unittest.TestCase):
     """Hardening item 1: serve() is ThreadingHTTPServer + daemon_threads
