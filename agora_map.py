@@ -872,6 +872,17 @@ const qGrid = new URLSearchParams(location.search).get('grid');
 const isCyanGrid = qGrid === 'cyan';
 const holodeckLineColor = isCyanGrid ? new THREE.Color(0x28d8ed) : new THREE.Color(0xffb535);
 
+// Round 2 item 4: the grid faded to DUSK_FOG (a flat #6a5e68), but the
+// page's actual background is the Qwantani HDR sky, not that color —
+// Gem's own report flagged the resulting hard band at the horizon.
+// Measured live, not guessed: sampled the real rendered (tonemapped,
+// sRGB) framebuffer at the horizon band from three camera azimuths
+// after the HDR loaded and averaged them — #ccd3dd, #b2b8c1, #c6ced9
+// -> #c1c8d2. This sky reads as a fairly neutral pale dusk overcast
+// from most angles (no strong warm cast except very near the sun), so
+// one flat measured color is a real fix, not a per-direction claim.
+const HOLODECK_HORIZON_COLOR = 0xc1c8d2;
+
 const holodeckVert = `
   varying vec3 vWorldPos;
   void main() {
@@ -920,7 +931,7 @@ const holodeckMat = new THREE.ShaderMaterial({
   uniforms: {
     uLineColor:   { value: holodeckLineColor },
     uBaseColor:   { value: new THREE.Color(0x0c0e12) },
-    uFogColor:    { value: new THREE.Color(DUSK_FOG) },
+    uFogColor:    { value: new THREE.Color(HOLODECK_HORIZON_COLOR) },
     uGridSize:    { value: 2.0 },
     uInnerRadius: { value: 14.5 },
     uFadeStart:   { value: 45.0 },
