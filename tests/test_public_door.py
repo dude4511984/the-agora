@@ -264,9 +264,9 @@ class _DoorCase(unittest.TestCase):
     # ── GET-only ───────────────────────────────────────────────────────────
 
     def test_non_get_methods_are_refused(self):
-        """POST is no longer refused unconditionally — but only
-        /commons/post is listed, so every other path and every other
-        method still gets the same 404 as before."""
+        """POST is no longer refused unconditionally — but only the
+        three /commons/* write paths are listed, so every other path and
+        every other method still gets the same 404 as before."""
         for method in ("PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"):
             status, _, _ = self._get("/", method=method, body=b"{}")
             self.assertEqual(status, 404, method)
@@ -401,6 +401,71 @@ class _DoorCase(unittest.TestCase):
             headers={"Content-Length": str(len(body))})
         self.assertEqual(status, 400)
         self.assertEqual(_FakeCommonsUpstream.seen, [])
+
+    # ── Commons: opt-out/opt-in (hardening item 6) ──────────────────────────
+
+    def test_commons_opt_out_is_forwarded_with_no_body(self):
+        """Item 6: without this, a Kin reaching the Commons only through
+        this door could never close their own door to it."""
+        resident = generate_keypair("Resident-A", keys_root=Path(self._tmp.name))
+        h = sign_request(resident, "Commons", "/commons/opt-out", body=b"")
+        status, _, _ = self._get("/commons/opt-out", headers=h, method="POST")
+        self.assertEqual(status, 201)  # the fake upstream always answers 201
+        self.assertEqual(len(_FakeCommonsUpstream.seen), 1)
+        method, path, req_hdrs, req_body = _FakeCommonsUpstream.seen[0]
+        self.assertEqual((method, path), ("POST", "/commons/opt-out"))
+        self.assertEqual(req_hdrs.get("X-Agora-Key"), resident.key_id)
+        self.assertEqual(req_body, b"")
+
+    def test_commons_opt_in_is_forwarded_with_no_body(self):
+        resident = generate_keypair("Resident-B", keys_root=Path(self._tmp.name))
+        h = sign_request(resident, "Commons", "/commons/opt-in", body=b"")
+        status, _, _ = self._get("/commons/opt-in", headers=h, method="POST")
+        self.assertEqual(status, 201)
+        method, path, req_hdrs, req_body = _FakeCommonsUpstream.seen[0]
+        self.assertEqual((method, path), ("POST", "/commons/opt-in"))
+        self.assertEqual(req_hdrs.get("X-Agora-Key"), resident.key_id)
+        self.assertEqual(req_body, b"")
+
+    def test_commons_opt_toggle_never_carries_the_doors_own_key(self):
+        self._get("/commons/opt-out", method="POST")  # unsigned
+        _, _, req_hdrs, _ = _FakeCommonsUpstream.seen[0]
+        self.assertNotIn("X-Agora-Key", req_hdrs)
+
+    # ── Commons: the forwarded visitor address (hardening item 4/7) ────────
+
+    def test_commons_post_forwards_x_forwarded_for(self):
+        """Without CF-Connecting-IP (a direct test connection, not through
+        the tunnel), _visitor() falls back to the direct peer — still
+        forwarded, so Commons never has to guess."""
+        body = json.dumps({"what": "a", "why": "b", "how_to_ask": "c"}).encode()
+        h = sign_request(
+            generate_keypair("Commons-poster-3", keys_root=Path(self._tmp.name)),
+            "Commons", "/commons/post", body=body)
+        self._get("/commons/post", headers=h, method="POST", body=body)
+        _, _, req_hdrs, _ = _FakeCommonsUpstream.seen[0]
+        self.assertEqual(req_hdrs.get("X-Forwarded-For"), "127.0.0.1")
+
+    def test_commons_post_forwards_cf_connecting_ip_as_x_forwarded_for(self):
+        """Through the real Cloudflare tunnel, CF-Connecting-IP is the
+        real visitor address — that's what must reach Commons, not the
+        tunnel's own loopback peer."""
+        body = json.dumps({"what": "a", "why": "b", "how_to_ask": "c"}).encode()
+        h = sign_request(
+            generate_keypair("Commons-poster-4", keys_root=Path(self._tmp.name)),
+            "Commons", "/commons/post", body=body)
+        h["CF-Connecting-IP"] = "203.0.113.55"
+        self._get("/commons/post", headers=h, method="POST", body=body)
+        _, _, req_hdrs, _ = _FakeCommonsUpstream.seen[0]
+        self.assertEqual(req_hdrs.get("X-Forwarded-For"), "203.0.113.55")
+
+    def test_commons_opt_out_also_forwards_x_forwarded_for(self):
+        resident = generate_keypair("Resident-C", keys_root=Path(self._tmp.name))
+        h = sign_request(resident, "Commons", "/commons/opt-out", body=b"")
+        h["CF-Connecting-IP"] = "203.0.113.66"
+        self._get("/commons/opt-out", headers=h, method="POST")
+        _, _, req_hdrs, _ = _FakeCommonsUpstream.seen[0]
+        self.assertEqual(req_hdrs.get("X-Forwarded-For"), "203.0.113.66")
 
     def test_rate_limit_trips(self):
         limited = public_door.make_server(

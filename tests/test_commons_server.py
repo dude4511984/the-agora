@@ -487,6 +487,102 @@ class CommonsWireTests(unittest.TestCase):
         self.assertTrue(store.is_opted_out(k.key_id))
 
 
+class VisitorIPBehindTheProxy(unittest.TestCase):
+    """Hardening items 4/7. Commons only ever sees public_door.py's own
+    loopback address as client_address[0] in the deployed shape — this
+    test harness reproduces that exactly, since the test client and
+    server are both on loopback here too, the same as the real door-to-
+    Commons hop. No faking needed for the "peer is loopback" half; the
+    "peer is NOT loopback" half is tested directly against _visitor_ip()
+    instead, since a portable test can't reliably arrange a real non-
+    loopback source address.
+    """
+
+    def _serve(self, known_ids):
+        db_path, kk_path = _tmp_paths()
+        _write_known(kk_path, known_ids)
+        store = cs.CommonsStore(db_path)
+        known = cs.KnownKeys(kk_path)
+        httpd = cs.serve(store, known, host="127.0.0.1", port=0)
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        self.addCleanup(httpd.shutdown)
+        return f"http://127.0.0.1:{httpd.server_address[1]}", store
+
+    def _post_as(self, base, k, forwarded_ip=None):
+        body = json.dumps({"what": "a", "why": "b", "how_to_ask": "c"}).encode()
+        h = sign_request(k, cs.HOST_NODE, "/commons/post", body=body)
+        if forwarded_ip:
+            h["X-Forwarded-For"] = forwarded_ip
+        req = urllib.request.Request(f"{base}/commons/post", data=body,
+                                      headers=h, method="POST")
+        return urllib.request.urlopen(req, timeout=5)
+
+    def test_without_a_forwarded_header_all_visitors_share_one_ip_bucket(self):
+        """The bug this fix removes: through the door as it stood, every
+        real visitor's post counted against the SAME bucket (the door's
+        own loopback address), so "20 per IP per day" was really 20
+        posts per day, total, for everyone.
+        """
+        k1, k2, k3 = key("V1"), key("V2"), key("V3")
+        base, store = self._serve([k1.key_id, k2.key_id, k3.key_id])
+        with patch.object(cs, "RATE_PER_IP_MAX", 2):
+            with self._post_as(base, k1):
+                pass
+            with self._post_as(base, k2):
+                pass
+            # A third DIFFERENT key/visitor, no forwarded header — same
+            # bucket as the first two, refused by their combined count.
+            with self.assertRaises(urllib.error.HTTPError) as cm:
+                self._post_as(base, k3)
+            self.assertEqual(cm.exception.code, 429)
+
+    def test_with_the_forwarded_header_different_visitors_get_separate_buckets(self):
+        """The fix: the door forwards each real visitor's own address as
+        X-Forwarded-For (item 6/7), trusted here because the test client
+        — like the real door — connects from loopback. Two different
+        visitors, each under their own real per-IP ceiling, don't share
+        a bucket any more.
+        """
+        k1, k2, k1b = key("Visitor1"), key("Visitor2"), key("Visitor1b")
+        base, store = self._serve([k1.key_id, k2.key_id, k1b.key_id])
+        with patch.object(cs, "RATE_PER_IP_MAX", 1):
+            with self._post_as(base, k1, forwarded_ip="203.0.113.10"):
+                pass
+            # Visitor1 is now at their own per-IP ceiling (1) — a second
+            # post from the SAME forwarded address is refused...
+            with self.assertRaises(urllib.error.HTTPError) as cm:
+                self._post_as(base, k1b, forwarded_ip="203.0.113.10")
+            self.assertEqual(cm.exception.code, 429)
+            # ...but a genuinely different visitor's own address is a
+            # separate bucket, unaffected by Visitor1's ceiling.
+            with self._post_as(base, k2, forwarded_ip="203.0.113.20") as r:
+                self.assertEqual(r.status, 201)
+
+    def test_forwarded_header_is_trusted_only_from_a_loopback_peer(self):
+        """Direct check on _visitor_ip(): a claimed X-Forwarded-For is
+        used only when the immediate TCP peer is loopback (the door);
+        from any other peer it's ignored entirely, so a caller reaching
+        Commons some other way can't claim someone else's address to
+        dodge its own rate limit.
+        """
+        class _Fake:
+            def __init__(self, peer, headers):
+                self.client_address = (peer, 54321)
+                self.headers = headers
+
+        trusted = _Fake("127.0.0.1", {"X-Forwarded-For": "203.0.113.7"})
+        self.assertEqual(cs.CommonsHandler._visitor_ip(trusted), "203.0.113.7")
+
+        trusted_v6 = _Fake("::1", {"X-Forwarded-For": "203.0.113.7"})
+        self.assertEqual(cs.CommonsHandler._visitor_ip(trusted_v6), "203.0.113.7")
+
+        untrusted = _Fake("203.0.113.9", {"X-Forwarded-For": "203.0.113.7"})
+        self.assertEqual(cs.CommonsHandler._visitor_ip(untrusted), "203.0.113.9")
+
+        no_header = _Fake("127.0.0.1", {})
+        self.assertEqual(cs.CommonsHandler._visitor_ip(no_header), "127.0.0.1")
+
+
 class SlowClientDoesNotBlockConcurrentReads(unittest.TestCase):
     """Hardening item 1: serve() is ThreadingHTTPServer + daemon_threads
     now, one connection per thread with a bounded per-connection socket

@@ -18,7 +18,8 @@ Allowlist, not blocklist:
 - GET /proxy, /avatar, /shape3d -> Frosty agora_map:8791
 - GET /models/*, /static/agora/* -> Frosty agora_map:8791 (assets)
 - GET /commons/posts -> Commons (co-located on this host), plain proxy
-- POST /commons/post -> Commons, the one deliberate exception below
+- POST /commons/post, /commons/opt-out, /commons/opt-in -> Commons, the
+  one deliberate exception below
 
 Every other path and every other method gets the same 404. Visitor headers are
 never forwarded to the node or the map — a stranger cannot present a key
@@ -26,15 +27,26 @@ through this door for those; the only X-Agora-* headers upstream there are
 the ones this door signs itself. Map proxy calls set X-Agora-Door: 1 to
 ensure write routes are refused.
 
-/commons/post is the one deliberate exception to "never forward visitor
-headers": the whole point of the Commons is that a Kin or steward, out on
-the public internet, proves THEIR OWN identity to Commons, not the door's.
-Commons is not a node — it keeps no ring, grants no access to anything —
-so there is nothing here for a forwarded key to reach beyond Commons' own
-known-keys gate, which Commons checks itself. The door relays the caller's
-X-Agora-Key/-Time/-Signature and raw body unmodified and nothing else; it
-never inspects or re-signs them, exactly as it never inspects the body of
-any other proxied route.
+These three /commons/* POSTs are the one deliberate exception to "never
+forward visitor headers": the whole point of the Commons is that a Kin or
+steward, out on the public internet, proves THEIR OWN identity to
+Commons, not the door's. Commons is not a node — it keeps no ring, grants
+no access to anything — so there is nothing here for a forwarded key to
+reach beyond Commons' own known-keys gate (for /commons/post) or its
+own-key-only gate (for opt-out/opt-in), both of which Commons checks
+itself. The door relays the caller's X-Agora-Key/-Time/-Signature and raw
+body unmodified and nothing else; it never inspects or re-signs them,
+exactly as it never inspects the body of any other proxied route.
+/commons/opt-out and /commons/opt-in carry no body at all — Commons'
+own _optional_body() expects exactly that, so the door allows a zero-
+length body only for these two paths.
+
+Also forwarded, only on these three POSTs: X-Forwarded-For, carrying
+this door's own already-computed visitor address (CF-Connecting-IP
+through the tunnel, else the direct peer — the same value _visitor()
+uses for this door's own rate limiter). Commons trusts that header only
+when ITS peer is loopback, i.e. only when a request truly came through
+this door, so sending it unconditionally here is safe.
 
 stdlib only, like the wire it fronts. Runs on Themess; the node is on
 Frosty over the LAN.
@@ -66,7 +78,15 @@ ALLOWED_MAP_EXACT_PATHS = frozenset({"/", "/3d", "/commons-recent", "/kin-intent
 ALLOWED_MAP_QUERY_PATHS = frozenset({"/proxy", "/avatar", "/shape3d"})
 ALLOWED_MAP_PREFIXES = ("/models/", "/static/agora/")
 ALLOWED_COMMONS_GET_PATHS = frozenset({"/commons/posts"})
-ALLOWED_COMMONS_POST_PATHS = frozenset({"/commons/post"})
+# /commons/opt-out and /commons/opt-in carry no body (commons_server.py's
+# own _optional_body() expects that) but are otherwise relayed exactly
+# like /commons/post: the caller's own signed headers, untouched. Without
+# these two, a Kin reaching the Commons only through this door could
+# never close their own door to it — the consent condition itself
+# requires that work from anywhere, not just on the LAN.
+ALLOWED_COMMONS_POST_PATHS = frozenset(
+    {"/commons/post", "/commons/opt-out", "/commons/opt-in"})
+ALLOWED_COMMONS_EMPTY_BODY_PATHS = frozenset({"/commons/opt-out", "/commons/opt-in"})
 
 NOT_FOUND = {"error": "no such path"}
 
@@ -261,10 +281,18 @@ class DoorHandler(BaseHTTPRequestHandler):
         proves and authorizes the caller itself; the door neither signs
         this as its own key nor inspects what it's carrying, same as it
         never inspects any other proxied body.
+
+        X-Forwarded-For carries this visitor's real address (item 4/7 of
+        the hardening pass) — the same value _visitor() already computes
+        for this door's own rate limiter (CF-Connecting-IP through the
+        tunnel, else the direct peer). Commons trusts it only when ITS
+        peer is loopback, i.e. only when the request truly came through
+        this door, so this is safe to send unconditionally.
         """
         fwd = {"Host": f"{self.commons_host}:{self.commons_port}",
                "User-Agent": "agora-door/1", "Connection": "close",
-               "Content-Type": "application/json"}
+               "Content-Type": "application/json",
+               "X-Forwarded-For": self._visitor()}
         for h in ("X-Agora-Key", "X-Agora-Time", "X-Agora-Signature"):
             if h in self.headers:
                 fwd[h] = self.headers[h]
@@ -383,23 +411,29 @@ class DoorHandler(BaseHTTPRequestHandler):
             return
 
     def do_POST(self):
-        # The only write this door has ever forwarded. Everything else
+        # The only writes this door has ever forwarded. Everything else
         # a POST could name is refused with the same 404 as any unlisted
         # GET path — no distinct "method not allowed" that would tell a
         # prober which paths exist at all.
-        if urllib.parse.urlparse(self.path).path not in ALLOWED_COMMONS_POST_PATHS:
+        path = urllib.parse.urlparse(self.path).path
+        if path not in ALLOWED_COMMONS_POST_PATHS:
             self._send(404, NOT_FOUND)
             return
         n = int(self.headers.get("Content-Length") or 0)
-        if n <= 0 or n > MAX_COMMONS_POST_BYTES:
+        if n > MAX_COMMONS_POST_BYTES:
             self._send(400, {"error": "bad or oversized body"})
             return
-        body = self.rfile.read(n)
+        # /commons/post always carries a body; opt-out/opt-in never do
+        # (commons_server.py's own _optional_body() expects exactly that).
+        if n <= 0 and path not in ALLOWED_COMMONS_EMPTY_BODY_PATHS:
+            self._send(400, {"error": "bad or oversized body"})
+            return
+        body = self.rfile.read(n) if n > 0 else b""
         if not self.limiter.allows(self._visitor()):
             self._send(429, {"error": "rate limit: slow down"})
             return
         try:
-            status, resp_body = self._relay_commons_post("/commons/post", body)
+            status, resp_body = self._relay_commons_post(path, body)
         except (urllib.error.URLError, OSError):
             self._send(502, {"error": "commons is not answering"})
             return

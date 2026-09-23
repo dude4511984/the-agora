@@ -337,6 +337,27 @@ class CommonsHandler(BaseHTTPRequestHandler):
             # one connection is the only cost, never the board.
             raise CommonsError("client stopped sending data")
 
+    def _visitor_ip(self) -> str:
+        """Hardening item 4/7: Commons sits behind public_door.py, which
+        relays /commons/post from its own loopback process — every real
+        visitor's request arrives with client_address[0] equal to the
+        DOOR's address, not theirs, which turns "20 per IP per day" into
+        20 posts per day total. The door already computes the real
+        visitor address correctly (CF-Connecting-IP through the
+        Cloudflare tunnel, its own peer otherwise) and forwards it as
+        X-Forwarded-For specifically for /commons/post — the header is
+        trusted ONLY when the direct TCP peer is loopback, so a caller
+        who reaches Commons some other way (skipping the door, or if
+        Commons is ever bound wider than 127.0.0.1) can't spoof a header
+        to dodge its own rate limit.
+        """
+        peer = self.client_address[0]
+        if peer in ("127.0.0.1", "::1"):
+            forwarded = (self.headers.get("X-Forwarded-For") or "").strip()
+            if forwarded:
+                return forwarded
+        return peer
+
     def _optional_body(self) -> bytes:
         """For the opt-out/opt-in actions, which carry no payload — the
         signature covers the empty body the same way sign_request's own
@@ -430,7 +451,7 @@ class CommonsHandler(BaseHTTPRequestHandler):
         try:
             self.limiter.check(f"key:{who}", RATE_PER_KEY_WINDOW_MS,
                                RATE_PER_KEY_MAX, now)
-            self.limiter.check(f"ip:{self.client_address[0]}",
+            self.limiter.check(f"ip:{self._visitor_ip()}",
                                RATE_PER_IP_WINDOW_MS, RATE_PER_IP_MAX, now)
         except CommonsError as e:
             self._send(429, {"error": str(e)})
