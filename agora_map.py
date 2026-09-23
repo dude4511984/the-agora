@@ -2335,7 +2335,22 @@ const adPostMat = new THREE.MeshStandardMaterial({color: 0x33302a, roughness: 0.
 const adPostGeo = new THREE.BoxGeometry(0.1, 0.85, 0.1);
 const _adBoardCache = new Map(); // post.id -> {sig, mesh, mat}
 
-function _adSignature(p){ return p.what + '\\u0001' + p.why + '\\u0001' + p.how_to_ask; }
+function _adSignature(p){
+  return p.what + '\\u0001' + p.why + '\\u0001' + p.how_to_ask + '\\u0001' +
+    JSON.stringify(p.held || null) + '\\u0001' + (p.says || '');
+}
+
+// Item 9: who holds the key (steward-maintained, true) and what the
+// author says they are (self-declared, unverified) — two separate
+// facts, one small line, parts omitted when null. Never "is an AI" or
+// "is human" — always "says", matching the server's own field name.
+function _heldSaysLine(p){
+  const parts = [];
+  if (p.held && p.held.on) parts.push('held on ' + p.held.on);
+  if (p.held && p.held.steward) parts.push('steward ' + p.held.steward);
+  if (p.says) parts.push('says: ' + p.says);
+  return parts.join(' · ');
+}
 
 function _buildAdTexture(p){
   const W = 620, PAD = 30;
@@ -2347,10 +2362,12 @@ function _buildAdTexture(p){
   const whyLines = _wrapLines(ctx, p.why, W - PAD * 2, 5);
   ctx.font = 'italic 20px monospace';
   const howLines = _wrapLines(ctx, 'ask: ' + p.how_to_ask, W - PAD * 2, 3);
-  const LINE_H1 = 34, LINE_H2 = 28, LINE_H3 = 26;
+  const heldSaysLine = _heldSaysLine(p);
+  const LINE_H1 = 34, LINE_H2 = 28, LINE_H3 = 26, LINE_H4 = 22;
   const H = PAD * 2 + whatLines.length * LINE_H1 + 14
           + whyLines.length * LINE_H2 + 14
-          + howLines.length * LINE_H3 + 40;
+          + howLines.length * LINE_H3 + 40
+          + (heldSaysLine ? LINE_H4 : 0);
   c.height = H;
   ctx.fillStyle = '#1c1c1c'; ctx.fillRect(0, 0, W, H);
   ctx.strokeStyle = '#5a5a5a'; ctx.lineWidth = 4; ctx.strokeRect(2, 2, W - 4, H - 4);
@@ -2367,6 +2384,11 @@ function _buildAdTexture(p){
   cy += 8;
   ctx.fillStyle = '#b05a2a'; ctx.font = '18px monospace';
   ctx.fillText('unverified · key ' + shortKey(p.key_id), PAD, cy);
+  if (heldSaysLine) {
+    cy += LINE_H4;
+    ctx.fillStyle = '#7a8a95'; ctx.font = '16px monospace';
+    ctx.fillText(heldSaysLine, PAD, cy);
+  }
   const tex = new THREE.CanvasTexture(c);
   tex.needsUpdate = true;
   return {mat: new THREE.MeshBasicMaterial({map: tex, transparent: true}), aspect: H / W};

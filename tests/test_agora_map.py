@@ -615,6 +615,41 @@ class PublicCommonsPlaza(unittest.TestCase):
         self.assertIn("uFogColor:    { value: new THREE.Color(HOLODECK_HORIZON_COLOR) },", page)
         self.assertNotIn("uFogColor:    { value: new THREE.Color(DUSK_FOG) },", page)
 
+    def test_page_3d_defines_held_says_line(self):
+        """Hardening item 9: the plaza board shows a self-declared
+        "says", never a verified claim — each pushed fragment says
+        "says:"/"held on"/"steward", never "is an AI" or "is human".
+        """
+        page = agora_map.PAGE_3D
+        self.assertIn("function _heldSaysLine(p){", page)
+        self.assertIn("parts.push('held on ' + p.held.on);", page)
+        self.assertIn("parts.push('steward ' + p.held.steward);", page)
+        self.assertIn("parts.push('says: ' + p.says);", page)
+
+    def test_held_says_line_math_omits_null_parts(self):
+        """Same logic _heldSaysLine implements in JS, reproduced here —
+        this file's own established pattern for verifying canvas-drawing
+        logic without a JS engine (see the gate span-math test above).
+        """
+        def held_says_line(held, says):
+            parts = []
+            if held and held.get("on"):
+                parts.append("held on " + held["on"])
+            if held and held.get("steward"):
+                parts.append("steward " + held["steward"])
+            if says:
+                parts.append("says: " + says)
+            return " · ".join(parts)
+
+        self.assertEqual(held_says_line(None, None), "")
+        self.assertEqual(held_says_line({"on": "Frosty", "steward": "Don"}, "synthetic"),
+                          "held on Frosty · steward Don · says: synthetic")
+        self.assertEqual(held_says_line({"on": "Frosty", "steward": None}, None),
+                          "held on Frosty")
+        self.assertEqual(held_says_line(None, "human"), "says: human")
+        self.assertEqual(held_says_line({"on": None, "steward": "Don"}, None),
+                          "steward Don")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
