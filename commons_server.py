@@ -97,15 +97,20 @@ class CommonsStore:
         return sqlite3.connect(self.db_path)
 
     def sweep_expired(self, now_ms=None) -> int:
-        """Expired, non-hidden posts are deleted, not hidden — an ads
-        board, not an archive. A hidden post's tombstone survives its
-        own expiry: hiding is a moderation record, not a timer.
+        """Expired, non-hidden posts are tombstoned, not deleted.
+        SPEC_commons.md item 5 originally called for a hard delete here;
+        Marvin's still-open reasoning ("the log does not DELETE") holds
+        that until his ruling lands, so expiry now leaves the same shape
+        of record a steward hide does — reason "expired" — rather than
+        removing the row. A post already hidden by a steward keeps its
+        own reason: this only touches rows with hidden_reason IS NULL.
         """
         now = _now_ms() if now_ms is None else now_ms
         with self._conn() as c:
             cur = c.execute(
-                "DELETE FROM posts WHERE hidden_reason IS NULL "
-                "AND expires_at_unix_ms <= ?", (now,))
+                "UPDATE posts SET hidden_reason='expired', hidden_at_unix_ms=? "
+                "WHERE hidden_reason IS NULL AND expires_at_unix_ms <= ?",
+                (now, now))
             return cur.rowcount
 
     def list_posts(self, now_ms=None) -> list[dict]:

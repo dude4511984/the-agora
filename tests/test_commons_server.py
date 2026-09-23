@@ -90,12 +90,31 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(posts[0]["what"], "what")
         self.assertIsNone(posts[0]["hidden"])
 
-    def test_expired_post_is_deleted_not_hidden(self):
-        self.store.insert_post("k1", "what", "why", "how", now_ms=1000)
+    def test_expired_post_becomes_a_tombstone_not_a_deletion(self):
+        """SPEC_commons.md item 5 is held open (Marvin: "the log does
+        not DELETE") — expiry leaves the same shape of record a steward
+        hide does, not a removed row.
+        """
+        pid = self.store.insert_post("k1", "what", "why", "how", now_ms=1000)
         after_expiry = 1000 + cs.POST_TTL_MS + 1
-        self.assertEqual(self.store.list_posts(now_ms=after_expiry), [])
+        posts = self.store.list_posts(now_ms=after_expiry)
+        self.assertEqual(len(posts), 1)
+        self.assertIsNone(posts[0]["what"])
+        self.assertEqual(posts[0]["hidden"]["reason"], "expired")
         with self.store._conn() as c:
-            self.assertEqual(c.execute("SELECT COUNT(*) FROM posts").fetchone()[0], 0)
+            self.assertEqual(c.execute("SELECT COUNT(*) FROM posts").fetchone()[0], 1)
+            row = c.execute("SELECT id FROM posts WHERE id=?", (pid,)).fetchone()
+        self.assertIsNotNone(row)
+
+    def test_a_steward_hidden_post_keeps_its_own_reason_past_expiry(self):
+        """Expiry's sweep only touches hidden_reason IS NULL rows — it
+        must never overwrite a steward's stated reason with "expired".
+        """
+        pid = self.store.insert_post("k1", "what", "why", "how", now_ms=1000)
+        self.store.hide_post(pid, "spam", now_ms=1500)
+        after_expiry = 1000 + cs.POST_TTL_MS + 1
+        posts = self.store.list_posts(now_ms=after_expiry)
+        self.assertEqual(posts[0]["hidden"]["reason"], "spam")
 
     def test_hidden_post_survives_its_own_expiry_as_a_tombstone(self):
         pid = self.store.insert_post("k1", "what", "why", "how", now_ms=1000)
