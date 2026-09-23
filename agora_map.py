@@ -2094,6 +2094,111 @@ function graffitiMaterial(){
 const GRAFFITI_ASPECT = 620 / 1536;
 const graffitiGeo = new THREE.PlaneGeometry(3.3, 3.3 * GRAFFITI_ASPECT);
 
+// The two-rooms plaque, Frosty only — a freestanding standing sign, not
+// a wall decal, so none of the wall-face-depth or rotation/UV lessons
+// from the graffiti apply here; it's one self-contained object, mounted
+// where it's placed, facing the direction chosen below. Built once and
+// cached, same reasoning as the graffiti: the room rebuilds every 15s
+// and a fresh CanvasTexture each time would leak.
+let _plaqueMat = null, _plaqueMatAspect = null;
+function plaqueMaterial(){
+  if (_plaqueMat) return {mat: _plaqueMat, aspect: _plaqueMatAspect};
+  const W = 900, PAD = 46;
+  const c = document.createElement('canvas'); c.width = W; c.height = 700;
+  const ctx = c.getContext('2d');
+
+  const HEAD = '#e8c98a', BODY = '#d8d2c4', DIM = '#8a8478';
+  const measureWrap = (font, text, maxW, maxLines) => { ctx.font = font; return _wrapLines(ctx, text, maxW, maxLines); };
+
+  const bodyFont = '26px monospace', headFont = 'bold 34px monospace', italicFont = 'italic 24px monospace';
+  const nodesLines = measureWrap(bodyFont,
+    "invite-only, kept by a steward. Where work happens. You're standing in one, as a guest who can look.",
+    W - PAD * 2, 4);
+  const commonsLines = measureWrap(bodyFont,
+    "open to anyone, and labelled unsafe on purpose, so you know what room you walked into.",
+    W - PAD * 2, 4);
+
+  const LINE_H = 34;
+  let y = 0;
+  y += 74;                                  // title
+  y += 46;                                  // "NODES" header
+  y += nodesLines.length * LINE_H + 18;
+  y += 46;                                  // "THE COMMONS" header
+  y += commonsLines.length * LINE_H + 18;
+  y += 40;                                  // italic closing line
+  y += 44;                                  // "commons isn't open yet" line
+  const H = y + PAD;
+  c.height = H;
+
+  ctx.fillStyle = '#26241f'; ctx.fillRect(0, 0, W, H);
+  ctx.strokeStyle = '#4a453a'; ctx.lineWidth = 6; ctx.strokeRect(3, 3, W - 6, H - 6);
+  ctx.textBaseline = 'top'; ctx.textAlign = 'left';
+
+  let cy = PAD - 12;
+  ctx.fillStyle = HEAD; ctx.font = 'bold 48px monospace';
+  ctx.fillText('TWO ROOMS', PAD, cy); cy += 74;
+
+  ctx.fillStyle = HEAD; ctx.font = headFont;
+  ctx.fillText('NODES', PAD, cy); cy += 46;
+  ctx.fillStyle = BODY; ctx.font = bodyFont;
+  nodesLines.forEach(ln => { ctx.fillText(ln, PAD, cy); cy += LINE_H; });
+  cy += 18;
+
+  ctx.fillStyle = HEAD; ctx.font = headFont;
+  ctx.fillText('THE COMMONS', PAD, cy); cy += 46;
+  ctx.fillStyle = BODY; ctx.font = bodyFont;
+  commonsLines.forEach(ln => { ctx.fillText(ln, PAD, cy); cy += LINE_H; });
+  cy += 18;
+
+  ctx.fillStyle = DIM; ctx.font = italicFont;
+  ctx.fillText('Nodes are for building. The commons is for meeting.', PAD, cy); cy += 40;
+
+  // True today, not aspirational — checked against the live code before
+  // this shipped: no public commons plaza exists yet, so the plaque
+  // doesn't get to claim one. See REPORT_sonnet_boards_doors_plaque.md.
+  ctx.fillStyle = '#a0522d'; ctx.font = 'bold 22px monospace';
+  ctx.fillText("The commons isn't open yet.", PAD, cy);
+
+  const tex = new THREE.CanvasTexture(c);
+  tex.needsUpdate = true;
+  _plaqueMat = new THREE.MeshBasicMaterial({map: tex, transparent: true});
+  _plaqueMatAspect = H / W;
+  return {mat: _plaqueMat, aspect: _plaqueMatAspect};
+}
+const PLAQUE_W = 2.5;
+let _plaqueGeo = null, _plaqueAspect = null;
+function plaqueGeo(){
+  if (_plaqueGeo) return _plaqueGeo;
+  const {aspect} = plaqueMaterial();
+  _plaqueAspect = aspect;
+  _plaqueGeo = new THREE.PlaneGeometry(PLAQUE_W, PLAQUE_W * aspect);
+  return _plaqueGeo;
+}
+const plaquePostMat = new THREE.MeshStandardMaterial({color: 0x3a3630, roughness: 0.9});
+const PLAQUE_BOARD_BOTTOM_Y = 0.95;
+// Geometry shared across rebuilds too (this room rebuilds every 15s) —
+// only the Group/Mesh instances are fresh each buildPlaque() call, same
+// reasoning as the graffiti's cached geometry+material.
+const plaquePostGeo = new THREE.BoxGeometry(0.12, PLAQUE_BOARD_BOTTOM_Y + 0.05, 0.12);
+function buildPlaque(){
+  const group = new THREE.Group();
+  const {mat} = plaqueMaterial();
+  const geo = plaqueGeo();
+  const boardH = PLAQUE_W * _plaqueAspect;
+  const board = new THREE.Mesh(geo, mat);
+  board.position.set(0, PLAQUE_BOARD_BOTTOM_Y + boardH / 2, 0);
+  board.rotation.y = Math.PI; // faces -z, toward a visitor walking from spawn
+  group.add(board);
+  // Two plain stone posts holding the board up off the ground.
+  const half = PLAQUE_W * 0.42;
+  [-half, half].forEach(px => {
+    const post = new THREE.Mesh(plaquePostGeo, plaquePostMat);
+    post.position.set(px, (PLAQUE_BOARD_BOTTOM_Y + 0.05) / 2, 0);
+    group.add(post);
+  });
+  return group;
+}
+
 function buildRoom(mode){
   currentRoomMode = mode;
   updateFocalProps(mode);
@@ -2327,6 +2432,16 @@ function buildRoom(mode){
     graffiti.rotation.y = Math.PI;   // face -z, back toward the courtyard/spawn
     graffiti.rotation.z = -0.035;    // small hand-sprayed tilt, not dead level
     wallGroup.add(graffiti);
+  }
+
+  // The two-rooms plaque, Frosty only, on the spawn-to-gate path — west
+  // side of the courtyard, clear of the speaker chair (staticObstacles,
+  // (0,-2.2)) and well clear of the graffiti (far south wall, x>=1.85).
+  // Freestanding, not wall-mounted, so it needs no wall-face measurement.
+  if (!isHome) {
+    const plaque = buildPlaque();
+    plaque.position.set(-3.4, 0, 7.2);
+    wallGroup.add(plaque);
   }
 }
 
