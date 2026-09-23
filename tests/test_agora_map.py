@@ -570,6 +570,30 @@ class PublicCommonsPlaza(unittest.TestCase):
         finally:
             httpd.shutdown()
 
+    def test_public_commons_url_builds_the_door_url_with_or_without_a_trailing_slash(self):
+        """Deploy shape: Frosty's map reaches Commons (on Themess) only
+        through the public door's GET /commons/posts, so the env value
+        is the door's own origin, not Commons' port."""
+        import urllib.request
+
+        seen = []
+
+        class _Resp:
+            def __enter__(self): return self
+            def __exit__(self, *a): pass
+            def read(self, n): return b'{"label": "x", "posts": []}'
+
+        def fake_urlopen(req, timeout=None):
+            seen.append(req.full_url)
+            return _Resp()
+
+        for value in ("https://agora.everysynthetic.org",
+                      "https://agora.everysynthetic.org/"):
+            with patch.object(agora_map, "PUBLIC_COMMONS_URL", value), \
+                 patch.object(urllib.request, "urlopen", fake_urlopen):
+                agora_map._public_commons_ads()
+        self.assertEqual(seen, ["https://agora.everysynthetic.org/commons/posts"] * 2)
+
     def test_public_commons_ads_route_serves_the_fetch_result(self):
         class MockHandler:
             def __init__(self, path):
