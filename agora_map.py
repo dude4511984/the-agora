@@ -2550,8 +2550,24 @@ function buildRoom(mode){
         pos = axis === 'x' ? {x: t, z: fixedCoord} : {x: fixedCoord, z: t};
       }
       if (useGate) {
+        // Each anchor below is the LEFT edge of its piece's span when the
+        // piece extends in +x (ry >= 0, e.g. the south gate) — that's
+        // what the original south-only formulas gave. Mirroring the
+        // rotation (ry < 0, the north gate) mirrors which direction the
+        // same mesh extends from its anchor too, so a mirrored piece
+        // needs its RIGHT edge instead, or the whole gate/filler layout
+        // lands shifted a full gateLen to one side — measured live via
+        // Box3().setFromObject on both gates: south's gate mesh built
+        // symmetric bbox [-gateLen/2, gateLen/2] from anchor -gateLen/2,
+        // the same anchor on the north gate built [-1.5*gateLen,
+        // -gateLen/2] instead, with fillerLeft's span overlapping most
+        // of it — the "pillar dead centre" Opus found, invisible to
+        // collision because wallObstacles was never told a piece was
+        // there.
+        const mirrored = axis === 'x' && ry < 0;
+        const gateEdge = mirrored ? gateLen / 2 : -gateLen / 2;
         const gatePos = axis === 'x'
-          ? {x: -gateLen / 2, z: fixedCoord}
+          ? {x: gateEdge, z: fixedCoord}
           : {x: fixedCoord, z: -gateLen / 2};
         const m = gateTemplate.clone(true);
         m.position.set(gatePos.x, 0, gatePos.z);
@@ -2559,16 +2575,18 @@ function buildRoom(mode){
         wallGroup.add(m);
 
         if (thinStrTemplate) {
+          const leftEdge = mirrored ? -gateLen / 2 : -actualSeg / 2;
           const fillerLeft = thinStrTemplate.clone(true);
           fillerLeft.scale.set(SCALE, SCALE, flankLen / rawThinStrLen);
-          const fLeftPos = axis === 'x' ? {x: -actualSeg / 2, z: fixedCoord} : {x: fixedCoord, z: -actualSeg / 2};
+          const fLeftPos = axis === 'x' ? {x: leftEdge, z: fixedCoord} : {x: fixedCoord, z: -actualSeg / 2};
           fillerLeft.position.set(fLeftPos.x, 0, fLeftPos.z);
           fillerLeft.rotation.y = ry;
           wallGroup.add(fillerLeft);
 
+          const rightEdge = mirrored ? actualSeg / 2 : gateLen / 2;
           const fillerRight = thinStrTemplate.clone(true);
           fillerRight.scale.set(SCALE, SCALE, flankLen / rawThinStrLen);
-          const fRightPos = axis === 'x' ? {x: gateLen / 2, z: fixedCoord} : {x: fixedCoord, z: gateLen / 2};
+          const fRightPos = axis === 'x' ? {x: rightEdge, z: fixedCoord} : {x: fixedCoord, z: gateLen / 2};
           fillerRight.position.set(fRightPos.x, 0, fRightPos.z);
           fillerRight.rotation.y = ry;
           wallGroup.add(fillerRight);

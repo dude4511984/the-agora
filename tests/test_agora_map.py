@@ -108,8 +108,8 @@ class Agora3DRoomWallAndArchway(unittest.TestCase):
         self.assertIn("thinStrTemplate.scale.setScalar(SCALE)", page)
         self.assertIn("fillerLeft.scale.set(SCALE, SCALE, flankLen / rawThinStrLen)", page)
         self.assertIn("fillerRight.scale.set(SCALE, SCALE, flankLen / rawThinStrLen)", page)
-        self.assertIn("fLeftPos = axis === 'x' ? {x: -actualSeg / 2, z: fixedCoord}", page)
-        self.assertIn("fRightPos = axis === 'x' ? {x: gateLen / 2, z: fixedCoord}", page)
+        self.assertIn("fLeftPos = axis === 'x' ? {x: leftEdge, z: fixedCoord}", page)
+        self.assertIn("fRightPos = axis === 'x' ? {x: rightEdge, z: fixedCoord}", page)
 
     def test_page_3d_linear_archway_corridor_and_wall_boundaries(self):
         page = agora_map.PAGE_3D
@@ -175,6 +175,61 @@ class Agora3DRoomWallAndArchway(unittest.TestCase):
         # Verify the ramparts south tower boundary does NOT globally clamp Z for all X
         self.assertIn("if (pos.x <= RAMP_X_MAX && pos.z > RAMP_Z_END) {", page)
         self.assertNotIn("if (pos.z > RAMP_Z_END) {\n      pos.z = RAMP_Z_END;", page)
+
+    def test_gate_and_fillers_are_symmetric_and_contiguous_on_both_rotation_signs(self):
+        """Plaza fix 1. A gate/filler piece's position anchor is one edge
+        of its own span, and which edge flips with the rotation sign
+        (measured live: Box3().setFromObject on the built south vs north
+        gate meshes) — the same reason straight segments already branch
+        their own pos.x on `ry < 0` a few lines up. Before the fix, the
+        gate/filler anchors used the same south-only formula regardless
+        of ry, which is exactly what put the north gate's own filler
+        piece overlapping most of the gate mesh: a solid "pillar" with no
+        registered collision, since wallObstacles never knew a piece was
+        there.
+        """
+        gateLen, actualSeg = 1.84, 3.64
+        flankLen = (actualSeg - gateLen) / 2
+
+        def spans(mirrored):
+            gate_edge = gateLen / 2 if mirrored else -gateLen / 2
+            left_edge = -gateLen / 2 if mirrored else -actualSeg / 2
+            right_edge = actualSeg / 2 if mirrored else gateLen / 2
+            # South's rule: bbox = [pos, pos+W]. North's rule (measured):
+            # bbox = [pos-W, pos]. Mirrored here means "north".
+            def span(edge, width):
+                return (edge - width, edge) if mirrored else (edge, edge + width)
+            return {
+                "gate": span(gate_edge, gateLen),
+                "fillerLeft": span(left_edge, flankLen),
+                "fillerRight": span(right_edge, flankLen),
+            }
+
+        for mirrored in (False, True):
+            s = spans(mirrored)
+            # Symmetric around x=0, matching the south gate's known-good shape.
+            self.assertAlmostEqual(s["gate"][0], -gateLen / 2)
+            self.assertAlmostEqual(s["gate"][1], gateLen / 2)
+            self.assertAlmostEqual(s["fillerLeft"][0], -actualSeg / 2)
+            self.assertAlmostEqual(s["fillerRight"][1], actualSeg / 2)
+            # Contiguous, not overlapping: each span's outer edge is the
+            # next span's inner edge, exactly.
+            self.assertAlmostEqual(s["fillerLeft"][1], s["gate"][0])
+            self.assertAlmostEqual(s["gate"][1], s["fillerRight"][0])
+
+        # The bug, demonstrated: north's OLD (unmirrored) formula reused
+        # south's anchors verbatim and put the gate off-center, its span
+        # overlapping most of fillerLeft's — the failure this fix removes.
+        old_gate_edge = -gateLen / 2
+        old_left_edge = -actualSeg / 2
+
+        def north_span(edge, width):
+            return (edge - width, edge)
+
+        old_gate = north_span(old_gate_edge, gateLen)
+        old_filler_left = north_span(old_left_edge, flankLen)
+        overlap = min(old_gate[1], old_filler_left[1]) - max(old_gate[0], old_filler_left[0])
+        self.assertGreater(overlap, 0, "the pre-fix formula must reproduce the overlap")
 
 
 class Agora3DBoothAssets(unittest.TestCase):
