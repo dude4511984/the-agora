@@ -259,7 +259,30 @@ class CommonsStore:
 
 # ── the ad shape — the firewall ─────────────────────────────────────────
 
-_CONTROL = frozenset(chr(c) for c in list(range(0, 32)) + [127])
+# Hardening item 5. C0 (0-31) and DEL (127) alone let through a whole
+# second class of attack: characters invisible in a rendered board but
+# real in the stored bytes. U+202A-U+202E and U+2066-U+2069 (bidi
+# embedding/override/isolate controls) can flip how the REST of a field
+# renders — "ask: [RLO]moc.live-not[PDF].example.com" reads as a
+# different domain than the bytes say. U+200E/U+200F (LRM/RLM), the
+# zero-width characters (U+200B-U+200D, U+2060, U+FEFF), and the C1
+# range (U+0080-U+009F) are invisible outright — a URL or a homoglyph
+# can hide inside what looks like plain text. U+2028/U+2029 (line/
+# paragraph separator) are newline-equivalents the C0 check doesn't
+# reach, breaking the same "an ad is single-line fields" invariant a
+# literal \n already isn't allowed to break. Ordinary emoji (outside
+# all of these ranges) are untouched.
+_CONTROL = frozenset(chr(c) for c in (
+    list(range(0x00, 0x20)) +       # C0 controls
+    [0x7F] +                        # DEL
+    list(range(0x80, 0xA0)) +       # C1 controls
+    [0x200E, 0x200F] +              # LRM, RLM
+    list(range(0x200B, 0x200E)) +   # ZWSP, ZWNJ, ZWJ
+    [0x2060, 0xFEFF] +              # word joiner, BOM / zero-width no-break space
+    list(range(0x202A, 0x202F)) +   # LRE, RLE, PDF, LRO, RLO
+    list(range(0x2066, 0x206A)) +   # LRI, RLI, FSI, PDI
+    [0x2028, 0x2029]                # LINE SEPARATOR, PARAGRAPH SEPARATOR
+))
 _AD_FIELDS = {"what": MAX_WHAT, "why": MAX_WHY, "how_to_ask": MAX_HOW_TO_ASK}
 
 

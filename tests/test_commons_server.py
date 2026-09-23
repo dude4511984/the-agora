@@ -79,6 +79,53 @@ class AdShapeTests(unittest.TestCase):
         with self.assertRaises(cs.CommonsError):
             cs.validate_ad({"what": "   ", "why": "y", "how_to_ask": "z"})
 
+    # ── hardening item 5: invisible and direction-flipping characters ──
+
+    def test_c1_control_is_refused(self):
+        with self.assertRaises(cs.CommonsError):
+            cs.validate_ad({"what": "x\u0085y", "why": "y", "how_to_ask": "z"})
+
+    def test_bidi_embedding_override_is_refused(self):
+        """U+202E (RLO) is exactly the character that flips how the rest
+        of a field renders — the disguised-URL attack this closes."""
+        with self.assertRaises(cs.CommonsError):
+            cs.validate_ad({"what": "x", "why": "y",
+                             "how_to_ask": "ask: ‮example.com"})
+
+    def test_bidi_isolate_is_refused(self):
+        with self.assertRaises(cs.CommonsError):
+            cs.validate_ad({"what": "x⁦y", "why": "y", "how_to_ask": "z"})
+
+    def test_bidi_mark_is_refused(self):
+        with self.assertRaises(cs.CommonsError):
+            cs.validate_ad({"what": "x‎y", "why": "y", "how_to_ask": "z"})
+
+    def test_zero_width_character_is_refused(self):
+        with self.assertRaises(cs.CommonsError):
+            cs.validate_ad({"what": "x​y", "why": "y", "how_to_ask": "z"})
+
+    def test_word_joiner_is_refused(self):
+        with self.assertRaises(cs.CommonsError):
+            cs.validate_ad({"what": "x⁠y", "why": "y", "how_to_ask": "z"})
+
+    def test_bom_is_refused(self):
+        with self.assertRaises(cs.CommonsError):
+            cs.validate_ad({"what": "x﻿y", "why": "y", "how_to_ask": "z"})
+
+    def test_line_and_paragraph_separator_are_refused(self):
+        """Newline-equivalents the C0 check alone doesn't reach — the
+        same "single-line fields" invariant \\n already isn't allowed
+        to break."""
+        with self.assertRaises(cs.CommonsError):
+            cs.validate_ad({"what": "x y", "why": "y", "how_to_ask": "z"})
+        with self.assertRaises(cs.CommonsError):
+            cs.validate_ad({"what": "x y", "why": "y", "how_to_ask": "z"})
+
+    def test_ordinary_emoji_still_passes(self):
+        what, why, how = cs.validate_ad(
+            {"what": "Building things \U0001F389", "why": "y", "how_to_ask": "z"})
+        self.assertEqual(what, "Building things \U0001F389")
+
 
 class StoreTests(unittest.TestCase):
     def setUp(self):
