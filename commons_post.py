@@ -107,6 +107,9 @@ def main():
             method="POST"
         )
         req.add_header("Content-Type", "application/json")
+        # Cloudflare's browser integrity check refuses the default
+        # Python-urllib agent (error 1010) before the request reaches the door.
+        req.add_header("User-Agent", "agora-commons-post/1")
         
         with urllib.request.urlopen(req, timeout=10) as resp:
             result = json.loads(resp.read().decode())
