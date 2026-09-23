@@ -13,6 +13,7 @@ Asserts:
 
 from __future__ import annotations
 
+import hashlib
 import http.client
 import json
 import tempfile
@@ -32,6 +33,7 @@ if str(Path.home() / "kin_diary") not in sys.path:
 
 from kin_diary.keys import generate_keypair, load_public  # noqa: E402
 from kin_diary.agora.canonical import request_canonical  # noqa: E402
+from kin_diary.agora.wire import sign_request  # noqa: E402
 
 import public_door  # noqa: E402
 
@@ -116,6 +118,38 @@ class _FakeMapUpstream(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
 
+class _FakeCommonsUpstream(BaseHTTPRequestHandler):
+    """Stands in for Commons (co-located, its own port). Records exactly
+    what it was sent, including headers — the whole point of the
+    Commons routes is checking what does and doesn't cross the door.
+    """
+    seen = []          # list of (method, path, headers-as-dict, body)
+    server_version = "fake-commons/0"
+
+    def log_message(self, fmt, *args):
+        pass
+
+    def do_GET(self):
+        type(self).seen.append(("GET", self.path, dict(self.headers), b""))
+        body = json.dumps({"label": "UNSAFE", "posts": []}).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_POST(self):
+        n = int(self.headers.get("Content-Length") or 0)
+        raw = self.rfile.read(n) if n else b""
+        type(self).seen.append(("POST", self.path, dict(self.headers), raw))
+        body = json.dumps({"id": "fake-post-id"}).encode()
+        self.send_response(201)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+
 class _DoorCase(unittest.TestCase):
     max_reads = 30
 
@@ -126,16 +160,20 @@ class _DoorCase(unittest.TestCase):
             "door-everysynthetic", keys_root=Path(cls._tmp.name))
         cls.node_upstream = ThreadingHTTPServer(("127.0.0.1", 0), _FakeNodeUpstream)
         cls.map_upstream = ThreadingHTTPServer(("127.0.0.1", 0), _FakeMapUpstream)
+        cls.commons_upstream = ThreadingHTTPServer(("127.0.0.1", 0), _FakeCommonsUpstream)
         cls.door = public_door.make_server(
             "127.0.0.1", 0, cls.door_key, node_name="Fake",
             upstream_host="127.0.0.1",
             upstream_port=cls.node_upstream.server_address[1],
             map_host="127.0.0.1",
             map_port=cls.map_upstream.server_address[1],
+            commons_host="127.0.0.1",
+            commons_port=cls.commons_upstream.server_address[1],
             max_reads=cls.max_reads)
         cls._threads = [
             threading.Thread(target=s.serve_forever, daemon=True)
-            for s in (cls.node_upstream, cls.map_upstream, cls.door)]
+            for s in (cls.node_upstream, cls.map_upstream,
+                      cls.commons_upstream, cls.door)]
         for t in cls._threads:
             t.start()
         cls.port = cls.door.server_address[1]
@@ -145,11 +183,13 @@ class _DoorCase(unittest.TestCase):
         cls.door.shutdown()
         cls.map_upstream.shutdown()
         cls.node_upstream.shutdown()
+        cls.commons_upstream.shutdown()
         cls._tmp.cleanup()
 
     def setUp(self):
         _FakeNodeUpstream.seen.clear()
         _FakeMapUpstream.seen.clear()
+        _FakeCommonsUpstream.seen.clear()
 
     def _get(self, path, headers=None, method="GET", body=None):
         conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
@@ -219,17 +259,25 @@ class _DoorCase(unittest.TestCase):
                              {"error": "no such path"}, path)
         self.assertEqual(_FakeNodeUpstream.seen, [])
         self.assertEqual(_FakeMapUpstream.seen, [])
+        self.assertEqual(_FakeCommonsUpstream.seen, [])
 
     # ── GET-only ───────────────────────────────────────────────────────────
 
     def test_non_get_methods_are_refused(self):
-        for method in ("POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"):
+        """POST is no longer refused unconditionally — but only
+        /commons/post is listed, so every other path and every other
+        method still gets the same 404 as before."""
+        for method in ("PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"):
             status, _, _ = self._get("/", method=method, body=b"{}")
             self.assertEqual(status, 404, method)
+        for method in ("POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"):
             status, _, _ = self._get("/voice_chat", method=method, body=b"{}")
             self.assertEqual(status, 404, method)
+        status, _, _ = self._get("/", method="POST", body=b"{}")
+        self.assertEqual(status, 404)
         self.assertEqual(_FakeNodeUpstream.seen, [])
         self.assertEqual(_FakeMapUpstream.seen, [])
+        self.assertEqual(_FakeCommonsUpstream.seen, [])
 
     # ── the signature is the door's own, and it really verifies ────────────
 
@@ -276,6 +324,83 @@ class _DoorCase(unittest.TestCase):
         self.assertNotIn("Cookie", map_hdrs)
 
     # ── rate limit ─────────────────────────────────────────────────────────
+
+    # ── Commons: read is plain, post forwards the caller's own headers ─────
+
+    def test_commons_posts_is_a_plain_proxy(self):
+        status, hdrs, body = self._get("/commons/posts")
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body), {"label": "UNSAFE", "posts": []})
+        self.assertEqual(len(_FakeCommonsUpstream.seen), 1)
+        method, path, req_hdrs, _ = _FakeCommonsUpstream.seen[0]
+        self.assertEqual((method, path), ("GET", "/commons/posts"))
+        # Unlike the map path, Commons reads need no X-Agora-Door marker —
+        # there is nothing to distinguish here, reading is public either way.
+        self.assertNotIn("X-Agora-Door", req_hdrs)
+
+    def test_commons_post_forwards_the_callers_own_signature_unmodified(self):
+        """The one deliberate exception. The caller's real X-Agora-* headers
+        must arrive at Commons exactly as sent -- not the door's own key,
+        not stripped, not re-signed."""
+        poster = generate_keypair("Commons-poster", keys_root=Path(self._tmp.name))
+        body = json.dumps({"what": "a", "why": "b", "how_to_ask": "c"}).encode()
+        ts = str(int(time.time() * 1000))
+        digest = hashlib.sha256(body).hexdigest()
+        canon = request_canonical(poster.key_id, "Commons", "/commons/post",
+                                  int(ts), digest)
+        sig = poster.sign(canon)
+        headers = {
+            "X-Agora-Key": poster.key_id,
+            "X-Agora-Time": ts,
+            "X-Agora-Signature": sig,
+            "Content-Type": "application/json",
+        }
+        status, _, resp_body = self._get(
+            "/commons/post", headers=headers, method="POST", body=body)
+        self.assertEqual(status, 201)
+        self.assertEqual(json.loads(resp_body), {"id": "fake-post-id"})
+
+        self.assertEqual(len(_FakeCommonsUpstream.seen), 1)
+        method, path, req_hdrs, req_body = _FakeCommonsUpstream.seen[0]
+        self.assertEqual((method, path), ("POST", "/commons/post"))
+        self.assertEqual(req_hdrs.get("X-Agora-Key"), poster.key_id)
+        self.assertEqual(req_hdrs.get("X-Agora-Time"), ts)
+        self.assertEqual(req_hdrs.get("X-Agora-Signature"), sig)
+        self.assertEqual(req_body, body)
+
+    def test_commons_post_never_carries_the_doors_own_key(self):
+        """Every other write in this file is the door signing as itself.
+        This route must never do that -- it is the caller's identity or
+        no identity at all."""
+        body = json.dumps({"what": "a", "why": "b", "how_to_ask": "c"}).encode()
+        self._get("/commons/post", method="POST", body=body)  # unsigned
+        _, _, req_hdrs, _ = _FakeCommonsUpstream.seen[0]
+        self.assertNotEqual(req_hdrs.get("X-Agora-Key"), self.door_key.key_id)
+        self.assertNotIn("X-Agora-Key", req_hdrs)
+
+    def test_commons_post_strips_cookies_and_auth_but_keeps_the_signature(self):
+        poster = generate_keypair("Commons-poster-2", keys_root=Path(self._tmp.name))
+        body = json.dumps({"what": "a", "why": "b", "how_to_ask": "c"}).encode()
+        h = sign_request(poster, "Commons", "/commons/post", body=body)
+        h["Cookie"] = "session=please"
+        h["Authorization"] = "Bearer hunter2"
+        status, _, _ = self._get(
+            "/commons/post", headers=h, method="POST", body=body)
+        self.assertEqual(status, 201)
+        _, _, req_hdrs, _ = _FakeCommonsUpstream.seen[0]
+        self.assertNotIn("Cookie", req_hdrs)
+        self.assertNotIn("Authorization", req_hdrs)
+        self.assertEqual(req_hdrs.get("X-Agora-Key"), poster.key_id)
+
+    def test_oversized_commons_post_is_refused_by_the_door_itself(self):
+        """The door's own cap, ahead of Commons' — an oversized claim
+        never reaches the LAN hop at all."""
+        body = b"w" * (public_door.MAX_COMMONS_POST_BYTES + 1)
+        status, _, resp_body = self._get(
+            "/commons/post", method="POST", body=body,
+            headers={"Content-Length": str(len(body))})
+        self.assertEqual(status, 400)
+        self.assertEqual(_FakeCommonsUpstream.seen, [])
 
     def test_rate_limit_trips(self):
         limited = public_door.make_server(

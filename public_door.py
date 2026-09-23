@@ -17,11 +17,24 @@ Allowlist, not blocklist:
 - GET /commons-recent, /kin-intent -> Frosty agora_map:8791 (polled JSON)
 - GET /proxy, /avatar, /shape3d -> Frosty agora_map:8791
 - GET /models/*, /static/agora/* -> Frosty agora_map:8791 (assets)
+- GET /commons/posts -> Commons (co-located on this host), plain proxy
+- POST /commons/post -> Commons, the one deliberate exception below
 
 Every other path and every other method gets the same 404. Visitor headers are
-never forwarded — a stranger cannot present a key through this door;
-the only X-Agora-* headers upstream are the ones this door signs itself.
-Map proxy calls set X-Agora-Door: 1 to ensure write routes are refused.
+never forwarded to the node or the map — a stranger cannot present a key
+through this door for those; the only X-Agora-* headers upstream there are
+the ones this door signs itself. Map proxy calls set X-Agora-Door: 1 to
+ensure write routes are refused.
+
+/commons/post is the one deliberate exception to "never forward visitor
+headers": the whole point of the Commons is that a Kin or steward, out on
+the public internet, proves THEIR OWN identity to Commons, not the door's.
+Commons is not a node — it keeps no ring, grants no access to anything —
+so there is nothing here for a forwarded key to reach beyond Commons' own
+known-keys gate, which Commons checks itself. The door relays the caller's
+X-Agora-Key/-Time/-Signature and raw body unmodified and nothing else; it
+never inspects or re-signs them, exactly as it never inspects the body of
+any other proxied route.
 
 stdlib only, like the wire it fronts. Runs on Themess; the node is on
 Frosty over the LAN.
@@ -52,6 +65,8 @@ ALLOWED_NODE_PATHS = frozenset({"/facts", "/view"})
 ALLOWED_MAP_EXACT_PATHS = frozenset({"/", "/3d", "/commons-recent", "/kin-intent"})
 ALLOWED_MAP_QUERY_PATHS = frozenset({"/proxy", "/avatar", "/shape3d"})
 ALLOWED_MAP_PREFIXES = ("/models/", "/static/agora/")
+ALLOWED_COMMONS_GET_PATHS = frozenset({"/commons/posts"})
+ALLOWED_COMMONS_POST_PATHS = frozenset({"/commons/post"})
 
 NOT_FOUND = {"error": "no such path"}
 
@@ -61,9 +76,18 @@ UPSTREAM_MAP_PORT = 8791           # Frosty agora map (courtyard + assets)
 NODE_NAME = "Frosty"
 DOOR_KEY_AUTHOR = "door-everysynthetic"
 
+COMMONS_HOST = "127.0.0.1"         # co-located with this door
+COMMONS_PORT = 8781
+
 UPSTREAM_TIMEOUT_S = 5
 RATE_WINDOW_MS = 60_000
 RATE_MAX_READS = 180               # per visitor per minute, sliding window
+
+# A post is three short fields (SPEC_commons.md). commons_server.py's own
+# limit is the real one; this is the door refusing an oversized claim
+# before it even reads the body into memory, the same reason wire.py caps
+# its own MAX_BODY_BYTES ahead of the node that actually enforces shape.
+MAX_COMMONS_POST_BYTES = 8192
 
 
 class _VisitorLimiter:
@@ -145,6 +169,8 @@ class DoorHandler(BaseHTTPRequestHandler):
     map_host = UPSTREAM_HOST
     map_port = UPSTREAM_MAP_PORT
     node_name = NODE_NAME
+    commons_host = COMMONS_HOST
+    commons_port = COMMONS_PORT
     server_version = "agora-door/1"
 
     def log_message(self, fmt, *args):
@@ -210,6 +236,48 @@ class DoorHandler(BaseHTTPRequestHandler):
         except urllib.error.HTTPError as e:
             return e.code, dict(e.headers), e.read()
 
+    def _fetch_commons_get(self, path: str):
+        """Plain proxy — Commons reading needs no key at all
+        (SPEC_commons.md: "open to anyone, bare browser included"), so
+        there is nothing to sign or strip here, same shape as _fetch_map."""
+        req = urllib.request.Request(
+            f"http://{self.commons_host}:{self.commons_port}{path}",
+            headers={
+                "Host": f"{self.commons_host}:{self.commons_port}",
+                "User-Agent": "agora-door/1",
+                "Connection": "close",
+            },
+            method="GET",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=UPSTREAM_TIMEOUT_S) as r:
+                return r.status, r.read()
+        except urllib.error.HTTPError as e:
+            return e.code, e.read()
+
+    def _relay_commons_post(self, path: str, body: bytes):
+        """The one deliberate exception: forward the caller's OWN
+        X-Agora-* headers and raw body to Commons, unmodified. Commons
+        proves and authorizes the caller itself; the door neither signs
+        this as its own key nor inspects what it's carrying, same as it
+        never inspects any other proxied body.
+        """
+        fwd = {"Host": f"{self.commons_host}:{self.commons_port}",
+               "User-Agent": "agora-door/1", "Connection": "close",
+               "Content-Type": "application/json"}
+        for h in ("X-Agora-Key", "X-Agora-Time", "X-Agora-Signature"):
+            if h in self.headers:
+                fwd[h] = self.headers[h]
+        req = urllib.request.Request(
+            f"http://{self.commons_host}:{self.commons_port}{path}",
+            data=body, headers=fwd, method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=UPSTREAM_TIMEOUT_S) as r:
+                return r.status, r.read()
+        except urllib.error.HTTPError as e:
+            return e.code, e.read()
+
     # ── the door ───────────────────────────────────────────────────────────
 
     def do_GET(self):
@@ -223,7 +291,7 @@ class DoorHandler(BaseHTTPRequestHandler):
             return
 
         # 1. Check if path is in allowlist
-        target_kind = None  # 'node' or 'map'
+        target_kind = None  # 'node', 'map', or 'commons'
         target_path = None
 
         if path in ALLOWED_NODE_PATHS:
@@ -242,6 +310,9 @@ class DoorHandler(BaseHTTPRequestHandler):
         elif any(path.startswith(prefix) for prefix in ALLOWED_MAP_PREFIXES):
             target_kind = "map"
             target_path = f"{path}?{query}" if query else path
+        elif path in ALLOWED_COMMONS_GET_PATHS:
+            target_kind = "commons"
+            target_path = path
         else:
             self._send(404, NOT_FOUND)
             return
@@ -297,10 +368,51 @@ class DoorHandler(BaseHTTPRequestHandler):
             self.wfile.write(body)
             return
 
+        if target_kind == "commons":
+            try:
+                status, body = self._fetch_commons_get(target_path)
+            except (urllib.error.URLError, OSError):
+                self._send(502, {"error": "commons is not answering"})
+                return
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
+    def do_POST(self):
+        # The only write this door has ever forwarded. Everything else
+        # a POST could name is refused with the same 404 as any unlisted
+        # GET path — no distinct "method not allowed" that would tell a
+        # prober which paths exist at all.
+        if urllib.parse.urlparse(self.path).path not in ALLOWED_COMMONS_POST_PATHS:
+            self._send(404, NOT_FOUND)
+            return
+        n = int(self.headers.get("Content-Length") or 0)
+        if n <= 0 or n > MAX_COMMONS_POST_BYTES:
+            self._send(400, {"error": "bad or oversized body"})
+            return
+        body = self.rfile.read(n)
+        if not self.limiter.allows(self._visitor()):
+            self._send(429, {"error": "rate limit: slow down"})
+            return
+        try:
+            status, resp_body = self._relay_commons_post("/commons/post", body)
+        except (urllib.error.URLError, OSError):
+            self._send(502, {"error": "commons is not answering"})
+            return
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(resp_body)))
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.end_headers()
+        self.wfile.write(resp_body)
+
     def _refuse(self):
         self._send(404, NOT_FOUND)
 
-    do_POST = _refuse
     do_PUT = _refuse
     do_PATCH = _refuse
     do_DELETE = _refuse
@@ -313,6 +425,8 @@ def make_server(host: str, port: int, door_key, node_name: str = NODE_NAME,
                 upstream_port: int = UPSTREAM_PORT,
                 map_host: str = UPSTREAM_HOST,
                 map_port: int = UPSTREAM_MAP_PORT,
+                commons_host: str = COMMONS_HOST,
+                commons_port: int = COMMONS_PORT,
                 max_reads: int = RATE_MAX_READS) -> ThreadingHTTPServer:
     handler = type("BoundDoor", (DoorHandler,), {
         "door_key": door_key,
@@ -321,6 +435,8 @@ def make_server(host: str, port: int, door_key, node_name: str = NODE_NAME,
         "upstream_port": upstream_port,
         "map_host": map_host,
         "map_port": map_port,
+        "commons_host": commons_host,
+        "commons_port": commons_port,
         "node_name": node_name,
     })
     return ThreadingHTTPServer((host, port), handler)
