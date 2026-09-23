@@ -441,10 +441,30 @@ def serve(store, known_keys, host="127.0.0.1", port=8781):
     return _Server((host, port), handler)
 
 
+def _parse_cli_args(argv):
+    """Hardening item 2: loopback by default. Behind public_door.py, the
+    Commons should only ever be reached through the door — binding
+    0.0.0.0 put it directly on the public interface too, a second,
+    unintended way in with none of the door's own protections. Widening
+    the bind is now something you have to ask for by name, not the
+    default shape.
+    """
+    import argparse
+    parser = argparse.ArgumentParser(description="The Commons — public ad board")
+    parser.add_argument("port", nargs="?", type=int, default=8781)
+    parser.add_argument("--bind-all", action="store_true",
+                         help="bind 0.0.0.0 instead of 127.0.0.1 (not the "
+                              "deployed shape — Commons is meant to sit "
+                              "behind public_door.py)")
+    args = parser.parse_args(argv)
+    return ("0.0.0.0" if args.bind_all else "127.0.0.1"), args.port
+
+
 if __name__ == "__main__":
-    port = int(sys.argv[1]) if len(sys.argv) > 1 else 8781
+    cli_host, cli_port = _parse_cli_args(sys.argv[1:])
     store = CommonsStore(DEFAULT_DB_PATH)
     known = KnownKeys(DEFAULT_KNOWN_KEYS_PATH)
-    httpd = serve(store, known, host="0.0.0.0", port=port)
-    print(f"Commons on :{port} (db={DEFAULT_DB_PATH}, known_keys={DEFAULT_KNOWN_KEYS_PATH})")
+    httpd = serve(store, known, host=cli_host, port=cli_port)
+    print(f"Commons on {cli_host}:{cli_port} "
+          f"(db={DEFAULT_DB_PATH}, known_keys={DEFAULT_KNOWN_KEYS_PATH})")
     httpd.serve_forever()

@@ -483,5 +483,19 @@ class SlowClientDoesNotBlockConcurrentReads(unittest.TestCase):
         self.assertEqual(cs.CommonsHandler.timeout, 10)
 
 
+class CliBindDefaults(unittest.TestCase):
+    """Hardening item 2: loopback unless --bind-all is named explicitly."""
+
+    def test_default_binds_loopback(self):
+        self.assertEqual(cs._parse_cli_args([]), ("127.0.0.1", 8781))
+
+    def test_port_positional_still_works(self):
+        self.assertEqual(cs._parse_cli_args(["9999"]), ("127.0.0.1", 9999))
+
+    def test_bind_all_is_explicit(self):
+        self.assertEqual(cs._parse_cli_args(["--bind-all"]), ("0.0.0.0", 8781))
+        self.assertEqual(cs._parse_cli_args(["9999", "--bind-all"]), ("0.0.0.0", 9999))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
