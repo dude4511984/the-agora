@@ -75,9 +75,10 @@ def ask(question: str) -> dict:
     body = json.dumps({
         "model": MODEL,
         "messages": [{"role": "user", "content": prefix() + "QUESTION:\n\n" + question.strip() + "\n"}],
-        "think": True,
+        "think": os.environ.get("MARVIN_THINK", "1") != "0",
         "stream": False,
-        "options": {"num_ctx": NUM_CTX, "num_predict": 2000},
+        "options": {"num_ctx": NUM_CTX, "num_predict": int(os.environ.get("MARVIN_NUM_PREDICT", "2000")),
+                    **json.loads(os.environ.get("MARVIN_OPTIONS", "{}"))},
     }).encode()
     req = urllib.request.Request(HOST + "/api/chat", data=body,
                                  headers={"Content-Type": "application/json"})
