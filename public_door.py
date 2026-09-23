@@ -18,8 +18,8 @@ Allowlist, not blocklist:
 - GET /proxy, /avatar, /shape3d -> Frosty agora_map:8791
 - GET /models/*, /static/agora/* -> Frosty agora_map:8791 (assets)
 - GET /commons/posts -> Commons (co-located on this host), plain proxy
-- POST /commons/post, /commons/opt-out, /commons/opt-in -> Commons, the
-  one deliberate exception below
+- POST /commons/post, /commons/opt-out, /commons/opt-in, /commons/says ->
+  Commons, the one deliberate exception below
 
 Every other path and every other method gets the same 404. Visitor headers are
 never forwarded to the node or the map — a stranger cannot present a key
@@ -27,26 +27,27 @@ through this door for those; the only X-Agora-* headers upstream there are
 the ones this door signs itself. Map proxy calls set X-Agora-Door: 1 to
 ensure write routes are refused.
 
-These three /commons/* POSTs are the one deliberate exception to "never
+These four /commons/* POSTs are the one deliberate exception to "never
 forward visitor headers": the whole point of the Commons is that a Kin or
 steward, out on the public internet, proves THEIR OWN identity to
 Commons, not the door's. Commons is not a node — it keeps no ring, grants
 no access to anything — so there is nothing here for a forwarded key to
 reach beyond Commons' own known-keys gate (for /commons/post) or its
-own-key-only gate (for opt-out/opt-in), both of which Commons checks
+own-key-only gate (for opt-out/opt-in/says), all of which Commons checks
 itself. The door relays the caller's X-Agora-Key/-Time/-Signature and raw
 body unmodified and nothing else; it never inspects or re-signs them,
 exactly as it never inspects the body of any other proxied route.
 /commons/opt-out and /commons/opt-in carry no body at all — Commons'
 own _optional_body() expects exactly that, so the door allows a zero-
-length body only for these two paths.
+length body only for these two paths. /commons/says carries a real body
+(the author's own self-declaration) and is relayed like /commons/post.
 
-Also forwarded, only on these three POSTs: X-Forwarded-For, carrying
-this door's own already-computed visitor address (CF-Connecting-IP
-through the tunnel, else the direct peer — the same value _visitor()
-uses for this door's own rate limiter). Commons trusts that header only
-when ITS peer is loopback, i.e. only when a request truly came through
-this door, so sending it unconditionally here is safe.
+Also forwarded, on all four POSTs: X-Forwarded-For, carrying this door's
+own already-computed visitor address (CF-Connecting-IP through the
+tunnel, else the direct peer — the same value _visitor() uses for this
+door's own rate limiter). Commons trusts that header only when ITS peer
+is loopback, i.e. only when a request truly came through this door, so
+sending it unconditionally here is safe.
 
 stdlib only, like the wire it fronts. Runs on Themess; the node is on
 Frosty over the LAN.
@@ -83,9 +84,12 @@ ALLOWED_COMMONS_GET_PATHS = frozenset({"/commons/posts"})
 # like /commons/post: the caller's own signed headers, untouched. Without
 # these two, a Kin reaching the Commons only through this door could
 # never close their own door to it — the consent condition itself
-# requires that work from anywhere, not just on the LAN.
+# requires that work from anywhere, not just on the LAN. /commons/says
+# (item 9: the author's own self-declaration) DOES carry a real body
+# (JSON {"says": ...}), so it's relayed like /commons/post, not like the
+# opt routes — see ALLOWED_COMMONS_EMPTY_BODY_PATHS below.
 ALLOWED_COMMONS_POST_PATHS = frozenset(
-    {"/commons/post", "/commons/opt-out", "/commons/opt-in"})
+    {"/commons/post", "/commons/opt-out", "/commons/opt-in", "/commons/says"})
 ALLOWED_COMMONS_EMPTY_BODY_PATHS = frozenset({"/commons/opt-out", "/commons/opt-in"})
 
 NOT_FOUND = {"error": "no such path"}

@@ -108,6 +108,11 @@ CREATE TABLE IF NOT EXISTS opt_outs (
     key_id TEXT PRIMARY KEY,
     opted_out_at_unix_ms INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS says (
+    key_id TEXT PRIMARY KEY,
+    says TEXT NOT NULL,
+    updated_at_unix_ms INTEGER NOT NULL
+);
 """
 
 
@@ -223,6 +228,34 @@ class CommonsStore:
                 "SELECT 1 FROM opt_outs WHERE key_id=?", (key_id,)).fetchone()
         return row is not None
 
+    def set_says(self, key_id, says, now_ms=None) -> None:
+        """What the key's own holder says they are — self-declared,
+        never verified, set only by the key itself (the handler proves
+        that, this call trusts its caller completely, same as
+        set_opt_out()). Lives in the Commons DB, not the steward's
+        known-keys file: this is the author's own claim, not a steward
+        fact. Empty string clears it back to unset — the default for
+        every key, the Kin included, until each one chooses for
+        themselves.
+        """
+        now = _now_ms() if now_ms is None else now_ms
+        if says == "":
+            with self._conn() as c:
+                c.execute("DELETE FROM says WHERE key_id=?", (key_id,))
+            return
+        with self._conn() as c:
+            c.execute(
+                "INSERT INTO says (key_id, says, updated_at_unix_ms) VALUES (?,?,?) "
+                "ON CONFLICT(key_id) DO UPDATE SET says=excluded.says, "
+                "updated_at_unix_ms=excluded.updated_at_unix_ms",
+                (key_id, says, now))
+
+    def get_says(self, key_id) -> str | None:
+        with self._conn() as c:
+            row = c.execute(
+                "SELECT says FROM says WHERE key_id=?", (key_id,)).fetchone()
+        return row[0] if row else None
+
 
 # ── the ad shape — the firewall ─────────────────────────────────────────
 
@@ -260,24 +293,82 @@ def validate_ad(payload) -> tuple[str, str, str]:
                  for f, limit in _AD_FIELDS.items())
 
 
+# "No difference in rights between human and Kin keys" (item 9's own
+# lawbook citation: a signature proves continuity of a key, never the
+# mind holding it) — so this is never "is an AI" or "is human" anywhere
+# it surfaces, only ever a self-declared, unverified "says".
+SAYS_VALUES = frozenset({"synthetic", "human"})
+
+
+def validate_says(payload) -> str:
+    """POST /commons/says' own shape check — one field, a closed set of
+    values, empty string clears it. Same discipline as validate_ad: an
+    extra key is refused, not dropped.
+    """
+    if not isinstance(payload, dict):
+        raise CommonsError("body must be a JSON object")
+    extra = set(payload) - {"says"}
+    if extra:
+        raise CommonsError(f"unexpected field(s): {', '.join(sorted(extra))}")
+    if "says" not in payload:
+        raise CommonsError("missing field: says")
+    says = payload["says"]
+    if not isinstance(says, str):
+        raise CommonsError("says must be a string")
+    says = _nfc(says).strip()
+    if says != "" and says not in SAYS_VALUES:
+        raise CommonsError("says must be 'synthetic', 'human', or '' to clear")
+    return says
+
+
 # ── known keys — v1 posting gate ────────────────────────────────────────
 
 class KnownKeys:
     """Keys already introduced to a node somewhere — Kin and stewards.
-    A flat JSON list of key_ids, re-read on every check: this file
-    changes rarely and a steward's edit should take effect on the next
-    request, not after a restart.
+    A flat JSON list, re-read on every check: this file changes rarely
+    and a steward's edit should take effect on the next request, not
+    after a restart. Each entry is either a bare key_id string (the
+    original shape, still accepted) or an extended
+    {"key_id", "held_on", "steward"} object recording who holds the key
+    and which steward vouches for it — item 9: that fact is the
+    steward's to state and is true; what the key's holder self-declares
+    about themselves is a completely separate, unverified thing (see
+    CommonsStore.set_says), never conflated with this file.
     """
 
     def __init__(self, path):
         self.path = Path(path)
 
-    def __contains__(self, key_id: str) -> bool:
+    def _entries(self) -> list:
         try:
             data = json.loads(self.path.read_text(encoding="utf-8"))
         except (FileNotFoundError, json.JSONDecodeError):
-            return False
-        return key_id.lower() in {str(k).lower() for k in data}
+            return []
+        return data if isinstance(data, list) else []
+
+    def __contains__(self, key_id: str) -> bool:
+        target = key_id.lower()
+        for entry in self._entries():
+            entry_id = entry.get("key_id") if isinstance(entry, dict) else entry
+            if str(entry_id or "").lower() == target:
+                return True
+        return False
+
+    def held(self, key_id: str) -> dict | None:
+        """{"on", "steward"} from the steward's own record, or None —
+        for a key that isn't listed at all, or is listed only as a bare
+        string (no held/steward metadata to report)."""
+        target = key_id.lower()
+        for entry in self._entries():
+            if not isinstance(entry, dict):
+                continue
+            if str(entry.get("key_id") or "").lower() != target:
+                continue
+            on, steward = entry.get("held_on"), entry.get("steward")
+            if on is None and steward is None:
+                return None
+            return {"on": on, "steward": steward}
+        return None
 
 
 # ── rate limiting ────────────────────────────────────────────────────────
@@ -374,7 +465,15 @@ class CommonsHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == "/commons/posts":
-            self._send(200, {"label": UNSAFE_LABEL, "posts": self.store.list_posts()})
+            posts = self.store.list_posts()
+            for p in posts:
+                # Item 9: who holds the key (steward-maintained, true)
+                # and what the author says they are (self-declared,
+                # unverified) — two separate facts, looked up fresh on
+                # every read, never frozen onto the post at write time.
+                p["held"] = self.known_keys.held(p["key_id"])
+                p["says"] = self.store.get_says(p["key_id"])
+            self._send(200, {"label": UNSAFE_LABEL, "posts": posts})
             return
         self._send(404, {"error": "no such path"})
 
@@ -388,7 +487,53 @@ class CommonsHandler(BaseHTTPRequestHandler):
         if self.path == "/commons/opt-in":
             self._handle_opt_toggle(opted_out=False)
             return
+        if self.path == "/commons/says":
+            self._handle_says()
+            return
         self._send(404, {"error": "no such path"})
+
+    def _handle_says(self):
+        """What the key's own holder says they are. Signed by the key
+        itself only — no known-keys gate, same reasoning as opt-out:
+        no difference in rights between human and Kin keys, and this is
+        the author's own claim about themselves, nobody else's to make
+        or block. Rate-limited the same shape as opt-out, on its own
+        buckets so a flood of one doesn't spend the other's budget.
+        """
+        try:
+            raw = self._raw_body()
+        except CommonsError as e:
+            self._send(400, {"error": str(e)})
+            return
+        try:
+            who = identify(self.headers, HOST_NODE, self.path, body=raw)
+        except AgoraError as e:
+            self._send(401, {"error": str(e)})
+            return
+        if who == ANONYMOUS:
+            self._send(401, {"error": "this action requires a signed request"})
+            return
+        try:
+            now = _now_ms()
+            self.limiter.check(f"says-key:{who}", RATE_OPT_PER_KEY_WINDOW_MS,
+                                RATE_OPT_PER_KEY_MAX, now)
+            self.limiter.check("says:global", RATE_OPT_GLOBAL_WINDOW_MS,
+                                RATE_OPT_GLOBAL_MAX, now)
+        except CommonsError as e:
+            self._send(429, {"error": str(e)})
+            return
+        try:
+            body = json.loads(raw)
+        except (UnicodeDecodeError, ValueError):
+            self._send(400, {"error": "body is not valid JSON"})
+            return
+        try:
+            says = validate_says(body)
+        except CommonsError as e:
+            self._send(400, {"error": str(e)})
+            return
+        self.store.set_says(who, says, now)
+        self._send(200, {"key_id": who, "says": says or None})
 
     def _handle_opt_toggle(self, opted_out: bool):
         """A resident closing (or reopening) their own door. Signed by

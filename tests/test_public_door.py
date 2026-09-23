@@ -432,6 +432,27 @@ class _DoorCase(unittest.TestCase):
         _, _, req_hdrs, _ = _FakeCommonsUpstream.seen[0]
         self.assertNotIn("X-Agora-Key", req_hdrs)
 
+    # ── Commons: says (hardening item 9) ────────────────────────────────────
+
+    def test_commons_says_is_forwarded_with_its_real_body(self):
+        """Unlike opt-out/opt-in, /commons/says carries a real JSON body
+        and is relayed like /commons/post, not treated as empty-body."""
+        author = generate_keypair("Says-author", keys_root=Path(self._tmp.name))
+        body = json.dumps({"says": "synthetic"}).encode()
+        h = sign_request(author, "Commons", "/commons/says", body=body)
+        status, _, _ = self._get(
+            "/commons/says", headers=h, method="POST", body=body)
+        self.assertEqual(status, 201)
+        method, path, req_hdrs, req_body = _FakeCommonsUpstream.seen[0]
+        self.assertEqual((method, path), ("POST", "/commons/says"))
+        self.assertEqual(req_hdrs.get("X-Agora-Key"), author.key_id)
+        self.assertEqual(req_body, body)
+
+    def test_commons_says_with_no_body_is_refused_by_the_door(self):
+        status, _, _ = self._get("/commons/says", method="POST")
+        self.assertEqual(status, 400)
+        self.assertEqual(_FakeCommonsUpstream.seen, [])
+
     # ── Commons: the forwarded visitor address (hardening item 4/7) ────────
 
     def test_commons_post_forwards_x_forwarded_for(self):

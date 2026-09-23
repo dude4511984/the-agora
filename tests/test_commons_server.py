@@ -157,6 +157,92 @@ class KnownKeysTests(unittest.TestCase):
         _write_known(kk_path, ["a" * 64])
         self.assertIn("a" * 64, known)
 
+    # ── item 9: extended {"key_id","held_on","steward"} entries ────────
+
+    def test_extended_entry_is_known_and_a_bare_string_entry_still_works(self):
+        _, kk_path = _tmp_paths()
+        kk_path.write_text(json.dumps([
+            {"key_id": "E3DE" * 16, "held_on": "Frosty", "steward": "Don"},
+            "ABCD" * 16,
+        ]))
+        known = cs.KnownKeys(kk_path)
+        self.assertIn("e3de" * 16, known)
+        self.assertIn("abcd" * 16, known)
+
+    def test_held_reports_the_stewards_record(self):
+        _, kk_path = _tmp_paths()
+        kk_path.write_text(json.dumps([
+            {"key_id": "E3DE" * 16, "held_on": "Frosty", "steward": "Don"},
+        ]))
+        known = cs.KnownKeys(kk_path)
+        self.assertEqual(known.held("e3de" * 16), {"on": "Frosty", "steward": "Don"})
+
+    def test_held_is_null_for_a_bare_string_entry(self):
+        _, kk_path = _tmp_paths()
+        _write_known(kk_path, ["abcd" * 16])
+        known = cs.KnownKeys(kk_path)
+        self.assertIsNone(known.held("abcd" * 16))
+
+    def test_held_is_null_for_an_unknown_key(self):
+        _, kk_path = _tmp_paths()
+        _write_known(kk_path, [])
+        known = cs.KnownKeys(kk_path)
+        self.assertIsNone(known.held("f" * 64))
+
+
+class SaysValidationTests(unittest.TestCase):
+    """validate_says — item 9's own shape check."""
+
+    def test_synthetic_and_human_pass(self):
+        self.assertEqual(cs.validate_says({"says": "synthetic"}), "synthetic")
+        self.assertEqual(cs.validate_says({"says": "human"}), "human")
+
+    def test_empty_string_clears_and_passes(self):
+        self.assertEqual(cs.validate_says({"says": ""}), "")
+
+    def test_anything_else_is_refused(self):
+        """Trailing/leading whitespace is trimmed (NFC + strip, same as
+        every other field) before the check, so "human " is valid, not
+        a case worth asserting refused here — case and content are what
+        this test covers.
+        """
+        for bad in ("robot", "Synthetic", "HUMAN", "unknown"):
+            with self.assertRaises(cs.CommonsError):
+                cs.validate_says({"says": bad})
+
+    def test_extra_or_missing_field_is_refused(self):
+        with self.assertRaises(cs.CommonsError):
+            cs.validate_says({"says": "human", "extra": "x"})
+        with self.assertRaises(cs.CommonsError):
+            cs.validate_says({})
+
+    def test_non_string_is_refused(self):
+        with self.assertRaises(cs.CommonsError):
+            cs.validate_says({"says": None})
+
+
+class SaysStoreTests(unittest.TestCase):
+    def setUp(self):
+        db_path, _ = _tmp_paths()
+        self.store = cs.CommonsStore(db_path)
+
+    def test_default_is_unset(self):
+        self.assertIsNone(self.store.get_says("k1"))
+
+    def test_set_and_get(self):
+        self.store.set_says("k1", "synthetic")
+        self.assertEqual(self.store.get_says("k1"), "synthetic")
+
+    def test_empty_string_clears(self):
+        self.store.set_says("k1", "human")
+        self.store.set_says("k1", "")
+        self.assertIsNone(self.store.get_says("k1"))
+
+    def test_set_again_overwrites(self):
+        self.store.set_says("k1", "human")
+        self.store.set_says("k1", "synthetic")
+        self.assertEqual(self.store.get_says("k1"), "synthetic")
+
 
 class RateLimiterTests(unittest.TestCase):
     def test_the_limit_bites(self):
@@ -485,6 +571,106 @@ class CommonsWireTests(unittest.TestCase):
         with self._toggle(base, "/commons/opt-out", h) as r:
             self.assertEqual(r.status, 200)
         self.assertTrue(store.is_opted_out(k.key_id))
+
+    # ── item 9: says, and held on GET /commons/posts ────────────────────
+
+    def _says(self, base, k, says, headers_from=None):
+        """Signs as `headers_from` (default: k) but sends `says` as k's
+        claim — used by the impersonation test to build a real, validly-
+        signed-by-someone-else request body."""
+        body = json.dumps({"says": says}).encode()
+        signer = headers_from or k
+        h = sign_request(signer, cs.HOST_NODE, "/commons/says", body=body)
+        req = urllib.request.Request(f"{base}/commons/says", data=body,
+                                      headers=h, method="POST")
+        return urllib.request.urlopen(req, timeout=5)
+
+    def test_says_set_by_the_key_itself_appears_on_get(self):
+        k = key("SaysSelf")
+        _, base, store, _ = self._serve([k.key_id])
+        store.insert_post(k.key_id, "what", "why", "how")
+        with self._says(base, k, "synthetic") as r:
+            self.assertEqual(json.load(r), {"key_id": k.key_id, "says": "synthetic"})
+        posts = store.list_posts()
+        self.assertEqual(store.get_says(k.key_id), "synthetic")
+        self.assertEqual(posts[0]["key_id"], k.key_id)
+
+    def test_says_default_is_unset(self):
+        k = key("SaysUnset")
+        _, base, store, _ = self._serve([k.key_id])
+        store.insert_post(k.key_id, "what", "why", "how")
+        self.assertIsNone(store.get_says(k.key_id))
+
+    def test_says_cannot_be_set_by_a_different_key(self):
+        """Disabled: patch identify() to skip verification, the same
+        guard test_bad_signature_is_refused already uses for
+        /commons/post — a forged claim now sets says as someone else.
+        That is the guard.
+        """
+        real, impostor = key("SaysReal"), key("SaysImpostor")
+        _, base, store, _ = self._serve()
+        body = json.dumps({"says": "human"}).encode()
+        h = sign_request(impostor, cs.HOST_NODE, "/commons/says", body=body)
+        h["X-Agora-Key"] = real.key_id  # claiming Real's key, Impostor's signature
+
+        with patch.object(cs, "identify", lambda *a, **kw: real.key_id):
+            req = urllib.request.Request(f"{base}/commons/says", data=body,
+                                          headers=h, method="POST")
+            with urllib.request.urlopen(req, timeout=5) as r:
+                self.assertEqual(r.status, 200)
+        self.assertEqual(store.get_says(real.key_id), "human")
+
+        # Guard restored: the identical forged claim is refused for real.
+        req = urllib.request.Request(f"{base}/commons/says", data=body,
+                                      headers=h, method="POST")
+        with self.assertRaises(urllib.error.HTTPError) as cm:
+            urllib.request.urlopen(req, timeout=5)
+        self.assertEqual(cm.exception.code, 401)
+        # And the earlier forged value is untouched by the real attempt
+        # (which never got far enough to overwrite anything).
+        self.assertEqual(store.get_says(real.key_id), "human")
+
+    def test_says_can_be_cleared(self):
+        k = key("SaysClear")
+        _, base, store, _ = self._serve([k.key_id])
+        with self._says(base, k, "synthetic"):
+            pass
+        with self._says(base, k, "") as r:
+            self.assertEqual(json.load(r)["says"], None)
+        self.assertIsNone(store.get_says(k.key_id))
+
+    def test_get_commons_posts_carries_held_and_says(self):
+        k = key("HeldAndSays")
+        db_path, kk_path = _tmp_paths()
+        kk_path.write_text(json.dumps([
+            {"key_id": k.key_id, "held_on": "Frosty", "steward": "Don"},
+        ]))
+        store = cs.CommonsStore(db_path)
+        known = cs.KnownKeys(kk_path)
+        httpd = cs.serve(store, known, host="127.0.0.1", port=0)
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        self.addCleanup(httpd.shutdown)
+        base = f"http://127.0.0.1:{httpd.server_address[1]}"
+
+        store.insert_post(k.key_id, "what", "why", "how")
+        with self._says(base, k, "synthetic"):
+            pass
+
+        req = urllib.request.Request(f"{base}/commons/posts")
+        with urllib.request.urlopen(req, timeout=5) as r:
+            posts = json.load(r)["posts"]
+        self.assertEqual(posts[0]["held"], {"on": "Frosty", "steward": "Don"})
+        self.assertEqual(posts[0]["says"], "synthetic")
+
+    def test_get_commons_posts_held_and_says_are_null_by_default(self):
+        k = key("NullByDefault")
+        _, base, store, _ = self._serve([k.key_id])  # bare-string known_keys entry
+        store.insert_post(k.key_id, "what", "why", "how")
+        req = urllib.request.Request(f"{base}/commons/posts")
+        with urllib.request.urlopen(req, timeout=5) as r:
+            posts = json.load(r)["posts"]
+        self.assertIsNone(posts[0]["held"])
+        self.assertIsNone(posts[0]["says"])
 
 
 class VisitorIPBehindTheProxy(unittest.TestCase):
