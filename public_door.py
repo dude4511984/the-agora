@@ -196,6 +196,9 @@ class DoorHandler(BaseHTTPRequestHandler):
     commons_host = COMMONS_HOST
     commons_port = COMMONS_PORT
     server_version = "agora-door/1"
+    # A visitor who opens a connection and trickles bytes would otherwise
+    # hold a door thread forever; same fix as commons_server item 1.
+    timeout = 10
 
     def log_message(self, fmt, *args):
         pass              # the node's own record attributes every read
