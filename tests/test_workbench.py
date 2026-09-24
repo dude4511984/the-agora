@@ -1,13 +1,23 @@
 """The workbench: the menu is the wall, and the hand saw has no circular-saw mode."""
-import os, sys, unittest
-sys.path.insert(0, os.path.expanduser("~/kin_diary"))
+import os, shutil, sys, unittest
+# The repo this file sits in, not ~/kin_diary (Don's checkout location).
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import kin_workbench as W
 
 CLEAN = '<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100">' \
         '<circle cx="50" cy="50" r="40" fill="teal"/></svg>'
 
 
+# Two tests render for real: the renderer is part of what's under test (the
+# write-outside-its-dir check goes through a real render). They need the
+# system tool rsvg-convert (Debian/Ubuntu: librsvg2-bin). Verified 2026-09-24:
+# 7/7 pass on a clean checkout once it's installed; without it they skip.
+NEEDS_RSVG = unittest.skipUnless(shutil.which("rsvg-convert"),
+                                 "needs rsvg-convert (apt install librsvg2-bin)")
+
+
 class Workbench(unittest.TestCase):
+    @NEEDS_RSVG
     def test_a_clean_drawing_renders(self):
         r = W.use("Eli", "svg_canvas", CLEAN)
         self.assertTrue(r.ok, r.detail)
@@ -40,6 +50,7 @@ class Workbench(unittest.TestCase):
                   '<svg xmlns="http://www.w3.org/2000/svg"><text>&x;</text></svg>')
         self.assertFalse(r.ok)
 
+    @NEEDS_RSVG
     def test_a_kin_cannot_write_outside_its_dir(self):
         # a name that tries to walk the path is flattened, not obeyed
         r = W.use("../../etc/cron.d/x", "svg_canvas", CLEAN)
