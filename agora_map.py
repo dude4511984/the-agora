@@ -28,10 +28,13 @@ import json
 import os
 import sqlite3
 import sys
+import unicodedata
 import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+
+from commons_server import _CONTROL
 
 from agora_market import render_market_page
 from agora_pawn import PAWN_JS
@@ -69,11 +72,94 @@ MODEL_CONTENT_TYPES = {
 # it wanted to.
 COMMONS_DB = Path.home() / "Desktop" / "wander_logs" / "commons.db"
 COMMONS_PREVIEW_CHARS = 220
-# The nodes actually serving Agora on this cluster, offered as presets.
-PRESET_NODES = [
+DEFAULT_PRESET_NODES = [
     ("Frosty", "http://192.168.1.119:8770"),
     ("Home",   "http://192.168.1.120:8770"),
 ]
+MAP_NODES_CONFIG_PATH = Path.home() / ".config" / "kin_diary" / "map_nodes.json"
+
+
+def _is_private_host(host: str) -> bool:
+    """Only loopback / RFC1918 / Tailscale CGNAT. Keeps this proxy from being
+    pointed at the wider internet (the QR endpoint's rule, same reasoning)."""
+    host = (host or "").lower()
+    if host in ("localhost", "127.0.0.1", "::1"):
+        return True
+    parts = host.split(".")
+    if len(parts) == 4 and all(p.isdigit() and 0 <= int(p) <= 255 for p in parts):
+        a, b = int(parts[0]), int(parts[1])
+        return (a == 10
+                or (a == 192 and b == 168)
+                or (a == 172 and 16 <= b <= 31)
+                or (a == 100 and 64 <= b <= 127))
+    return False
+
+
+def load_preset_nodes(config_path: Path | str | None = None) -> list[tuple[str, str]]:
+    """Load and validate preset nodes from ~/.config/kin_diary/map_nodes.json.
+
+    If the file does not exist, returns DEFAULT_PRESET_NODES.
+    Validates:
+    - Root is a non-empty list of dicts with 'name' and 'url'
+    - Names are short plain text (no _CONTROL / bidi / zero-width, <= 64 chars)
+    - Names are case-insensitively unique
+    - URLs are http(s) pointing to a private or loopback host
+    """
+    if config_path is None:
+        env_path = os.environ.get("AGORA_MAP_NODES_CONFIG")
+        p = Path(env_path) if env_path else MAP_NODES_CONFIG_PATH
+    else:
+        p = Path(config_path)
+
+    if not p.is_file():
+        return list(DEFAULT_PRESET_NODES)
+
+    try:
+        raw = p.read_text(encoding="utf-8")
+        data = json.loads(raw)
+    except Exception as exc:
+        raise ValueError(f"failed to load node config from {p}: {exc}") from exc
+
+    if not isinstance(data, list):
+        raise ValueError(f"node config {p} must be a list of node objects")
+    if not data:
+        raise ValueError(f"node config {p} cannot be empty")
+
+    seen_names = set()
+    presets: list[tuple[str, str]] = []
+    for idx, item in enumerate(data):
+        if not isinstance(item, dict):
+            raise ValueError(f"entry {idx} in {p} must be an object")
+        if "name" not in item or "url" not in item:
+            raise ValueError(f"entry {idx} in {p} must have 'name' and 'url'")
+        name = item["name"]
+        url = item["url"]
+        if not isinstance(name, str) or not isinstance(url, str):
+            raise ValueError(f"entry {idx} in {p}: 'name' and 'url' must be strings")
+        clean_name = unicodedata.normalize("NFC", name).strip()
+        if not clean_name:
+            raise ValueError(f"entry {idx} in {p}: node name cannot be empty")
+        if len(clean_name) > 64:
+            raise ValueError(f"entry {idx} in {p}: node name {clean_name!r} exceeds 64 characters")
+        if _CONTROL & set(clean_name):
+            raise ValueError(f"entry {idx} in {p}: node name {clean_name!r} contains forbidden control or bidi character")
+        name_key = clean_name.lower()
+        if name_key in seen_names:
+            raise ValueError(f"duplicate node name in {p}: {clean_name!r}")
+        seen_names.add(name_key)
+
+        u = urllib.parse.urlparse(url)
+        if u.scheme not in ("http", "https"):
+            raise ValueError(f"entry {idx} in {p}: URL scheme must be http or https, got {u.scheme!r}")
+        if not u.hostname or not _is_private_host(u.hostname):
+            raise ValueError(f"entry {idx} in {p}: URL {url!r} must point to a private or loopback host")
+
+        presets.append((clean_name, url.rstrip("/")))
+
+    return presets
+
+
+PRESET_NODES = load_preset_nodes()
 FETCH_TIMEOUT = 5
 MAP_KEY_AUTHOR = "Marvin"
 
@@ -135,22 +221,6 @@ def _sanitize_view_peer_doors(view: dict) -> None:
                 except ValueError:
                     pass
             door["url"] = name or peer or ""
-
-
-def _is_private_host(host: str) -> bool:
-    """Only loopback / RFC1918 / Tailscale CGNAT. Keeps this proxy from being
-    pointed at the wider internet (the QR endpoint's rule, same reasoning)."""
-    host = (host or "").lower()
-    if host in ("localhost", "127.0.0.1", "::1"):
-        return True
-    parts = host.split(".")
-    if len(parts) == 4 and all(p.isdigit() and 0 <= int(p) <= 255 for p in parts):
-        a, b = int(parts[0]), int(parts[1])
-        return (a == 10
-                or (a == 192 and b == 168)
-                or (a == 172 and 16 <= b <= 31)
-                or (a == 100 and 64 <= b <= 127))
-    return False
 
 
 def _node_fetch(base: str, path: str, node_name: str | None = None) -> dict:

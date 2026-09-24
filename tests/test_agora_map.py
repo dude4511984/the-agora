@@ -9,6 +9,7 @@ socket.
 
 import os
 import sys
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -776,6 +777,138 @@ class TestPublicNamesNoLANAddresses(unittest.TestCase):
             h = MockHandler(f"/proxy?node={bad}")
             agora_map.Handler.do_GET(h)
             self.assertEqual(h.code, 400, f"Expected 400 for bad node: {bad}")
+
+
+class TestMapNodesConfig(unittest.TestCase):
+    """~/.config/kin_diary/map_nodes.json configures PRESET_NODES for the map."""
+
+    def test_config_with_three_nodes_renders_three_names_and_no_addresses(self):
+        """A config with three nodes gives three names in the page and no addresses."""
+        config_data = [
+            {"name": "Frosty", "url": "http://192.168.1.119:8770"},
+            {"name": "Home", "url": "http://192.168.1.120:8770"},
+            {"name": "A15", "url": "http://192.168.1.135:8770"},
+        ]
+        class MockHandler:
+            def __init__(self, path):
+                self.path = path
+                self.code = None
+                self.body = None
+                self.ctype = None
+            def _send(self, code, body, ctype):
+                self.code = code
+                self.body = body
+                self.ctype = ctype
+
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+            json.dump(config_data, f)
+            cfg_path = f.name
+        try:
+            presets = agora_map.load_preset_nodes(cfg_path)
+            self.assertEqual(len(presets), 3)
+            with patch.object(agora_map, "PRESET_NODES", presets):
+                for path in ("/", "/3d", "/3d?public=1"):
+                    h = MockHandler(path)
+                    agora_map.Handler.do_GET(h)
+                    self.assertEqual(h.code, 200)
+                    html = h.body.decode("utf-8")
+                    self.assertIn("Frosty", html)
+                    self.assertIn("Home", html)
+                    self.assertIn("A15", html)
+                    self.assertNotIn("192.168.", html)
+        finally:
+            os.unlink(cfg_path)
+
+    def test_proxy_resolves_third_node(self):
+        """/proxy?node=<third> resolves and fetches from the third node's URL."""
+        config_data = [
+            {"name": "Frosty", "url": "http://192.168.1.119:8770"},
+            {"name": "Home", "url": "http://192.168.1.120:8770"},
+            {"name": "A15", "url": "http://192.168.1.135:8770"},
+        ]
+        class MockHandler:
+            def __init__(self, path):
+                self.path = path
+                self.code = None
+                self.body = None
+                self.ctype = None
+            def _send(self, code, body, ctype):
+                self.code = code
+                self.body = body
+                self.ctype = ctype
+
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+            json.dump(config_data, f)
+            cfg_path = f.name
+        try:
+            presets = agora_map.load_preset_nodes(cfg_path)
+            called_with = []
+            def fake_node_fetch(node, path):
+                called_with.append((node, path))
+                return {"places": []}
+
+            with patch.object(agora_map, "PRESET_NODES", presets):
+                with patch.object(agora_map, "_node_fetch", side_effect=fake_node_fetch):
+                    h = MockHandler("/proxy?node=A15&what=view")
+                    agora_map.Handler.do_GET(h)
+                    self.assertEqual(h.code, 200)
+                    self.assertEqual(called_with, [("A15", "/view")])
+
+                # An unknown name is still refused
+                h_bad = MockHandler("/proxy?node=UnknownNode")
+                agora_map.Handler.do_GET(h_bad)
+                self.assertEqual(h_bad.code, 400)
+        finally:
+            os.unlink(cfg_path)
+
+    def test_missing_config_falls_back_to_defaults(self):
+        """Missing config falls back to today's Frosty and Home."""
+        nonexistent = "/tmp/nonexistent_map_nodes_test_12345.json"
+        presets = agora_map.load_preset_nodes(nonexistent)
+        self.assertEqual(presets, [
+            ("Frosty", "http://192.168.1.119:8770"),
+            ("Home", "http://192.168.1.120:8770"),
+        ])
+
+    def test_bad_configs_refused_at_load(self):
+        """A bad config (duplicate name, public URL, bidi/control char) is refused at load."""
+        cases = [
+            ("duplicate name", [
+                {"name": "Frosty", "url": "http://192.168.1.119:8770"},
+                {"name": "frosty", "url": "http://192.168.1.121:8770"},
+            ]),
+            ("public URL", [
+                {"name": "Evil", "url": "http://8.8.8.8:8770"},
+            ]),
+            ("public domain URL", [
+                {"name": "Evil", "url": "http://example.com:8770"},
+            ]),
+            ("bidi character in name", [
+                {"name": "Fro\u202Esty", "url": "http://192.168.1.119:8770"},
+            ]),
+            ("control character in name", [
+                {"name": "Fro\x00sty", "url": "http://192.168.1.119:8770"},
+            ]),
+            ("zero-width character in name", [
+                {"name": "Fro\u200Bsty", "url": "http://192.168.1.119:8770"},
+            ]),
+            ("empty name", [
+                {"name": "   ", "url": "http://192.168.1.119:8770"},
+            ]),
+            ("non-http scheme", [
+                {"name": "BadScheme", "url": "ftp://192.168.1.119:8770"},
+            ]),
+            ("not a list", {"name": "Frosty", "url": "http://192.168.1.119:8770"}),
+        ]
+        for desc, bad_data in cases:
+            with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+                json.dump(bad_data, f)
+                cfg_path = f.name
+            try:
+                with self.assertRaises(ValueError, msg=f"Expected ValueError for bad config: {desc}"):
+                    agora_map.load_preset_nodes(cfg_path)
+            finally:
+                os.unlink(cfg_path)
 
 
 if __name__ == "__main__":
