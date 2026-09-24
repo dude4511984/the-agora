@@ -70,6 +70,11 @@ READ_STALL = 180     # seconds with no new token => the stream has stalled
 TURN_DEADLINE = 1800 # seconds hard cap on one turn => runaway, abort it
 VISION_TIMEOUT = 300
 
+# Where each sitting's transcript is written. A module setting (same place as
+# before) so the tests can point it at a temp dir: they were writing mock
+# sittings ("Bong: NOT ASKED") into the real ~/claude_home beside real ones.
+SITTING_LOG_DIR = Path.home() / "claude_home"
+
 # Frozen 2026-09-07, Grok. File: ~/claude_home/agora_avatar_ask_FINAL.md
 ASK = """\
 {name} — this is an offer. You may author a still picture that stands
@@ -557,7 +562,7 @@ def run_sitting(name: str, backend: str, model: str | None = None,
     elif not result["claimed"]:
         emit(f"\n>>> No claim. {name} is represented by the shared default. Honest and revisable.\n")
 
-    out = Path.home() / "claude_home" / f"avatar_sitting_{name}_{ts}.md"
+    out = SITTING_LOG_DIR / f"avatar_sitting_{name}_{ts}.md"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text("\n".join(log) + "\n", encoding="utf-8")
     emit(f"\nTranscript: {out}")

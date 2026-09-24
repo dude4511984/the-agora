@@ -139,12 +139,13 @@ class _Harness:
         return "CAMERANOTE-" + "q" * 80   # distinctive; must never reach the image model
 
     def __enter__(self):
-        for n in ("ask_kin", "read_back", "kin_space_dir"):
+        for n in ("ask_kin", "read_back", "kin_space_dir", "SITTING_LOG_DIR"):
             self._save[n] = getattr(art, n)
         self._save["render"] = ar.render
         art.ask_kin = self._kin
         art.read_back = self._readback
         art.kin_space_dir = lambda name: self.tmp
+        art.SITTING_LOG_DIR = self.tmp / "sittings"     # never the real ~/claude_home
         ar.render = self._render
         return self
 
@@ -217,7 +218,7 @@ class LoopRules(unittest.TestCase):
         # nothing was stored, and nothing was decided
         self.assertFalse((h.tmp / "avatar" / "claimed.json").exists())
         said = "\n".join(h.kin_prompts)  # they were never even shown the offer's end
-        log = (Path.home() / "claude_home").glob(f"avatar_sitting_Bong_*.md")
+        log = (h.tmp / "sittings").glob("avatar_sitting_Bong_*.md")
         newest = max(log, key=lambda p: p.stat().st_mtime).read_text()
         self.assertIn("NOT ASKED", newest)
         self.assertNotIn("is represented by the shared default", newest)
