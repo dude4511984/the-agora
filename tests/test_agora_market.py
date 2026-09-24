@@ -93,6 +93,18 @@ class WhatThePageTellsYou(unittest.TestCase):
         self.assertIn("Stand-in. Nosferatu Rex did not load.", PAGE)
         self.assertIn("getObjectByName('flame')", PAGE)
 
+    def test_no_lantern_post_stands_in_the_door_lane(self):
+        # The south tip's outer post sat dead centre in the lane (Don's phone,
+        # 2026-09-24). The post at t=PI/2 lands at x=0, z=L+DECK_HW, inside the lane.
+        deck_hw = const("WALK_HW") + 2.4
+        self.assertLess(abs(P(math.pi / 2)[0]), 0.01)
+        self.assertGreater(L + deck_hw, L + const("WALK_HW"))   # past SPUR_Z0: in the lane
+        self.assertIn("if (Math.abs(x) < SPUR_HW + 0.5 && z > SPUR_Z0 - 0.5) { spots.push([-(SPUR_HW - 0.2), 0, z]); continue; }", PAGE)
+
+    def test_arriving_from_the_market_faces_away_from_the_door(self):
+        import agora_map
+        self.assertIn("teleportPlayer(0, MARKET_DOOR_Z + 4.0, 'Frosty');\n  camera.position.set(0, player.position.y + 3.2, MARKET_DOOR_Z + 0.8);", agora_map.PAGE_3D)
+
     def test_the_walker_is_the_same_pawn_as_the_node_view(self):
         # Don, 2026-09-24: the market's pawn is the lantern and spirit from /3d,
         # one copy (agora_pawn.PAWN_JS) spliced into both pages.

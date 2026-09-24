@@ -3279,7 +3279,12 @@ setInterval(() => {
 }, 15000);
 setInterval(pollKinIntents, 1500);
 if (new URLSearchParams(location.search).get('from') === 'market' && currentRoomMode !== 'Home') {
-  teleportPlayer(0, MARKET_DOOR_Z + 2.6, 'Frosty');
+  // Face away from the door you came through: the camera stands between you
+  // and the door, so holding W walks you into the node, not straight back
+  // out to the market (Don, 2026-09-24).
+  teleportPlayer(0, MARKET_DOOR_Z + 4.0, 'Frosty');
+  camera.position.set(0, player.position.y + 3.2, MARKET_DOOR_Z + 0.8);
+  controls.update();
 }
 const _autoCross = new URLSearchParams(location.search).get('cross');
 if (_autoCross) {

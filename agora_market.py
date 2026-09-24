@@ -256,7 +256,12 @@ world.add(ribbon(0, TWO_PI, -DECK_HW, DECK_HW, H, H, stoneMat, 3.2));
     const t = -Math.PI / 2 + Math.PI * i / 44, c = P(t), f = frame(t);
     for (const side of [-1, 1]){
       const x = c.x + f.N.x * side * DECK_HW, z = c.z + f.N.z * side * DECK_HW;
-      if (Math.hypot(x, z) > PLAZA_R + 0.5) spots.push([x, H(t), z]);
+      if (Math.hypot(x, z) <= PLAZA_R + 0.5) continue;
+      // The south tip's outer post landed dead centre in the door lane, in the
+      // walker's way (Don's phone, 2026-09-24). It stands against the lane's
+      // west wall instead: on your right as you face the door.
+      if (Math.abs(x) < SPUR_HW + 0.5 && z > SPUR_Z0 - 0.5) { spots.push([-(SPUR_HW - 0.2), 0, z]); continue; }
+      spots.push([x, H(t), z]);
     }
   }
   const posts = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.06, 0.08, 2.6, 6), ironMat, spots.length);
