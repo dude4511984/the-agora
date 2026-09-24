@@ -106,11 +106,35 @@ def _map_key():
         ) from exc
 
 
-def _node_name(base: str) -> str:
+def _resolve_node(target: str) -> tuple[str, str]:
+    """Resolve a node name or preset URL to (name, url). Refuses anything not in PRESET_NODES."""
+    target_clean = (target or "").rstrip("/")
     for name, preset in PRESET_NODES:
-        if preset.rstrip("/") == base.rstrip("/"):
-            return name
-    raise ValueError("node name is required for authorized map access")
+        if name.lower() == target_clean.lower() or preset.rstrip("/") == target_clean:
+            return name, preset
+    raise ValueError("node must be a known preset")
+
+
+def _node_name(base: str) -> str:
+    name, _ = _resolve_node(base)
+    return name
+
+
+def _sanitize_view_peer_doors(view: dict) -> None:
+    """Strip or replace peer door URLs with node names so LAN addresses never reach the browser."""
+    if not isinstance(view, dict):
+        return
+    for door in view.get("peer_doors") or []:
+        if isinstance(door, dict):
+            url = door.get("url")
+            peer = door.get("peer")
+            name = None
+            if url:
+                try:
+                    name = _node_name(url)
+                except ValueError:
+                    pass
+            door["url"] = name or peer or ""
 
 
 def _is_private_host(host: str) -> bool:
@@ -131,13 +155,14 @@ def _is_private_host(host: str) -> bool:
 
 def _node_fetch(base: str, path: str, node_name: str | None = None) -> dict:
     """GET one path off a private/loopback node. path is / or /view."""
-    u = urllib.parse.urlparse(base)
+    resolved_name, url_base = _resolve_node(base)
+    u = urllib.parse.urlparse(url_base)
     if u.scheme not in ("http", "https") or not _is_private_host(u.hostname or ""):
         raise ValueError("node must be a private/loopback http address")
-    url = base.rstrip("/") + path
+    url = url_base.rstrip("/") + path
     key = _map_key()
     headers = {"User-Agent": "agora-map/1"}
-    headers.update(sign_request(key, node_name or _node_name(base), path))
+    headers.update(sign_request(key, node_name or resolved_name, path))
     req = urllib.request.Request(url, headers=headers)
     with urllib.request.urlopen(req, timeout=FETCH_TIMEOUT) as resp:
         return json.loads(resp.read(2 * 1024 * 1024).decode())
@@ -311,12 +336,13 @@ PAGE = """<!doctype html>
 <script>
 const PRESETS = __PRESETS__;
 const sel = document.getElementById('node');
-PRESETS.forEach(([name,url]) => {
-  const o = document.createElement('option'); o.value = url; o.textContent = name + ' — ' + url;
+PRESETS.forEach(item => {
+  const name = Array.isArray(item) ? item[0] : item;
+  const o = document.createElement('option'); o.value = name; o.textContent = name;
   sel.appendChild(o);
 });
 const qNode = new URLSearchParams(location.search).get('node');
-if(qNode){ let o=[...sel.options].find(x=>x.value===qNode); if(!o){ o=document.createElement('option'); o.value=qNode; o.textContent='(linked) — '+qNode; sel.appendChild(o);} sel.value=qNode; }
+if(qNode){ let o=[...sel.options].find(x=>x.value.toLowerCase()===qNode.toLowerCase()); if(!o){ o=document.createElement('option'); o.value=qNode; o.textContent=qNode; sel.appendChild(o);} sel.value=o.value; }
 let timer = null;
 const MODES = ['plan','map','place'];
 let MODE = 'plan';
@@ -611,8 +637,8 @@ document.getElementById('world').addEventListener('click', e => {
   if(b.dataset.place){ CURRENT = b.dataset.place; load(); return; }
   if(!b.dataset.url) return;
   const url = b.dataset.url;
-  let opt = [...sel.options].find(o => o.value.replace(/\\/$/,'') === url.replace(/\\/$/,''));
-  if(!opt){ opt = document.createElement('option'); opt.value = url; opt.textContent = b.textContent.replace(/[🔒→\\s]/g,'') + ' — ' + url; sel.appendChild(opt); }
+  let opt = [...sel.options].find(o => o.value.toLowerCase() === url.toLowerCase());
+  if(!opt){ opt = document.createElement('option'); opt.value = url; opt.textContent = url; sel.appendChild(opt); }
   CURRENT = null; sel.value = opt.value; load();
 });
 
@@ -731,8 +757,10 @@ document.querySelector('#hud > div').addEventListener('click', () => document.ge
 function nodeNameForUrl(url){
   if (!url) return null;
   const norm = String(url).replace(/\\/+$/, '');
-  for (const [name, presetUrl] of PRESETS) {
-    if (String(presetUrl).replace(/\\/+$/, '') === norm) return name;
+  for (const item of PRESETS) {
+    const name = Array.isArray(item) ? item[0] : item;
+    const presetVal = Array.isArray(item) ? item[1] : item;
+    if (String(presetVal).replace(/\\/+$/, '').toLowerCase() === norm.toLowerCase()) return name;
     if (String(name).toLowerCase() === norm.toLowerCase()) return name;
   }
   return null;
@@ -741,9 +769,9 @@ function nodeNameForUrl(url){
 function defaultPeerDoorsFor(roomMode){
   const isHome = roomMode === 'Home';
   const peerName = isHome ? 'Frosty' : 'Home';
-  const hit = PRESETS.find(p => p[0] === peerName);
-  const peerUrl = hit ? hit[1] : (isHome ? 'http://192.168.1.119:8770' : 'http://192.168.1.120:8770');
-  return [{peer: peerName, url: peerUrl, kind: 'door', locked: false}];
+  const hit = PRESETS.find(p => (Array.isArray(p) ? p[0] : p).toLowerCase() === peerName.toLowerCase());
+  const destName = hit ? (Array.isArray(hit) ? hit[0] : hit) : peerName;
+  return [{peer: peerName, url: destName, kind: 'door', locked: false}];
 }
 
 
@@ -2858,7 +2886,7 @@ async function crossDoor(t){
   if (lab) lab.innerHTML = 'crossing to <b>' + t.peer + '</b>…';
   status.textContent = line;
   if (veil) veil.classList.add('on');
-  const who = nodeNameForUrl(t.url) || t.peer;
+  const who = nodeNameForUrl(t.url) || t.peer || t.url;
   const [answers] = await Promise.all([farSideAnswers(t.url), wait(750)]);
   if (!answers) {
     if (lab) lab.innerHTML = '<b>' + who + '</b> is asleep. The door stays shut.';
@@ -2869,20 +2897,20 @@ async function crossDoor(t){
     traveling = false;
     return;
   }
-  let opt = [...sel.options].find(o => o.value.replace(/\\/$/, '') === t.url.replace(/\\/$/, ''));
+  let opt = [...sel.options].find(o => o.value.toLowerCase() === who.toLowerCase());
   if (!opt) {
     opt = document.createElement('option');
-    opt.value = t.url;
-    opt.textContent = t.peer + ' — ' + t.url;
+    opt.value = who;
+    opt.textContent = who;
     sel.appendChild(opt);
   }
   sel.value = opt.value;
-  // The destination's real identity, from its URL — never a guess from
+  // The destination's real identity, from its node name — never a guess from
   // the door's free-text peer label or a substring of an IP. loadNode()
   // below re-confirms this against the destination's own signed root.node
   // once the fetch lands, but the room built here (and where the walker
   // is teleported) must already be right, not corrected a beat later.
-  const isDestHome = nodeNameForUrl(t.url) === 'Home';
+  const isDestHome = who === 'Home';
   buildRoom(isDestHome ? 'Home' : 'Frosty');
   teleportPlayer(0, isDestHome ? 2.8 : 6, isDestHome ? 'Home' : 'Frosty');
   try {
@@ -3238,18 +3266,19 @@ async function loadNode(){
   }
 }
 
-for (const [name, url] of PRESETS) {
-  const o = document.createElement('option'); o.value = url; o.textContent = name;
+for (const item of PRESETS) {
+  const name = Array.isArray(item) ? item[0] : item;
+  const o = document.createElement('option'); o.value = name; o.textContent = name;
   sel.appendChild(o);
 }
 const qNode = new URLSearchParams(location.search).get('node');
 if (qNode) {
-  const qNodeName = nodeNameForUrl(qNode);
-  let opt = [...sel.options].find(o => o.value.replace(/\\/$/, '') === qNode.replace(/\\/$/, '') || (qNodeName && o.textContent === qNodeName));
+  const qNodeName = nodeNameForUrl(qNode) || qNode;
+  let opt = [...sel.options].find(o => o.value.toLowerCase() === qNodeName.toLowerCase());
   if (!opt) {
     opt = document.createElement('option');
-    opt.value = qNode;
-    opt.textContent = qNodeName || qNode;
+    opt.value = qNodeName;
+    opt.textContent = qNodeName;
     sel.appendChild(opt);
   }
   sel.value = opt.value;
@@ -3289,8 +3318,9 @@ if (new URLSearchParams(location.search).get('from') === 'market' && currentRoom
 const _autoCross = new URLSearchParams(location.search).get('cross');
 if (_autoCross) {
   setTimeout(() => {
-    const hit = PRESETS.find(p => String(p[0]).toLowerCase() === _autoCross.toLowerCase());
-    if (hit) crossDoor({url: hit[1], peer: hit[0]});
+    const hit = PRESETS.find(p => (Array.isArray(p) ? p[0] : p).toLowerCase() === _autoCross.toLowerCase());
+    const dest = hit ? (Array.isArray(hit) ? hit[0] : hit) : _autoCross;
+    if (dest) crossDoor({url: dest, peer: dest});
   }, 2000);
 }
 
@@ -3878,7 +3908,8 @@ def _voice_post_parts(content_type, body, query_kin=""):
 
 
 def render_3d_page(is_public: bool = False) -> str:
-    html = PAGE_3D.replace("__PRESETS__", json.dumps(PRESET_NODES))
+    preset_names = [name for name, _ in PRESET_NODES]
+    html = PAGE_3D.replace("__PRESETS__", json.dumps(preset_names))
     if not is_public:
         return html
 
@@ -3940,7 +3971,8 @@ class Handler(BaseHTTPRequestHandler):
             if qs.get("public", ["0"])[0] in ("1", "true", "yes"):
                 html = render_3d_page(is_public=True)
             else:
-                html = PAGE.replace("__PRESETS__", json.dumps(PRESET_NODES))
+                preset_names = [name for name, _ in PRESET_NODES]
+                html = PAGE.replace("__PRESETS__", json.dumps(preset_names))
             self._send(200, html.encode(), "text/html; charset=utf-8")
             return
         if route == "/market":
@@ -4025,6 +4057,8 @@ class Handler(BaseHTTPRequestHandler):
             path = "/" if what == "root" else "/view"
             try:
                 data = _node_fetch(node, path)
+                if path == "/view":
+                    _sanitize_view_peer_doors(data)
                 self._send(200, json.dumps(data).encode(), "application/json")
             except ValueError as e:
                 self._send(400, json.dumps({"error": str(e)}).encode(), "application/json")

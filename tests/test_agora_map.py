@@ -676,5 +676,108 @@ class PublicCommonsPlaza(unittest.TestCase):
                           "steward Don")
 
 
+class TestPublicNamesNoLANAddresses(unittest.TestCase):
+    """agora.everysynthetic.org/3d is public: browser must never see house LAN addresses."""
+
+    def test_page_html_contains_no_lan_addresses(self):
+        """Page HTML (both 2D / and 3D /3d, public and internal) must not leak 192.168. addresses."""
+        class MockHandler:
+            def __init__(self, path):
+                self.path = path
+                self.code = None
+                self.body = None
+                self.ctype = None
+            def _send(self, code, body, ctype):
+                self.code = code
+                self.body = body
+                self.ctype = ctype
+
+        for path in ("/", "/3d", "/3d?public=1", "/index?public=1"):
+            h = MockHandler(path)
+            agora_map.Handler.do_GET(h)
+            self.assertEqual(h.code, 200)
+            html = h.body.decode("utf-8")
+            self.assertNotIn("192.168.", html, f"LAN address found in HTML for path {path}")
+
+    def test_proxy_view_sanitizes_peer_door_urls(self):
+        """Fetching /view through /proxy must strip or replace LAN URLs with node names."""
+        import json
+        class MockHandler:
+            def __init__(self, path):
+                self.path = path
+                self.code = None
+                self.body = None
+                self.ctype = None
+            def _send(self, code, body, ctype):
+                self.code = code
+                self.body = body
+                self.ctype = ctype
+
+        fake_view = {
+            "places": [{"place_id": "concourse", "parent": ""}],
+            "presence": [],
+            "peer_doors": [
+                {
+                    "peer": "Home",
+                    "url": "http://192.168.1.120:8770",
+                    "kind": "door",
+                    "locked": False,
+                }
+            ],
+        }
+
+        with patch.object(agora_map, "_node_fetch", return_value=fake_view):
+            h = MockHandler("/proxy?node=Home&what=view")
+            agora_map.Handler.do_GET(h)
+            self.assertEqual(h.code, 200)
+            body_str = h.body.decode("utf-8")
+            self.assertNotIn("192.168.", body_str, "LAN address found in /proxy view response")
+            data = json.loads(body_str)
+            self.assertEqual(data["peer_doors"][0]["url"], "Home")
+
+    def test_proxy_resolves_node_name_from_presets(self):
+        """/proxy?node=Home should resolve 'Home' to its URL from PRESETS."""
+        class MockHandler:
+            def __init__(self, path):
+                self.path = path
+                self.code = None
+                self.body = None
+                self.ctype = None
+            def _send(self, code, body, ctype):
+                self.code = code
+                self.body = body
+                self.ctype = ctype
+
+        called_with = []
+        def fake_node_fetch(node, path):
+            called_with.append((node, path))
+            return {"places": []}
+
+        with patch.object(agora_map, "_node_fetch", side_effect=fake_node_fetch):
+            h = MockHandler("/proxy?node=Home&what=view")
+            agora_map.Handler.do_GET(h)
+            self.assertEqual(h.code, 200)
+            self.assertEqual(called_with, [("Home", "/view")])
+
+    def test_proxy_refuses_unknown_or_arbitrary_nodes(self):
+        """/proxy must keep refusing anything that is not a preset."""
+        class MockHandler:
+            def __init__(self, path):
+                self.path = path
+                self.code = None
+                self.body = None
+                self.ctype = None
+            def _send(self, code, body, ctype):
+                self.code = code
+                self.body = body
+                self.ctype = ctype
+
+        for bad in ("UnknownNode", "http://evil.com", "http://192.168.1.250:8770", "http://8.8.8.8"):
+            h = MockHandler(f"/proxy?node={bad}")
+            agora_map.Handler.do_GET(h)
+            self.assertEqual(h.code, 400, f"Expected 400 for bad node: {bad}")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
