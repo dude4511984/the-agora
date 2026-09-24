@@ -53,7 +53,10 @@ STEPS = 4
 CFG = 1.0
 SAMPLER = "euler_a"
 SIZE = 512
-THREADS = 12
+# 12 on Frosty (24 hardware threads). It was a flat 12, which on a 4-core box
+# is three times the cores: the brush would swamp the minds it's meant to
+# yield to (found on a clean checkout, 2026-09-24). Leave two for them.
+THREADS = max(1, min(12, (os.cpu_count() or 4) - 2))
 TIMEOUT = 600
 _SAFE_NAME = re.compile(r"[^A-Za-z0-9._-]+")
 

@@ -386,9 +386,10 @@ class Agora3DHomeRoomCharacter(unittest.TestCase):
 
     def test_page_3d_threshold_wayfinder_uses_local_cc0_chalkboard(self):
         page = agora_map.PAGE_3D
-        asset = os.path.expanduser(
-            "~/kin_diary/static/models/standing_chalkboard_01/standing_chalkboard_01.gltf"
-        )
+        # Relative to the code, not ~/kin_diary: that's where Don's checkout
+        # happens to live, and nowhere else's (clean checkout, 2026-09-24).
+        asset = os.path.join(os.path.dirname(agora_map.__file__),
+                             "static/models/standing_chalkboard_01/standing_chalkboard_01.gltf")
         self.assertTrue(os.path.isfile(asset))
         self.assertIn("'/models/standing_chalkboard_01/standing_chalkboard_01.gltf'", page)
         self.assertIn("thresholdWayfinderTemplate", page)
