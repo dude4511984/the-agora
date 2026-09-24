@@ -101,6 +101,15 @@ class _FakeMapUpstream(BaseHTTPRequestHandler):
             self.wfile.write(body)
             return
 
+        if self.path in ("/market", "/public-commons-ads"):
+            body = b"<!doctype html>market" if self.path == "/market" else b'{"posts": []}'
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html" if self.path == "/market" else "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
         if self.path.startswith("/avatar") or self.path.startswith("/shape3d") or self.path.startswith("/proxy"):
             body = b'{"data": "present"}'
             self.send_response(200)
@@ -231,6 +240,27 @@ class _DoorCase(unittest.TestCase):
         self.assertEqual(len(_FakeMapUpstream.seen), len(paths))
         for req_path, req_hdrs in _FakeMapUpstream.seen:
             self.assertEqual(req_hdrs.get("X-Agora-Door"), "1")
+
+    def test_the_market_and_its_ads_are_open(self):
+        """Don, 2026-09-24: "Let strangers walk the commons. Open the doors."
+        The market (/market) and the feed its stalls and the plaza read
+        (/public-commons-ads: the Commons' own public posts, already served
+        here as /commons/posts) go through the door, read-only, like /3d."""
+        for path in ("/market", "/public-commons-ads"):
+            status, _, _ = self._get(path)
+            self.assertEqual(status, 200, path)
+        self.assertEqual([p for p, _ in _FakeMapUpstream.seen], ["/market", "/public-commons-ads"])
+        for _, req_hdrs in _FakeMapUpstream.seen:
+            self.assertEqual(req_hdrs.get("X-Agora-Door"), "1")
+
+    def test_leaving_the_market_lands_back_on_the_path(self):
+        """/3d?from=market reaches the map as /3d?public=1&from=market; any
+        other query is still dropped, and public=1 is never lost."""
+        self._get("/3d?from=market")
+        self._get("/3d?from=market&public=0&cross=Home")
+        self._get("/3d?cross=Home")
+        self.assertEqual([p for p, _ in _FakeMapUpstream.seen],
+                         ["/3d?public=1&from=market", "/3d?public=1&from=market", "/3d?public=1"])
 
     # ── node ring-0 paths ──────────────────────────────────────────────────
 

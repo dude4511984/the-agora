@@ -11,7 +11,10 @@ to that key in Frosty's record. The door holds no other power and no
 other key.
 
 Allowlist, not blocklist:
-- GET / and GET /3d -> Frosty agora_map:8791/3d?public=1 (read-only 3D courtyard)
+- GET / and GET /3d -> Frosty agora_map:8791/3d?public=1 (read-only 3D courtyard;
+  ?from=market is carried, nothing else)
+- GET /market -> Frosty agora_map:8791/market (the Commons as a place; read-only)
+- GET /public-commons-ads -> Frosty agora_map:8791 (the Commons' public posts)
 - GET /facts -> Frosty node:8770/ (signed ring-0 facts HTML or JSON)
 - GET /view -> Frosty node:8770/view (signed ring-0 atlas teaser JSON)
 - GET /commons-recent, /kin-intent -> Frosty agora_map:8791 (polled JSON)
@@ -75,7 +78,12 @@ from kin_diary.keys import load_current  # noqa: E402
 from kin_diary.agora.wire import sign_request  # noqa: E402
 
 ALLOWED_NODE_PATHS = frozenset({"/facts", "/view"})
-ALLOWED_MAP_EXACT_PATHS = frozenset({"/", "/3d", "/commons-recent", "/kin-intent"})
+# /market and /public-commons-ads opened 2026-09-24, Don: "Let strangers walk
+# the commons. Open the doors." The market is the Commons as a place (read-only,
+# labelled UNSAFE); /public-commons-ads is the Commons' own public posts, the
+# same ones /commons/posts already serves, which the plaza and the stalls read.
+ALLOWED_MAP_EXACT_PATHS = frozenset({"/", "/3d", "/commons-recent", "/kin-intent",
+                                     "/market", "/public-commons-ads"})
 ALLOWED_MAP_QUERY_PATHS = frozenset({"/proxy", "/avatar", "/shape3d"})
 ALLOWED_MAP_PREFIXES = ("/models/", "/static/agora/")
 ALLOWED_COMMONS_GET_PATHS = frozenset({"/commons/posts"})
@@ -336,6 +344,11 @@ class DoorHandler(BaseHTTPRequestHandler):
         elif path in ("/", "/3d"):
             target_kind = "map"
             target_path = "/3d?public=1"
+            # Coming back out of the market's one door: the map stands you on
+            # the path just inside the arch. Only this one flag is carried;
+            # every other query is still dropped, and public=1 always leads.
+            if urllib.parse.parse_qs(query).get("from") == ["market"]:
+                target_path += "&from=market"
         elif path in ALLOWED_MAP_EXACT_PATHS:
             target_kind = "map"
             target_path = path
