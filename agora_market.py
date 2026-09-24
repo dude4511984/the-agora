@@ -16,9 +16,9 @@ parameter) and how far across it (u), never by raw x/z. Where the bridge
 passes over the arcade, both streets share the same x/z; t says which one
 you are on, and height and edges come from it. No circle colliders.
 
-Models are optional drop-ins. If static/models/market/statue.glb or
-gargoyle.glb exist they are loaded; otherwise a plainly labelled stand-in
-is drawn. Nothing here pretends to be what it isn't.
+Models live in static/models/statues/ (Frosty's: cthulhu, nosferatu,
+gargoyle, brazier). Each loads if present; otherwise a plainly labelled
+stand-in is drawn. Nothing here pretends to be what it isn't.
 """
 
 MARKET_PAGE = r"""<!doctype html>
@@ -72,6 +72,12 @@ const DECK_HW = WALK_HW + 2.4;         // street floor, stalls stand in the oute
 const BRIDGE_H = 5.5;                  // deck height where the street passes over itself
 const ARCADE_H = 4.0;                  // arcade roof over the low diagonal
 const SPUR_HW = 1.9, SPUR_LEN = 13;    // the one way in: a short lane south to the door
+// Where the street crosses itself the bridge widens into a round platform,
+// and Cthulhu sits in the middle of it (Don: "centre of the figure eight, at
+// the crossing"). A statue in the crossing itself would block both streets;
+// on a platform you walk around him and the arcade still runs underneath.
+const PLAZA_R = 9.0, PLAZA_Y = BRIDGE_H + 0.03;
+let STATUE_R = 2.4;                    // Cthulhu's footprint; measured from the model when it loads
 const TWO_PI = Math.PI * 2;
 
 function P(t){ return {x: (W / 2) * Math.sin(2 * t), z: L * Math.sin(t)}; }
@@ -177,13 +183,47 @@ world.add(ribbon(0, TWO_PI, -DECK_HW, DECK_HW, H, H, stoneMat, 3.2));
         runStart = null;
       }
     }
-    // Parapet along the whole high diagonal where it's off the ground.
-    world.add(ribbon(-Math.PI / 2, Math.PI / 2, side * DECK_HW, side * DECK_HW,
-      t => H(t) + (H(t) > 0.4 ? 1.0 : 0), H, darkStone, 3));
+    // Parapet along the high diagonal where it's off the ground, stopping at
+    // the platform's rim.
+    let ps = null;
+    for (let i = 0; i <= n; i++){
+      const t = tA + (tB - tA) * i / n, c = P(t), f = frame(t);
+      const inPlaza = Math.hypot(c.x + f.N.x * side * DECK_HW, c.z + f.N.z * side * DECK_HW) < PLAZA_R;
+      if (!inPlaza && ps === null) ps = t;
+      if ((inPlaza || i === n) && ps !== null){
+        world.add(ribbon(ps, t, side * DECK_HW, side * DECK_HW, t2 => H(t2) + (H(t2) > 0.4 ? 1.0 : 0), H, darkStone, 3));
+        ps = null;
+      }
+    }
   }
-  // Underside of the deck over the crossing, so the arcade sees a ceiling.
-  const under = ribbon(-0.45, 0.45, -DECK_HW, DECK_HW, t => H(t) - 0.45, t => H(t) - 0.45, darkStone, 3);
-  world.add(under);
+  // The platform: a stone disc over the crossing, its underside the arcade's
+  // ceiling there. A low wall round the rim, open where the street comes in.
+  const disc = new THREE.Mesh(new THREE.CylinderGeometry(PLAZA_R, PLAZA_R, 0.55, 56), stoneMat);
+  disc.position.y = PLAZA_Y - 0.275; world.add(disc);
+  const T0 = frame(0).T, gapHalf = Math.asin(Math.min(1, (DECK_HW + 0.2) / PLAZA_R));
+  const aT = Math.atan2(T0.z, T0.x), segs = 44, rim = [];
+  for (let i = 0; i < segs; i++){
+    const a = (i + 0.5) * TWO_PI / segs;
+    if (Math.abs(wrapPI(a - aT)) < gapHalf || Math.abs(wrapPI(a - aT - Math.PI)) < gapHalf) continue;
+    rim.push(a);
+  }
+  const rimWall = new THREE.InstancedMesh(new THREE.BoxGeometry(0.45, 1.0, TWO_PI * PLAZA_R / segs + 0.05), darkStone, rim.length);
+  const m = new THREE.Matrix4(), q = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0), one = new THREE.Vector3(1, 1, 1);
+  rim.forEach((a, i) => {
+    q.setFromAxisAngle(up, -a);
+    m.compose(new THREE.Vector3(Math.cos(a) * (PLAZA_R - 0.2), PLAZA_Y + 0.5, Math.sin(a) * (PLAZA_R - 0.2)), q, one);
+    rimWall.setMatrixAt(i, m);
+  });
+  world.add(rimWall);
+  // Piers under the rim, only where the arcade isn't passing.
+  const piers = [];
+  for (let i = 0; i < 12; i++){
+    const a = i * TWO_PI / 12, x = Math.cos(a) * (PLAZA_R - 1.3), z = Math.sin(a) * (PLAZA_R - 1.3);
+    if (!overLowStreet(x, z, 0.8)) piers.push([x, z]);
+  }
+  const pier = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.55, 0.7, PLAZA_Y - 0.55, 10), darkStone, piers.length);
+  piers.forEach(([x, z], i) => { m.makeTranslation(x, (PLAZA_Y - 0.55) / 2, z); pier.setMatrixAt(i, m); });
+  world.add(pier);
 }
 // Arcade: roof and columns over the low diagonal.
 {
@@ -210,7 +250,10 @@ world.add(ribbon(0, TWO_PI, -DECK_HW, DECK_HW, H, H, stoneMat, 3.2));
   const spots = [];
   for (let i = 0; i <= 44; i++){
     const t = -Math.PI / 2 + Math.PI * i / 44, c = P(t), f = frame(t);
-    for (const side of [-1, 1]) spots.push([c.x + f.N.x * side * DECK_HW, H(t), c.z + f.N.z * side * DECK_HW]);
+    for (const side of [-1, 1]){
+      const x = c.x + f.N.x * side * DECK_HW, z = c.z + f.N.z * side * DECK_HW;
+      if (Math.hypot(x, z) > PLAZA_R + 0.5) spots.push([x, H(t), z]);
+    }
   }
   const posts = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.06, 0.08, 2.6, 6), ironMat, spots.length);
   const lamps = new THREE.InstancedMesh(new THREE.BoxGeometry(0.26, 0.34, 0.26), glowMat, spots.length);
@@ -221,15 +264,15 @@ world.add(ribbon(0, TWO_PI, -DECK_HW, DECK_HW, H, H, stoneMat, 3.2));
   });
   world.add(posts, lamps);
 }
-// The landmark at the crossing: two lantern masts on the bridge, seen from everywhere.
+// The landmark at the crossing: two lantern masts on the platform's rim, seen from everywhere.
 {
   const f = frame(0);
   for (const side of [-1, 1]){
-    const x = f.N.x * side * (DECK_HW - 0.4), z = f.N.z * side * (DECK_HW - 0.4);
+    const x = f.N.x * side * (PLAZA_R - 0.5), z = f.N.z * side * (PLAZA_R - 0.5);
     const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.22, 9, 8), ironMat);
-    mast.position.set(x, BRIDGE_H + 4.5, z);
+    mast.position.set(x, PLAZA_Y + 4.5, z);
     const cage = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.9, 0.7), glowMat);
-    cage.position.set(x, BRIDGE_H + 9.2, z);
+    cage.position.set(x, PLAZA_Y + 9.2, z);
     world.add(mast, cage);
   }
 }
@@ -332,17 +375,39 @@ function standIn(group, label){
 function tryModel(url, onLoad, onMissing){
   loader.load(url, g => onLoad(g.scene), undefined, () => onMissing());
 }
+// Frosty's statues are shape only: no UVs, no materials. Carved stone.
+const statueMat = new THREE.MeshStandardMaterial({color: 0x8f8676, roughness: 0.88});
+function carve(obj){ obj.traverse(o => { if (o.isMesh) o.material = statueMat; }); return obj; }
+// Scale to a height, stand the base on y=0, centre it; returns the footprint radius.
+function fitTo(obj, height){
+  const box = new THREE.Box3().setFromObject(obj), size = box.getSize(new THREE.Vector3());
+  const sc = height / Math.max(size.y, 0.001); obj.scale.setScalar(sc);
+  const c = box.getCenter(new THREE.Vector3());
+  obj.position.set(-c.x * sc, -box.min.y * sc, -c.z * sc);
+  return 0.5 * Math.max(size.x, size.z) * sc;
+}
+// Cthulhu, centre of the platform, facing south toward the way in.
+{
+  const g = new THREE.Group(); g.position.set(0, PLAZA_Y, 0); world.add(g);
+  const up = new THREE.SpotLight(0x9ab0ff, 1.2, 22, 0.55, 0.7, 1.5);
+  up.position.set(0, 0.2, 5.5); up.target.position.set(0, 4, 0); g.add(up, up.target);
+  tryModel('/models/statues/cthulhu.glb', obj => {
+    STATUE_R = fitTo(carve(obj), 7.0) + 0.1; g.add(obj);
+  }, () => {
+    const p = new THREE.Mesh(new THREE.CylinderGeometry(2.2, 2.4, 1.4, 16), darkStone); p.position.y = 0.7; g.add(p);
+  });
+}
 const STATUE_AT = {x: 0, z: -0.62 * L};
 {
   const g = new THREE.Group(); g.position.set(STATUE_AT.x, 0, STATUE_AT.z); world.add(g);
-  const plinth = new THREE.Mesh(new THREE.BoxGeometry(5, 1.6, 5), darkStone); plinth.position.y = 0.8; g.add(plinth);
   const up = new THREE.SpotLight(0xff9a6a, 1.6, 26, 0.5, 0.6, 1.5);
-  up.position.set(0, 0.3, 6); up.target.position.set(0, 9, 0); g.add(up, up.target);
-  tryModel('/models/market/statue.glb', obj => {
-    const box = new THREE.Box3().setFromObject(obj), size = box.getSize(new THREE.Vector3());
-    const sc = 10 / Math.max(size.y, 0.001); obj.scale.setScalar(sc);
-    obj.position.y = 1.6 - box.min.y * sc; g.add(obj);
+  up.position.set(0, 0.3, 6); up.target.position.set(0, 7, 0); g.add(up, up.target);
+  // Nosferatu Rex: Don's original vampire lord, on his own named pedestal.
+  tryModel('/models/statues/nosferatu.glb', obj => {
+    const base = new THREE.Mesh(new THREE.BoxGeometry(5, 0.4, 5), darkStone); base.position.y = 0.2; g.add(base);
+    fitTo(carve(obj), 9.0); obj.position.y += 0.4; g.add(obj);
   }, () => {
+    const plinth = new THREE.Mesh(new THREE.BoxGeometry(5, 1.6, 5), darkStone); plinth.position.y = 0.8; g.add(plinth);
     // Stand-in: a cloaked figure, one hand raised. Original, not anyone's character.
     const cloak = new THREE.Mesh(new THREE.ConeGeometry(2.1, 7.2, 12, 1, true), darkStone); cloak.position.y = 1.6 + 3.6;
     const shoulders = new THREE.Mesh(new THREE.SphereGeometry(1.15, 12, 8), darkStone); shoulders.position.y = 1.6 + 7.0;
@@ -352,7 +417,7 @@ const STATUE_AT = {x: 0, z: -0.62 * L};
     const collar = new THREE.Mesh(new THREE.ConeGeometry(1.4, 1.6, 10, 1, true), darkStone);
     collar.position.y = 1.6 + 7.9; collar.rotation.x = Math.PI;
     g.add(cloak, shoulders, head, arm, collar);
-    const p = standIn(g, 'Stand-in. The vampire lord arrives with the assets.');
+    const p = standIn(g, 'Stand-in. Nosferatu Rex did not load.');
     p.position.set(0, 1.0, 2.52); g.add(p);
   });
 }
@@ -386,8 +451,32 @@ const FLAMES = [];
   const door = new THREE.Mesh(new THREE.BoxGeometry(3.2, 4.4, 0.25), woodMat); door.position.set(0, 2.2, 0.2);
   const seam = new THREE.Mesh(new THREE.BoxGeometry(0.05, 4.2, 0.02), glowMat); seam.position.set(0, 2.2, 0.05);
   g.add(left, right, lintel, door, seam);
-  for (const side of [-1, 1]){
-    // Inside the lane, either side of the door, clear of the walkable band.
+  // Frosty's braziers (stone pillar, iron bowl, a node named "flame" at the
+  // bowl). The fire is ours: a flame and a flickering light at that node.
+  const BX = SPUR_HW + 0.1, BZ = -1.0, BRAZIER_H = 2.6;
+  function fire(parent, x, y, z, seed){
+    const outer = new THREE.Mesh(new THREE.ConeGeometry(0.34, 1.0, 10), new THREE.MeshBasicMaterial({color: 0xff7a2a, transparent: true, opacity: 0.85}));
+    const inner = new THREE.Mesh(new THREE.ConeGeometry(0.18, 0.62, 8), new THREE.MeshBasicMaterial({color: 0xffd27a}));
+    outer.position.set(x, y + 0.5, z); inner.position.set(x, y + 0.36, z);
+    const light = new THREE.PointLight(0xff8a3c, 1.3, 12, 2); light.position.set(x, y + 0.9, z - 0.3);
+    parent.add(outer, inner, light);
+    FLAMES.push({flame: outer, inner, light, seed});
+  }
+  tryModel('/models/statues/brazier.glb', obj => {
+    const pristine = obj.clone(true);      // fitTo sets scale outright; clone before, not after
+    for (const side of [-1, 1]){
+      const b = side === -1 ? obj : pristine;
+      fitTo(b, BRAZIER_H);
+      const holder = new THREE.Group(); holder.position.set(side * BX, 0, BZ); holder.add(b); g.add(holder);
+      holder.updateMatrixWorld(true);
+      const anchor = b.getObjectByName('flame');
+      const at = new THREE.Vector3();
+      if (anchor) anchor.getWorldPosition(at); else at.set(side * BX, BRAZIER_H, 0).add(g.position).add(new THREE.Vector3(0, 0, BZ));
+      g.worldToLocal(at);
+      fire(g, at.x, at.y, at.z, side * 1.7);
+    }
+  }, () => { for (const side of [-1, 1]) {
+    // Fallback: the iron torches from before.
     const TX = SPUR_HW - 0.05, TZ = -1.1;
     const post = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.16, 2.8, 8), ironMat); post.position.set(side * TX, 1.4, TZ);
     const bowl = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.2, 0.35, 10), ironMat); bowl.position.set(side * TX, 2.95, TZ);
@@ -396,12 +485,12 @@ const FLAMES = [];
     const light = new THREE.PointLight(0xff8a3c, 1.3, 12, 2); light.position.set(side * TX, 3.8, TZ - 0.4);
     g.add(post, bowl, flame, light);
     FLAMES.push({flame, light, seed: side * 1.7});
-  }
-  const perch = new THREE.Group(); perch.position.set(0, 7.3, -0.3); g.add(perch);
-  tryModel('/models/market/gargoyle.glb', obj => {
-    const box = new THREE.Box3().setFromObject(obj), size = box.getSize(new THREE.Vector3());
-    const sc = 1.8 / Math.max(size.y, 0.001); obj.scale.setScalar(sc); obj.position.y = -box.min.y * sc;
-    obj.rotation.y = Math.PI; perch.add(obj);
+  } });
+  // On top of the wall (7.0 m), not above it: 7.3 left the gargoyle floating (measured).
+  const perch = new THREE.Group(); perch.position.set(0, 7.0, -0.3); g.add(perch);
+  tryModel('/models/statues/gargoyle.glb', obj => {
+    fitTo(carve(obj), 2.2);
+    const turn = new THREE.Group(); turn.rotation.y = Math.PI; turn.add(obj); perch.add(turn);   // faces into the market
   }, () => {
     const body = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.9, 0.9), darkStone); body.position.y = 0.45;
     const head = new THREE.Mesh(new THREE.SphereGeometry(0.36, 10, 8), darkStone); head.position.set(0, 1.05, -0.35);
@@ -423,6 +512,7 @@ let yaw = 0, pitch = 0.28;     // camera looks north on arrival (the door is beh
 
 function position(){
   if (state.mode === 'lane') return {x: state.x, y: 0, z: state.z};
+  if (state.mode === 'plaza') return {x: state.x, y: PLAZA_Y, z: state.z};
   const c = P(state.t), f = frame(state.t);
   return {x: c.x + f.N.x * state.u, y: H(state.t), z: c.z + f.N.z * state.u};
 }
@@ -436,8 +526,36 @@ function nearestTipT(x, z){
   }
   return best;
 }
+function nearestT(x, z, center){
+  const base = center + TWO_PI * Math.round((state.t - center) / TWO_PI);
+  let best = base, bd = 1e9;
+  for (let i = -90; i <= 90; i++){
+    const t = base + i * 0.005, c = P(t), d = Math.hypot(c.x - x, c.z - z);
+    if (d < bd){ bd = d; best = t; }
+  }
+  return best;
+}
 let leaving = false;
 function step(mx, mz){
+  if (state.mode === 'plaza'){
+    let x = state.x + mx, z = state.z + mz;
+    const d = Math.hypot(x, z), keep = STATUE_R + 0.35;
+    if (d < keep && d > 1e-4){ x *= keep / d; z *= keep / d; }             // around Cthulhu, not through
+    const r = Math.hypot(x, z);
+    if (r > PLAZA_R - 0.6){
+      const N0 = frame(0).N, lat = Math.abs(x * N0.x + z * N0.z);
+      if (lat < WALK_HW - 0.35){                                         // out through a gap onto the bridge
+        const t = nearestT(x, z, 0), c = P(t), f = frame(t);
+        state.mode = 'path'; state.t = t;
+        const lim0 = WALK_HW - 0.35;
+        state.u = Math.max(-lim0, Math.min(lim0, (x - c.x) * f.N.x + (z - c.z) * f.N.z));
+        return;
+      }
+      x *= (PLAZA_R - 0.6) / r; z *= (PLAZA_R - 0.6) / r;
+    }
+    state.x = x; state.z = z;
+    return;
+  }
   if (state.mode === 'lane'){
     state.x = Math.max(-SPUR_HW + 0.35, Math.min(SPUR_HW - 0.35, state.x + mx));
     state.z = Math.min(SPUR_Z1 - 0.2, state.z + mz);
@@ -462,6 +580,11 @@ function step(mx, mz){
     state.mode = 'lane'; state.x = here.x; state.z = SPUR_Z0 + 0.05; return;
   }
   state.u = Math.max(-lim, Math.min(lim, u));
+  // Onto the platform: on the high pass only (the arcade runs underneath).
+  if (Math.cos(state.t) > 0.9){
+    const h = position();
+    if (Math.hypot(h.x, h.z) < PLAZA_R - 1.0){ state.mode = 'plaza'; state.x = h.x; state.z = h.z; }
+  }
 }
 function leave(){
   if (leaving) return; leaving = true;
@@ -541,7 +664,8 @@ function frameTick(){
   camera.lookAt(p.x, p.y + 1.3, p.z);
   FLAMES.forEach(f => {
     const k = 0.85 + 0.15 * Math.sin(tt * 11 + f.seed) * Math.sin(tt * 7.3 + f.seed * 2);
-    f.flame.scale.set(1, k, 1); f.light.intensity = 1.1 * k + 0.2;
+    f.flame.scale.set(1, k, 1); if (f.inner) f.inner.scale.set(1, 0.9 + 0.2 * k, 1);
+    f.light.intensity = 1.1 * k + 0.2;
   });
   updateCompass();
   renderer.render(scene, camera);

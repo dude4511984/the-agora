@@ -57,6 +57,9 @@ MODEL_CONTENT_TYPES = {
     ".gltf": "model/gltf+json", ".bin": "application/octet-stream",
     ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png",
     ".hdr": "image/vnd.radiance",
+    # Frosty's statues ship as single-file glb (2026-09-24). Without this every
+    # one of them 404'd and the market fell back to its stand-ins.
+    ".glb": "model/gltf-binary",
 }
 # kin_commons_runner.py's real board — one process, both hosts, one local
 # file (see its own docstring). Presence in the Agora protocol is a bare
