@@ -2345,6 +2345,36 @@ const adPostMat = new THREE.MeshStandardMaterial({color: 0x33302a, roughness: 0.
 const adPostGeo = new THREE.BoxGeometry(0.1, 0.85, 0.1);
 const _adBoardCache = new Map(); // post.id -> {sig, mesh, mat}
 const PLAZA_CENTER_Z = -21.5, PLAZA_ARC_R = 4.0;
+// The path out of the north gate (Don's walk, item 3): flagstones from the
+// gate to the plaza's paving, and on from its far edge to where the market
+// door will stand at the edge of the walkable world (FLOOR_R = 30). The
+// same cobblestone the courtyard uses, its own texture copies so the tiling
+// runs along the path instead of fighting the courtyard's repeat.
+const NORTH_PATH_W = 3.2, NORTH_PATH_END_Z = -28.8;
+function _pathTex(url, srgb, len){
+  const t = floorTex(url, srgb);
+  t.repeat.set(NORTH_PATH_W / 2.5, len / 2.5);
+  return t;
+}
+function northPathStrip(z0, z1){
+  const len = Math.abs(z1 - z0);
+  const mat = new THREE.MeshStandardMaterial({
+    map: _pathTex('/models/cobblestone_pavement/cobblestone_pavement_diff_1k.jpg', true, len),
+    normalMap: _pathTex('/models/cobblestone_pavement/cobblestone_pavement_nor_gl_1k.jpg', false, len),
+    roughness: 0.95,
+  });
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(NORTH_PATH_W, len), mat);
+  m.rotation.x = -Math.PI / 2;
+  m.position.set(0, 0.015, (z0 + z1) / 2);
+  return m;
+}
+const northPathGroup = new THREE.Group();
+{
+  const plazaNear = PLAZA_CENTER_Z + 2.0 + 5.2, plazaFar = PLAZA_CENTER_Z + 2.0 - 5.2;
+  northPathGroup.add(northPathStrip(-10.6, plazaNear + 0.3));
+  northPathGroup.add(northPathStrip(plazaFar - 0.3, NORTH_PATH_END_Z));
+}
+publicCommonsGroup.add(northPathGroup);
 const plazaPavingGeo = new THREE.CircleGeometry(5.2, 32);
 const plazaPavingMat = new THREE.MeshStandardMaterial({color: 0x4a443b, roughness: 0.95});
 
@@ -2418,7 +2448,7 @@ function updatePublicCommonsPlaza(){
   publicCommonsGroup.visible = onFrosty;
   if (!onFrosty) return;
 
-  publicCommonsGroup.children.slice().forEach(c => publicCommonsGroup.remove(c));
+  publicCommonsGroup.children.slice().forEach(c => { if (c !== northPathGroup) publicCommonsGroup.remove(c); });
 
   const plate = buildPlate(publicCommonsAds.label || 'UNSAFE. Anyone can read. Nothing here is verified. Posting is by introduction, for now.');
   // Just past the wall line, not inside the courtyard: the courtyard's
