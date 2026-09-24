@@ -648,9 +648,26 @@ PAGE_3D = """<!doctype html>
 <title>Agora — 3D (proof)</title>
 <style>
   html,body{margin:0;height:100%;background:#0b0d10;overflow:hidden;font-family:ui-monospace,monospace}
-  #hud{position:fixed;top:10px;left:10px;color:#cfc7b8;font-size:12px;z-index:2;
-       background:rgba(10,10,10,.55);padding:8px 12px;border-radius:8px;max-width:360px}
+  /* Info panel: an RPG-style box, bottom-right. Don, 2026-09-24: top-left it
+     covered the top third of a phone. Bottom-left is the touch stick, bottom
+     centre the compass. The markup stays as it is: render_3d_page() edits it by
+     exact string for the public page, so only CSS changes here. */
+  #hud{position:fixed;right:10px;bottom:10px;color:#cfc7b8;font-size:12px;z-index:2;
+       background:rgba(10,10,10,.72);padding:8px 12px;border-radius:8px;max-width:340px;
+       border:1px solid #5c5244;max-height:45vh;overflow:auto}
   #hud b{color:#ffcf7a}
+  #hud > div:first-child{cursor:pointer}
+  @media (max-width:760px), (pointer:coarse){
+    /* Phones: sit above the compass row, clear of the stick, and show only the
+       title, the node picker, the status (3 lines) and the last block (the
+       public install line, or the talk button). Tap the title for the rest. */
+    #hud{font-size:10.5px;line-height:1.35;padding:6px 9px;bottom:86px;
+         max-width:58vw;max-height:34vh}
+    #hud:not(.open) > div:not(:nth-child(-n+3)):not(:last-child){display:none}
+    #hud:not(.open) #status{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+    #hud > div:first-child::after{content:" ▸";opacity:.6}
+    #hud.open > div:first-child::after{content:" ▾"}
+  }
   #err{position:fixed;top:10px;right:10px;color:#ff9a7a;font-size:12px;z-index:2;
        background:rgba(10,10,10,.6);padding:6px 10px;border-radius:8px;display:none}
   select{background:#151515;color:#cfc7b8;border:1px solid #333;padding:2px 6px;font-family:inherit}
@@ -698,6 +715,8 @@ const status = document.getElementById('status');
 const errBox = document.getElementById('err');
 
 function showErr(msg){ errBox.style.display='block'; errBox.textContent = msg; }
+// Tap the panel's title to show or hide the how-to lines (phones hide them by default).
+document.querySelector('#hud > div').addEventListener('click', () => document.getElementById('hud').classList.toggle('open'));
 
 // The one honest way to know a URL's node identity: an exact match
 // (trailing slash ignored) against PRESETS, the same name<->url map the
