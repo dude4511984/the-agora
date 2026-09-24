@@ -647,6 +647,15 @@ PAGE_3D = """<!doctype html>
          transition:opacity .7s ease}
   #cross.on{opacity:1;pointer-events:auto}
   #cross b{color:#ffcf7a}
+  /* Compass: which way the camera faces, snapped to N/E/S/W. Bottom
+     centre, clear of the touch stick at bottom-left. Don, 2026-09-24. */
+  #compass{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:3;
+           pointer-events:none;width:58px;height:58px;border-radius:50%;
+           background:rgba(10,10,10,.55);border:1px solid #5c5244;color:#ffcf7a;
+           display:flex;flex-direction:column;align-items:center;justify-content:center;
+           font:bold 17px ui-monospace,monospace;letter-spacing:.04em}
+  #compass .needle{width:0;height:0;border-left:6px solid transparent;
+           border-right:6px solid transparent;border-bottom:13px solid #d9534f;margin-bottom:1px}
 </style>
 </head><body>
 <div id="hud">
@@ -664,6 +673,7 @@ PAGE_3D = """<!doctype html>
 </div>
 <div id="err"></div>
 <div id="cross"><span id="cross-label">crossing…</span></div>
+<div id="compass" role="img" aria-label="facing north"><div class="needle"></div><span id="compass-dir">N</span></div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
@@ -3942,8 +3952,29 @@ function stepKinLocomotion(t, dt) {
 // Sprites should always face the camera — cheap, and it's the whole reason
 // billboards read as alive instead of like cardboard cutouts.
 const clock = new THREE.Clock();
+// North is -z: the north gate sits at z = -HALF, the Commons plaza past it.
+// Facing north, +x is on your right, so east is +x. The needle always
+// points where the camera looks; only the letter changes, and only on a
+// quarter turn, so the DOM is touched four times a lap, not every frame.
+const _compassDir = document.getElementById('compass-dir');
+const _compassBox = document.getElementById('compass');
+const _camLook = new THREE.Vector3();
+let _compassLast = 'N';
+function compassLetter(dx, dz){
+  const deg = (Math.atan2(dx, -dz) * 180 / Math.PI + 360) % 360;
+  return ['N', 'E', 'S', 'W'][Math.round(deg / 90) % 4];
+}
+function updateCompass(){
+  camera.getWorldDirection(_camLook);
+  const d = compassLetter(_camLook.x, _camLook.z);
+  if (d === _compassLast) return;
+  _compassLast = d;
+  _compassDir.textContent = d;
+  _compassBox.setAttribute('aria-label', 'facing ' + {N: 'north', E: 'east', S: 'south', W: 'west'}[d]);
+}
 function animate(){
   requestAnimationFrame(animate);
+  updateCompass();
   const dt = Math.min(clock.getDelta(), 0.1);
   const t = clock.getElapsedTime();
   stepPlayer(dt);
