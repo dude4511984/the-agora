@@ -139,5 +139,24 @@ class TheMapServesGlb(unittest.TestCase):
         self.assertEqual(agora_map.MODEL_CONTENT_TYPES.get(".glb"), "model/gltf-binary")
 
 
+class MarketPolish(unittest.TestCase):
+    def test_info_panel_is_bottom_right_and_toggles_compact_on_phones(self):
+        """The info panel matches the node view (/3d): bottom-right dialog, compact on phones, tap to expand."""
+        self.assertNotIn("top:10px;left:10px", PAGE)
+        self.assertIn("right:10px;bottom:10px", PAGE)
+        self.assertIn("border:1px solid #5c5244", PAGE)
+        self.assertIn("bottom:86px", PAGE)
+        self.assertIn("#hud:not(.open)", PAGE)
+        self.assertIn("-webkit-line-clamp", PAGE)
+        self.assertIn("document.querySelector('#hud > div').addEventListener('click'", PAGE)
+        self.assertIn("classList.toggle('open')", PAGE)
+
+    def test_stall_room_dims_the_pawn_lantern_and_restores_it_on_exit(self):
+        """Inside a stall room, the pawn's carried lantern dims so it doesn't blow out the room to white."""
+        self.assertIn("lanternLight.intensity", PAGE)
+        self.assertRegex(PAGE, r"enterShop[\s\S]*?lanternLight\.intensity\s*=\s*(0\.[1-9]|0\.[0-9]+)")
+        self.assertRegex(PAGE, r"leaveShop[\s\S]*?lanternLight\.intensity\s*=\s*2\.6")
+
+
 if __name__ == "__main__":
     unittest.main()

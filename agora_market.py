@@ -29,10 +29,24 @@ MARKET_PAGE = r"""<!doctype html>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
 <title>The Market (Unsafe)</title>
 <style>
-  html,body{margin:0;height:100%;background:#15120f;overflow:hidden;font-family:ui-monospace,monospace}
-  #hud{position:fixed;top:10px;left:10px;color:#cfc7b8;font-size:12px;z-index:2;
-       background:rgba(10,10,10,.55);padding:8px 12px;border-radius:8px;max-width:340px}
+  /* Info panel: an RPG-style box, bottom-right. Don, 2026-09-24: top-left it
+     covered the top third of a phone. Bottom-left is the touch stick, bottom
+     centre the compass. */
+  #hud{position:fixed;right:10px;bottom:10px;color:#cfc7b8;font-size:12px;z-index:2;
+       background:rgba(10,10,10,.72);padding:8px 12px;border-radius:8px;max-width:340px;
+       border:1px solid #5c5244;max-height:45vh;overflow:auto}
   #hud b{color:#ffcf7a}
+  #hud > div:first-child{cursor:pointer}
+  @media (max-width:760px), (pointer:coarse){
+    /* Phones: sit above the compass row, clear of the stick, and show only the
+       title, status, and the room HUD. Tap the title for the rest. */
+    #hud{font-size:10.5px;line-height:1.35;padding:6px 9px;bottom:86px;
+         max-width:58vw;max-height:34vh}
+    #hud:not(.open) > div:not(:nth-child(-n+2)):not(:last-child){display:none}
+    #hud:not(.open) #status{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+    #hud > div:first-child::after{content:" ▸";opacity:.6}
+    #hud.open > div:first-child::after{content:" ▾"}
+  }
   #unsafe{color:#e8756b;font-weight:bold;letter-spacing:.06em}
   #veil{position:fixed;inset:0;z-index:8;background:#0b0d10;opacity:1;pointer-events:none;
         display:flex;align-items:center;justify-content:center;color:#cfc7b8;font-size:18px;
@@ -80,11 +94,11 @@ MARKET_PAGE = r"""<!doctype html>
 </head><body>
 <div id="hud">
   <div><span id="unsafe">UNSAFE</span> · <b>The Market</b></div>
+  <div id="status" style="margin-top:4px;opacity:.7">loading…</div>
   <div style="margin-top:4px">The Commons, as a place. Anyone can read; nothing here is verified.
     A stall with a lit doorway is a shop: walk up and go in. A card without one is a Commons ad.
     The empty ones are waiting for someone.</div>
   <div style="margin-top:6px;opacity:.7">WASD / arrows to walk · drag to look · one door in and out, behind you.</div>
-  <div id="status" style="margin-top:4px;opacity:.7">loading…</div>
   <div id="roomhud" hidden>
     <div id="room-name" style="color:#ffcf7a"></div>
     <div id="room-label" style="color:#e8756b"></div>
@@ -637,6 +651,7 @@ function enterShop(shop){
   fillRoom(shop);
   const v = document.getElementById('veil'); v.textContent = shop.name || 'a shop…'; v.classList.remove('off');
   state.mode = 'room'; state.x = 0; state.z = ROOM.hd - 1.0; yaw = 0; pitch = 0.2;
+  lanternLight.intensity = 0.5;
   document.getElementById('room-name').textContent = shop.name || '';
   document.getElementById('room-label').textContent = shop.label || '';
   document.getElementById('room-msg').textContent = '';
@@ -647,6 +662,7 @@ function leaveShop(){
   if (!inShop) return;
   const v = document.getElementById('veil'); v.textContent = 'back to the street…'; v.classList.remove('off');
   Object.assign(state, returnState); inShop = null; returnState = null;
+  lanternLight.intensity = 2.6;
   document.getElementById('roomhud').hidden = true;
   closeSheets();
   setTimeout(() => v.classList.add('off'), 350);
@@ -761,6 +777,9 @@ document.getElementById('room-report').addEventListener('click', async () => {
                            : `The report didn't go through (${r.status}). Nothing was sent.`;
   } catch (_) { msg.textContent = "The report couldn't reach the steward from here. Nothing was sent."; }
 });
+
+// Tap the panel's title to show or hide the how-to lines (phones hide them by default).
+document.querySelector('#hud > div').addEventListener('click', () => document.getElementById('hud').classList.toggle('open'));
 
 // ── The walker: t along the path, u across it; or in the door's lane ────
 // The same pawn as the node view: a spirit carrying a lantern (agora_pawn.py).
@@ -920,6 +939,7 @@ function frameTick(){
   walker.position.set(p.x, p.y, p.z);
   carry.position.set(p.x, p.y + 3.4, p.z);
   carry.intensity = state.mode === 'room' ? 0.15 : 1.1;   // a small room: the lantern alone is plenty
+  lanternLight.intensity = state.mode === 'room' ? 0.5 : 2.6;
   const covered = state.mode === 'path' && underArcade(state.t);
   const indoors = state.mode === 'room';
   const dist = indoors ? 2.6 : covered ? 4.0 : 6.0, camH = indoors ? 1.5 : covered ? 1.7 : 2.8;
