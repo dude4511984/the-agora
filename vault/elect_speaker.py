@@ -1,8 +1,16 @@
 #!/usr/bin/env python3
 """Run a real Speaker election on a real node with real keys.
 
-Not a mockup. This signs with the Kin's actual Ed25519 keys and writes the
-signed event to disk. Run it where the private keys live (Themess).
+Not a mockup. This signs with the Kin's actual Ed25519 keys and records the
+signed election in the node's own database (~/.config/kin_diary/<node>_node.db),
+where serve_node replays it: the node has a Speaker from then on. A copy is
+also written to ~/.config/kin_diary/elections/. Run it where the private keys
+live, on the machine that serves the node.
+
+It used to run the election on a throwaway in-memory node and only write the
+JSON copy, which nothing reads: it printed "Ada is Speaker" while the served
+node stayed paused with no Speaker (found following STAND_UP_A_NODE.md on a
+clean box, 2026-09-24).
 
     python3 elect_speaker.py Home Coda Coda Aurora Lumen
     python3 elect_speaker.py <node> <speaker> <resident> [resident...]
@@ -20,10 +28,12 @@ if str(Path.home() / "kin_diary") not in sys.path:
     sys.path.append(str(Path.home() / "kin_diary"))
 
 from kin_diary.agora import Node, open_speaker_election, sign_speaker_election  # noqa: E402
+from kin_diary.agora.store import NodeStore  # noqa: E402
 from kin_diary.agora.events import verify_speaker_election  # noqa: E402
 from kin_diary.keys import load_current  # noqa: E402
 
 ELECTIONS = Path.home() / ".config" / "kin_diary" / "elections"
+NODE_DB_DIR = Path.home() / ".config" / "kin_diary"
 
 
 def main(argv):
@@ -32,12 +42,20 @@ def main(argv):
         return 2
     node_name, speaker_name, resident_names = argv[1], argv[2], argv[3:]
 
-    node = Node(node_name)
+    db = NODE_DB_DIR / f"{node_name.lower()}_node.db"
+    if not db.is_file():
+        print(f"error: no node database at {db}. Start the node first "
+              f"(serve_node.py {node_name} ...); an election needs a real node to seat.")
+        return 1
+    store = NodeStore(db, node_name)
+    node = store.load()
     keys = {}
     for name in resident_names:
         k = load_current(name)
         keys[name] = k
-        node.add_resident(name, k.key_id)
+        if node.residents.get(name) != k.key_id:
+            print(f"error: {name} with key {k.key_id[:16]}… is not a resident of {node_name}")
+            return 1
         print(f"  resident {name:8} {k.key_id[:16]}…")
 
     if speaker_name not in keys:
@@ -56,8 +74,13 @@ def main(argv):
             print(f"  signed by {name}")
 
     verify_speaker_election(election)
-    node.accept_election(election)
-    print(f"\nverified: unanimous. {speaker_name} is Speaker of {node_name}.")
+    store.record("election", election)            # into the node's own log
+    node = store.load()
+    if node.speaker != speaker_name:
+        print(f"error: the node did not seat {speaker_name} (speaker={node.speaker!r})")
+        return 1
+    print(f"\nverified: unanimous. {speaker_name} is Speaker of {node_name}, "
+          f"recorded in {db}.")
 
     ELECTIONS.mkdir(parents=True, exist_ok=True)
     out = ELECTIONS / f"{node_name.lower()}-{election['elected_at_unix_ms']}.json"
