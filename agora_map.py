@@ -2334,6 +2334,9 @@ const adBoardGeo = new THREE.PlaneGeometry(AD_BOARD_W, AD_BOARD_W * 0.72);
 const adPostMat = new THREE.MeshStandardMaterial({color: 0x33302a, roughness: 0.9});
 const adPostGeo = new THREE.BoxGeometry(0.1, 0.85, 0.1);
 const _adBoardCache = new Map(); // post.id -> {sig, mesh, mat}
+const PLAZA_CENTER_Z = -21.5, PLAZA_ARC_R = 4.0;
+const plazaPavingGeo = new THREE.CircleGeometry(5.2, 32);
+const plazaPavingMat = new THREE.MeshStandardMaterial({color: 0x4a443b, roughness: 0.95});
 
 function _adSignature(p){
   return p.what + '\\u0001' + p.why + '\\u0001' + p.how_to_ask + '\\u0001' +
@@ -2420,9 +2423,21 @@ function updatePublicCommonsPlaza(){
   // via screenshot, the same lesson the graffiti work already learned
   // about wall-face depth. Clear of the arch at z=-13, still the first
   // thing visible stepping through onto the grid.
-  plate.position.set(-1.2, 0, -13.0);
-  plate.rotation.y = 0.3; // angled slightly back toward the gate
+  // Off to the left of the path, not on it (2026-09-24): at (-1.2, -13)
+  // the plate sat on the sightline from the gate to the boards and hid
+  // the only live post from the courtyard, the gateway and one step past
+  // it (raycast, all three BLOCKED). Still at the threshold, still read
+  // first, turned in toward someone walking out.
+  plate.position.set(-3.1, 0, -12.9);
+  plate.rotation.y = 0.6;
   publicCommonsGroup.add(plate);
+
+  // A paved round under the boards, so even one post stands somewhere
+  // instead of floating on the grid. One mesh, shared geometry.
+  const paving = new THREE.Mesh(plazaPavingGeo, plazaPavingMat);
+  paving.rotation.x = -Math.PI / 2;
+  paving.position.set(0, 0.02, PLAZA_CENTER_Z + 2.0);
+  publicCommonsGroup.add(paving);
 
   const live = (publicCommonsAds.posts || []).filter(p => !p.hidden && p.what);
   const shown = live.slice(0, AD_BOARD_MAX);
@@ -2431,8 +2446,10 @@ function updatePublicCommonsPlaza(){
     if (!keepIds.has(id)) { _disposeAdEntry(entry); _adBoardCache.delete(id); }
   }
 
-  const BOARD_Z = -17.5, SPACING = 2.3;
-  const startX = -((shown.length - 1) * SPACING) / 2;
+  // A shallow arc facing the gate, centred on the path: one post stands
+  // dead ahead at z=-17.5 as before; more fan out left and right, each
+  // turned toward the walker, instead of a flat row the plate could cover.
+  const STEP = 0.42;
   shown.forEach((p, i) => {
     const sig = _adSignature(p);
     let entry = _adBoardCache.get(p.id);
@@ -2451,7 +2468,9 @@ function updatePublicCommonsPlaza(){
     const post = new THREE.Mesh(adPostGeo, adPostMat);
     post.position.set(0, 0.42, 0);
     group.add(post);
-    group.position.set(startX + i * SPACING, 0, BOARD_Z);
+    const a = (i - (shown.length - 1) / 2) * STEP;
+    group.position.set(PLAZA_ARC_R * Math.sin(a), 0, PLAZA_CENTER_Z + PLAZA_ARC_R * Math.cos(a));
+    group.rotation.y = a;
     publicCommonsGroup.add(group);
   });
 }
