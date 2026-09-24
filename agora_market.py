@@ -3,9 +3,10 @@
 Don, 2026-09-24: "a figure eight with one path leading over the other ...
 only one way in or out, it should look like a huge market that just needs
 vendors, almost a liminal space." The north gate is the entrance to
-unsafety; this is the Commons as a place. Stalls are Commons ads. Empty
-stalls say they are waiting for someone, so the emptiness reads as room to
-move in, not a dead market. Design notes: claude-room sketches/market-eight.md.
+unsafety; this is the Commons as a place. A stall is either a shop (claimed
+by an introduced key: commons_stalls.py; you walk in and read what's on its
+tables) or a Commons ad. Empty stalls say how to claim one, so the emptiness
+reads as room to move in, not a dead market. Design notes: claude-room sketches/market-eight.md.
 
 Its own page (/market), not more castle: the tablet only ever has one of the
 two in memory. Entered through the door at the end of the north path;
@@ -49,6 +50,30 @@ MARKET_PAGE = r"""<!doctype html>
          touch-action:none;display:none}
   #knob{position:absolute;left:40px;top:40px;width:40px;height:40px;border-radius:50%;
         background:rgba(255,207,122,.35)}
+  #act{position:fixed;right:22px;bottom:34px;z-index:4;background:#2a2016;color:#ffcf7a;
+       border:1px solid #ffcf7a;border-radius:10px;padding:12px 16px;font:bold 15px ui-monospace,monospace;
+       max-width:calc(100vw - 180px)}
+  #roomhud{margin-top:8px;padding-top:6px;border-top:1px solid #4a4034}
+  #roomhud a,#roomhud button{color:#ffcf7a;background:none;border:0;padding:0;font:inherit;
+       text-decoration:underline;cursor:pointer}
+  .sheet{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:6;
+         width:min(560px,calc(100vw - 32px));max-height:80vh;overflow:auto;box-sizing:border-box;
+         background:#1b1712;color:#e6dfd2;border:1px solid #6b5f4d;border-radius:10px;
+         padding:14px 16px;font:15px/1.5 system-ui,sans-serif}
+  .sheet h2{margin:.2em 0;color:#ffcf7a;font-size:20px}
+  .sheet .kind{font:12px ui-monospace,monospace;letter-spacing:.08em;color:#9fc3bf;text-transform:uppercase}
+  .sheet .close{float:right;background:none;border:0;color:#cfc7b8;font-size:22px;cursor:pointer}
+  .sheet pre{background:#0f0d0a;padding:8px;overflow:auto;white-space:pre-wrap}
+  .sheet code{background:#0f0d0a;padding:0 3px}
+  .sheet a{color:#ffcf7a}
+  .sheet .links button{display:block;width:100%;text-align:left;margin:6px 0;padding:8px;
+         background:#2a2016;color:#ffcf7a;border:1px solid #6b5f4d;border-radius:6px;font:inherit;cursor:pointer}
+  .sheet .links small{display:block;color:#8f877a;word-break:break-all}
+  .sheet .label{margin-top:10px;color:#e8756b;font:12px ui-monospace,monospace}
+  #leave{z-index:7}
+  #leave .url{word-break:break-all;color:#9fc3bf;font:13px ui-monospace,monospace}
+  #leave button{margin:6px 8px 0 0;padding:8px 14px;font:inherit;border-radius:6px;cursor:pointer;
+         background:#2a2016;color:#ffcf7a;border:1px solid #ffcf7a}
 </style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
@@ -56,9 +81,33 @@ MARKET_PAGE = r"""<!doctype html>
 <div id="hud">
   <div><span id="unsafe">UNSAFE</span> · <b>The Market</b></div>
   <div style="margin-top:4px">The Commons, as a place. Anyone can read; nothing here is verified.
-    Every stall with a card is a real post. The empty ones are waiting for someone.</div>
+    A stall with a lit doorway is a shop: walk up and go in. A card without one is a Commons ad.
+    The empty ones are waiting for someone.</div>
   <div style="margin-top:6px;opacity:.7">WASD / arrows to walk · drag to look · one door in and out, behind you.</div>
   <div id="status" style="margin-top:4px;opacity:.7">loading…</div>
+  <div id="roomhud" hidden>
+    <div id="room-name" style="color:#ffcf7a"></div>
+    <div id="room-label" style="color:#e8756b"></div>
+    <div><a id="room-rules" href="/public-stall-rules" target="_blank" rel="noopener">stall rules</a> ·
+      <button id="room-report" type="button">report this stall</button> ·
+      walk out the door behind you to leave</div>
+    <div id="room-msg" style="opacity:.8"></div>
+  </div>
+</div>
+<button id="act" type="button" hidden></button>
+<div id="panel" class="sheet" role="dialog" aria-modal="true" aria-labelledby="p-title" hidden>
+  <button class="close" id="p-close" type="button" aria-label="Close">×</button>
+  <div class="kind" id="p-kind"></div>
+  <h2 id="p-title"></h2>
+  <div id="p-desc" style="color:#cfc7b8"></div>
+  <div id="p-body"></div>
+  <div class="links" id="p-links"></div>
+  <div class="label" id="p-label"></div>
+</div>
+<div id="leave" class="sheet" role="alertdialog" aria-modal="true" hidden>
+  <p id="leave-text"></p>
+  <p class="url" id="leave-url"></p>
+  <button id="leave-go" type="button">Go there</button><button id="leave-stay" type="button">Stay here</button>
 </div>
 <div id="veil">the market…</div>
 <div id="compass" role="img" aria-label="facing north"><div class="needle"></div><span id="compass-dir">N</span></div>
@@ -309,8 +358,8 @@ function cardTexture(lines, lit){
 }
 const EMPTY_CARD = new THREE.MeshBasicMaterial({map: cardTexture([
   ['This stall is waiting for someone.', 30, '#ffcf7a'],
-  ['Post in the Commons and it is yours.', 24, '#cfc7b8'],
-  ['Known keys post. Anyone can read.', 20, '#8f877a']], true)});
+  ['An introduced key can claim it as a shop (commons_stall.py claim), or post in the Commons for an ad.', 20, '#cfc7b8'],
+  ['Read the stall rules first. Anyone can read.', 18, '#8f877a']], true)});
 
 const STALL_SPOTS = [];
 {
@@ -325,7 +374,9 @@ const STALL_SPOTS = [];
   }
 }
 const stallGroup = new THREE.Group(); world.add(stallGroup);
-function buildStalls(posts){
+const shopAt = new Map();          // stall spot index -> claimed shop
+function buildStalls(posts, shops){
+  shops = shops || [];
   stallGroup.children.slice().forEach(c => stallGroup.remove(c));
   const counterGeo = new THREE.BoxGeometry(2.3, 1.0, 1.1);
   const canopyGeo = new THREE.BoxGeometry(2.6, 0.08, 1.7);
@@ -345,12 +396,30 @@ function buildStalls(posts){
     sp.x = x; sp.y = y; sp.z = z; sp.face = face;
   });
   stallGroup.add(counters, canopies);
-  // Real posts take the stalls nearest the door first; the rest wait.
+  // Nearest the door first. A shop keeps its own spot (its slot), so it
+  // stands in the same place every visit; ads take the next free ones.
   const order = STALL_SPOTS.map((sp, i) => i).sort((a, b) =>
     Math.abs(wrapPI(STALL_SPOTS[a].t - Math.PI / 2)) - Math.abs(wrapPI(STALL_SPOTS[b].t - Math.PI / 2)));
   const taken = new Set();
+  shopAt.clear();
+  const doorGeo = new THREE.PlaneGeometry(1.1, 2.1);
+  shops.forEach(shop => {
+    const idx = order[shop.slot]; if (idx === undefined) return;
+    const sp = STALL_SPOTS[idx]; taken.add(idx); shopAt.set(idx, shop);
+    const mat = new THREE.MeshBasicMaterial({map: cardTexture([
+      [shop.name || '', 30, '#ffcf7a'], [shop.description || '', 20, '#cfc7b8'],
+      ['A shop. Walk up and go in.', 18, '#9fc3bf'], ['Run by its owner. Not verified by the Agora.', 16, '#e8756b']], true)});
+    const card = new THREE.Mesh(cardGeo, mat);
+    card.position.set(sp.x, sp.y + 1.45, sp.z); card.rotation.y = sp.face; card.translateZ(0.6);
+    // The doorway: lit, behind the counter, facing the street.
+    const door = new THREE.Mesh(doorGeo, glowMat);
+    door.position.set(sp.x, sp.y + 1.05, sp.z); door.rotation.y = sp.face; door.translateZ(-0.62);
+    stallGroup.add(card, door);
+  });
+  const adSpots = order.filter(i => !taken.has(i));
+  let ads = 0;
   posts.slice(0, 8).forEach((p, k) => {
-    const sp = STALL_SPOTS[order[k]]; if (!sp) return; taken.add(order[k]);
+    const sp = STALL_SPOTS[adSpots[k]]; if (!sp) return; taken.add(adSpots[k]); ads++;
     const says = p.says ? ` · says: ${p.says}` : '', held = p.held ? `held on ${p.held}` : '';
     const mat = new THREE.MeshBasicMaterial({map: cardTexture([
       [p.what || '', 30, '#ffcf7a'], [p.why || '', 20, '#cfc7b8'],
@@ -368,7 +437,7 @@ function buildStalls(posts){
     m.compose(new THREE.Vector3(sp.x + v.x, sp.y + 1.45, sp.z + v.z), q, s); cards.setMatrixAt(i, m);
   });
   stallGroup.add(cards);
-  return {real: Math.min(posts.length, 8), waiting: rest.length};
+  return {shops: shopAt.size, real: ads, waiting: rest.length};
 }
 
 // ── Islands: the statue (north) and a dry fountain (south) ──────────────
@@ -511,6 +580,188 @@ const FLAMES = [];
   });
 }
 
+
+// ── A shop's room (commons_stalls.py) ───────────────────────────────────
+// One room, built once, the same size and shape for every stall; entering
+// a shop fills its sign and tables. It stands far past the fog, so the
+// market is out of sight while you're inside and nothing overlaps.
+const ROOM = {x: 0, z: 400, hw: 4.2, hd: 3.4, h: 3.2, doorHW: 0.8};
+const TABLES = [[-2.0, -1.3], [2.0, -1.3], [-2.0, 1.0], [2.0, 1.0]];   // MAX_ITEMS in commons_stalls.py
+const TABLE_HW = 0.7, TABLE_HD = 0.45, TABLE_H = 0.8;
+const roomGroup = new THREE.Group(); roomGroup.position.set(ROOM.x, 0, ROOM.z); scene.add(roomGroup);
+const roomDynamic = new THREE.Group(); roomGroup.add(roomDynamic);
+{
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(ROOM.hw * 2, ROOM.hd * 2), woodMat);
+  floor.rotation.x = -Math.PI / 2; roomGroup.add(floor);
+  const ceil = floor.clone(); ceil.material = darkStone; ceil.rotation.x = Math.PI / 2; ceil.position.y = ROOM.h; roomGroup.add(ceil);
+  const wall = (w, x, z, ry, h = ROOM.h, y = ROOM.h / 2) => {
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), darkStone);
+    m.position.set(x, y, z); m.rotation.y = ry; roomGroup.add(m);
+  };
+  wall(ROOM.hw * 2, 0, -ROOM.hd, 0);
+  wall(ROOM.hd * 2, -ROOM.hw, 0, Math.PI / 2);
+  wall(ROOM.hd * 2, ROOM.hw, 0, -Math.PI / 2);
+  // The front wall, with the one doorway back out to the street.
+  const side = ROOM.hw - ROOM.doorHW;
+  wall(side, -(ROOM.doorHW + side / 2), ROOM.hd, Math.PI);
+  wall(side, ROOM.doorHW + side / 2, ROOM.hd, Math.PI);
+  wall(ROOM.doorHW * 2, 0, ROOM.hd, Math.PI, ROOM.h - 2.3, 2.3 + (ROOM.h - 2.3) / 2);
+  const out = new THREE.Mesh(new THREE.PlaneGeometry(ROOM.doorHW * 2, 2.3), glowMat);
+  out.position.set(0, 1.15, ROOM.hd + 0.02); out.rotation.y = Math.PI; roomGroup.add(out);
+  const tableGeo = new THREE.BoxGeometry(TABLE_HW * 2, TABLE_H, TABLE_HD * 2);
+  TABLES.forEach(([x, z]) => { const t = new THREE.Mesh(tableGeo, woodMat); t.position.set(x, TABLE_H / 2, z); roomGroup.add(t); });
+  const lamp = new THREE.PointLight(0xffc078, 0.6, 12, 2); lamp.position.set(0, ROOM.h - 0.4, 0); roomGroup.add(lamp);
+  const bulb = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.3, 0.3), glowMat); bulb.position.copy(lamp.position); roomGroup.add(bulb);
+}
+let inShop = null, returnState = null;
+function fillRoom(shop){
+  roomDynamic.children.slice().forEach(c => { roomDynamic.remove(c); if (c.material && c.material.map) c.material.map.dispose(); });
+  const sign = new THREE.Mesh(new THREE.PlaneGeometry(3.4, 2.0), new THREE.MeshBasicMaterial({map: cardTexture([
+    [shop.name || '', 32, '#ffcf7a'], [shop.description || '', 20, '#cfc7b8'],
+    [shop.label || '', 20, '#e8756b'], ['Stall rules and "report this stall" are at the top of your screen.', 16, '#8f877a']], true)}));
+  sign.position.set(0, 1.9, -ROOM.hd + 0.03); roomDynamic.add(sign);
+  const byTable = {}; (shop.items || []).forEach(it => { byTable[it.table] = it; });
+  TABLES.forEach(([x, z], i) => {
+    const it = byTable[i];
+    const lines = it ? [[String(it.kind || '').toUpperCase(), 18, '#9fc3bf'], [it.title || '', 30, '#ffcf7a'], ['Walk up to read it.', 16, '#8f877a']]
+                     : [['Nothing on this table yet.', 22, '#6b5f4d']];
+    const card = new THREE.Mesh(new THREE.PlaneGeometry(1.1, 0.64), new THREE.MeshBasicMaterial({map: cardTexture(lines, !!it)}));
+    card.position.set(x, TABLE_H + 0.36, z); card.rotation.x = -0.35;
+    // Face the doorway, so the titles read as you walk in.
+    card.rotation.y = 0; roomDynamic.add(card);
+  });
+}
+function enterShop(shop){
+  if (inShop || leaving) return;
+  inShop = shop; returnState = {...state};
+  fillRoom(shop);
+  const v = document.getElementById('veil'); v.textContent = shop.name || 'a shop…'; v.classList.remove('off');
+  state.mode = 'room'; state.x = 0; state.z = ROOM.hd - 1.0; yaw = 0; pitch = 0.2;
+  document.getElementById('room-name').textContent = shop.name || '';
+  document.getElementById('room-label').textContent = shop.label || '';
+  document.getElementById('room-msg').textContent = '';
+  document.getElementById('roomhud').hidden = false;
+  setTimeout(() => v.classList.add('off'), 350);
+}
+function leaveShop(){
+  if (!inShop) return;
+  const v = document.getElementById('veil'); v.textContent = 'back to the street…'; v.classList.remove('off');
+  Object.assign(state, returnState); inShop = null; returnState = null;
+  document.getElementById('roomhud').hidden = true;
+  closeSheets();
+  setTimeout(() => v.classList.add('off'), 350);
+}
+function roomStep(mx, mz){
+  let x = state.x + mx, z = state.z + mz;
+  if (z > ROOM.hd - 0.45 && Math.abs(x) < ROOM.doorHW - 0.2){ leaveShop(); return; }
+  x = Math.max(-ROOM.hw + 0.35, Math.min(ROOM.hw - 0.35, x));
+  z = Math.max(-ROOM.hd + 0.35, Math.min(ROOM.hd - 0.35, z));
+  for (const [tx, tz] of TABLES){                      // around the tables, not through
+    const dx = x - tx, dz = z - tz, px = TABLE_HW + 0.3 - Math.abs(dx), pz = TABLE_HD + 0.3 - Math.abs(dz);
+    if (px > 0 && pz > 0){ if (px < pz) x += Math.sign(dx || 1) * px; else z += Math.sign(dz || 1) * pz; }
+  }
+  state.x = x; state.z = z;
+}
+
+// ── Walk up and interact: E, or the button (phones) ─────────────────────
+let target = null;     // {kind: 'shop', shop} or {kind: 'item', item}
+const actBtn = document.getElementById('act');
+function findTarget(){
+  const p = position();
+  if (state.mode === 'room'){
+    const byTable = {}; (inShop.items || []).forEach(it => { byTable[it.table] = it; });
+    let best = null, bd = 1.7;
+    TABLES.forEach(([x, z], i) => {
+      const d = Math.hypot(state.x - x, state.z - z);
+      if (byTable[i] && d < bd){ bd = d; best = {kind: 'item', item: byTable[i]}; }
+    });
+    return best;
+  }
+  let best = null, bd = 2.8;
+  shopAt.forEach((shop, idx) => {
+    const sp = STALL_SPOTS[idx], d = Math.hypot(p.x - sp.x, p.z - sp.z);
+    if (d < bd && Math.abs(p.y - sp.y) < 1.5){ bd = d; best = {kind: 'shop', shop}; }
+  });
+  return best;
+}
+function updateTarget(){
+  const t = sheetOpen() ? null : findTarget();
+  const key = t ? (t.kind === 'shop' ? 's' + t.shop.id : 'i' + t.item.id) : '';
+  if (key === (target ? target.key : '')) return;
+  target = t ? {...t, key} : null;
+  if (!target){ actBtn.hidden = true; return; }
+  actBtn.textContent = target.kind === 'shop' ? `Enter ${target.shop.name} (E)` : `Read: ${target.item.title} (E)`;
+  actBtn.hidden = false;
+}
+function interact(){
+  if (!target || sheetOpen()) return;
+  if (target.kind === 'shop') enterShop(target.shop); else openItem(target.item);
+}
+actBtn.addEventListener('click', interact);
+
+// ── Reading panel and the "you're leaving" confirmation ─────────────────
+const panel = document.getElementById('panel'), leaveBox = document.getElementById('leave');
+function sheetOpen(){ return !panel.hidden || !leaveBox.hidden; }
+function closeSheets(){ panel.hidden = true; leaveBox.hidden = true; }
+// The server renders the instructions safely already (commons_stalls.py).
+// This is the second lock: only these tags survive, only https hrefs.
+const SAFE_TAGS = new Set(['P', 'BR', 'H3', 'H4', 'H5', 'UL', 'OL', 'LI', 'PRE', 'CODE', 'STRONG', 'EM', 'A']);
+function sanitize(root){
+  for (const el of Array.from(root.querySelectorAll('*'))){
+    if (!SAFE_TAGS.has(el.tagName)){ el.replaceWith(document.createTextNode(el.textContent)); continue; }
+    for (const a of Array.from(el.attributes)) if (!(el.tagName === 'A' && a.name === 'href')) el.removeAttribute(a.name);
+    if (el.tagName === 'A'){
+      if (/^https:\/\//i.test(el.getAttribute('href') || '')) el.className = 'out'; else el.removeAttribute('href');
+    }
+  }
+}
+function confirmLeave(url){
+  if (!/^https:\/\//i.test(url)) return;
+  document.getElementById('leave-text').textContent = inShop ? inShop.leaving_label :
+    "You're leaving the Agora. Unverified.";
+  document.getElementById('leave-url').textContent = url;
+  leaveBox.dataset.url = url; leaveBox.hidden = false;
+}
+document.getElementById('leave-go').addEventListener('click', () => {
+  const url = leaveBox.dataset.url || ''; leaveBox.hidden = true;
+  if (/^https:\/\//i.test(url)) window.open(url, '_blank', 'noopener,noreferrer');
+});
+document.getElementById('leave-stay').addEventListener('click', () => { leaveBox.hidden = true; });
+document.getElementById('p-close').addEventListener('click', () => { panel.hidden = true; });
+function openItem(item){
+  document.getElementById('p-kind').textContent = item.kind || '';
+  document.getElementById('p-title').textContent = item.title || '';
+  document.getElementById('p-desc').textContent = item.description || '';
+  const body = document.getElementById('p-body');
+  body.innerHTML = item.instructions_html || '';
+  sanitize(body);
+  body.querySelectorAll('a').forEach(a => a.addEventListener('click', e => {
+    e.preventDefault(); if (a.hasAttribute('href')) confirmLeave(a.href);
+  }));
+  const links = document.getElementById('p-links'); links.textContent = '';
+  (item.links || []).forEach(l => {
+    const b = document.createElement('button'); b.type = 'button';
+    b.textContent = 'Where to get it: ' + (l.label || '');
+    const small = document.createElement('small'); small.textContent = l.url || ''; b.appendChild(small);
+    b.addEventListener('click', () => confirmLeave(l.url || ''));
+    links.appendChild(b);
+  });
+  document.getElementById('p-label').textContent = inShop ? inShop.label : '';
+  panel.hidden = false;
+}
+document.getElementById('room-report').addEventListener('click', async () => {
+  if (!inShop) return;
+  const msg = document.getElementById('room-msg');
+  const reason = prompt("What's wrong with this stall? A human steward reads every report. Nothing is judged automatically.");
+  if (!reason || !reason.trim()) return;
+  try {
+    const r = await fetch('/commons/stall/report', {method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({stall_id: inShop.id, reason: reason.trim().slice(0, 280)})});
+    msg.textContent = r.ok ? 'Reported. A human steward will read it.'
+                           : `The report didn't go through (${r.status}). Nothing was sent.`;
+  } catch (_) { msg.textContent = "The report couldn't reach the steward from here. Nothing was sent."; }
+});
+
 // ── The walker: t along the path, u across it; or in the door's lane ────
 // The same pawn as the node view: a spirit carrying a lantern (agora_pawn.py).
 const walker = new THREE.Group(); scene.add(walker);
@@ -520,6 +771,7 @@ const state = {mode: 'lane', x: 0, z: SPUR_Z1 - 1.6, t: Math.PI / 2, u: 0};
 let yaw = 0, pitch = 0.28;     // camera looks north on arrival (the door is behind you)
 
 function position(){
+  if (state.mode === 'room') return {x: ROOM.x + state.x, y: 0, z: ROOM.z + state.z};
   if (state.mode === 'lane') return {x: state.x, y: 0, z: state.z};
   if (state.mode === 'plaza') return {x: state.x, y: PLAZA_Y, z: state.z};
   const c = P(state.t), f = frame(state.t);
@@ -546,6 +798,7 @@ function nearestT(x, z, center){
 }
 let leaving = false;
 function step(mx, mz){
+  if (state.mode === 'room'){ roomStep(mx, mz); return; }
   if (state.mode === 'plaza'){
     let x = state.x + mx, z = state.z + mz;
     const d = Math.hypot(x, z), keep = STATUE_R + 0.35;
@@ -603,7 +856,13 @@ function leave(){
 
 // ── Input: keys, drag to look, touch stick ──────────────────────────────
 const keys = {};
-addEventListener('keydown', e => { keys[e.key.toLowerCase()] = true; });
+addEventListener('keydown', e => {
+  const k = e.key.toLowerCase();
+  if (k === 'escape'){ closeSheets(); return; }
+  if (sheetOpen()) return;                      // reading: the walker stands still
+  if (k === 'e' && !e.repeat){ interact(); return; }
+  keys[k] = true;
+});
 addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
 let drag = null;
 renderer.domElement.addEventListener('pointerdown', e => { drag = {x: e.clientX, y: e.clientY}; });
@@ -652,7 +911,7 @@ function frameTick(){
   if (keys['d'] || keys['arrowright']) side += 1;
   fwd -= stickV.y; side += stickV.x;
   const mag = Math.min(1, Math.hypot(fwd, side));
-  if (mag > 0.05 && !leaving){
+  if (mag > 0.05 && !leaving && !sheetOpen()){
     const sp = 4.5 * dt / Math.max(1, Math.hypot(fwd, side));
     const fx = -Math.sin(yaw), fz = -Math.cos(yaw), rx = Math.cos(yaw), rz = -Math.sin(yaw);
     step((fx * fwd + rx * side) * sp, (fz * fwd + rz * side) * sp);
@@ -660,13 +919,20 @@ function frameTick(){
   const p = position();
   walker.position.set(p.x, p.y, p.z);
   carry.position.set(p.x, p.y + 3.4, p.z);
+  carry.intensity = state.mode === 'room' ? 0.15 : 1.1;   // a small room: the lantern alone is plenty
   const covered = state.mode === 'path' && underArcade(state.t);
-  const dist = covered ? 4.0 : 6.0, camH = covered ? 1.7 : 2.8;
-  camera.position.set(p.x + Math.sin(yaw) * dist * Math.cos(pitch), p.y + camH + Math.sin(pitch) * (covered ? 0.6 : 2.5),
+  const indoors = state.mode === 'room';
+  const dist = indoors ? 2.6 : covered ? 4.0 : 6.0, camH = indoors ? 1.5 : covered ? 1.7 : 2.8;
+  camera.position.set(p.x + Math.sin(yaw) * dist * Math.cos(pitch), p.y + camH + Math.sin(pitch) * (indoors || covered ? 0.6 : 2.5),
                       p.z + Math.cos(yaw) * dist * Math.cos(pitch));
+  if (indoors){                                   // the camera stays inside the walls
+    camera.position.x = Math.max(ROOM.x - ROOM.hw + 0.2, Math.min(ROOM.x + ROOM.hw - 0.2, camera.position.x));
+    camera.position.z = Math.max(ROOM.z - ROOM.hd + 0.2, Math.min(ROOM.z + ROOM.hd - 0.2, camera.position.z));
+    camera.position.y = Math.min(camera.position.y, ROOM.h - 0.3);
+  }
   // In the lane the camera stays inside the door; it arrived staring at the
   // back of the door otherwise (headless screenshot, 2026-09-24).
-  if (state.mode === 'lane' || camera.position.z > SPUR_Z0) {
+  if (!indoors && (state.mode === 'lane' || camera.position.z > SPUR_Z0)) {
     camera.position.z = Math.min(camera.position.z, SPUR_Z1 - 0.5);
     camera.position.x = Math.max(-SPUR_HW - 0.2, Math.min(SPUR_HW + 0.2, camera.position.x));
   }
@@ -678,22 +944,34 @@ function frameTick(){
     f.light.intensity = 1.1 * k + 0.2;
   });
   updateCompass();
+  updateTarget();
   renderer.render(scene, camera);
 }
 addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
 
 async function loadAds(){
   const status = document.getElementById('status');
-  let posts = [];
+  let posts = [], shops = [], shopsLoaded = false;
   for (const url of ['/public-commons-ads', '/commons/posts']){
     try { const r = await fetch(url); if (!r.ok) continue; const j = await r.json();
       if (j && Array.isArray(j.posts)){ posts = j.posts.filter(p => !p.hidden && p.what); break; } } catch (_) {}
   }
-  const n = buildStalls(posts);
-  status.textContent = `${n.real} ${n.real === 1 ? 'stall is' : 'stalls are'} taken · ${n.waiting} waiting for someone`;
+  // Shops: the map's own relay first, then the Commons directly. The rules
+  // link follows whichever answered.
+  for (const [url, rules] of [['/public-stalls', '/public-stall-rules'], ['/commons/stalls', '/commons/stall-rules']]){
+    try { const r = await fetch(url); if (!r.ok) continue; const j = await r.json();
+      if (j && Array.isArray(j.stalls) && !j.unavailable){
+        shops = j.stalls; shopsLoaded = true;
+        document.getElementById('room-rules').href = rules; break;
+      } } catch (_) {}
+  }
+  const n = buildStalls(posts, shops);
+  // Labels must be true: if the shops didn't load, say so, not "0 open".
+  const shopPart = shopsLoaded ? `${n.shops} ${n.shops === 1 ? 'shop' : 'shops'} open` : "shops couldn't load";
+  status.textContent = `${shopPart} · ${n.real} ${n.real === 1 ? 'ad' : 'ads'} · ${n.waiting} waiting for someone`;
   return n;
 }
-buildStalls([]);
+buildStalls([], []);
 loadAds();
 frameTick();
 setTimeout(() => document.getElementById('veil').classList.add('off'), 250);

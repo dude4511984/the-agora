@@ -85,7 +85,10 @@ class WhatThePageTellsYou(unittest.TestCase):
     def test_it_says_unsafe_and_what_the_stalls_are(self):
         self.assertIn(">UNSAFE<", PAGE)
         self.assertIn("This stall is waiting for someone.", PAGE)
-        self.assertIn("Every stall with a card is a real post.", PAGE)
+        # Was "Every stall with a card is a real post." Once shops exist a
+        # card can be a shop, so that stopped being true (market-stalls).
+        self.assertIn("A stall with a lit doorway is a shop: walk up and go in. "
+                      "A card without one is a Commons ad.", " ".join(PAGE.split()))
 
     def test_frosty_statues_are_wired_with_labelled_fallbacks(self):
         for name in ("cthulhu", "nosferatu", "gargoyle", "brazier"):

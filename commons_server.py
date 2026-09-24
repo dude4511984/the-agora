@@ -74,6 +74,17 @@ RATE_OPT_GLOBAL_MAX = 100
 
 MAX_BODY_BYTES = 8192  # a post is three short fields, not a payload
 
+# Stalls (commons_stalls.py). An owner stocking four tables and fixing a
+# typo or two is a handful of writes; 30 in ten minutes is room for that
+# and a ceiling for a script. Reports are unsigned (a stranger has no key),
+# so they're limited by visitor address and globally instead.
+RATE_STALL_KEY_WINDOW_MS = 10 * 60 * 1000
+RATE_STALL_KEY_MAX = 30
+RATE_REPORT_IP_WINDOW_MS = 24 * 60 * 60 * 1000
+RATE_REPORT_IP_MAX = 10
+RATE_REPORT_GLOBAL_WINDOW_MS = 60 * 60 * 1000
+RATE_REPORT_GLOBAL_MAX = 200
+
 DEFAULT_DB_PATH = Path.home() / ".config" / "kin_diary" / "commons.db"
 DEFAULT_KNOWN_KEYS_PATH = Path.home() / ".config" / "kin_diary" / "commons_known_keys.json"
 
@@ -221,6 +232,10 @@ class CommonsStore:
         """
         with self._conn() as c:
             c.execute("DELETE FROM opt_outs WHERE key_id=?", (key_id,))
+
+    def opted_out_keys(self) -> list[str]:
+        with self._conn() as c:
+            return [r[0] for r in c.execute("SELECT key_id FROM opt_outs")]
 
     def is_opted_out(self, key_id) -> bool:
         with self._conn() as c:
@@ -414,6 +429,8 @@ class _SlidingWindow:
 
 class CommonsHandler(BaseHTTPRequestHandler):
     store: CommonsStore = None
+    stall_store: "stalls.StallStore" = None
+    resolver = None
     known_keys: KnownKeys = None
     limiter: "_SlidingWindow" = None
     server_version = "commons/1"
@@ -436,12 +453,12 @@ class CommonsHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _raw_body(self) -> bytes:
+    def _raw_body(self, limit=MAX_BODY_BYTES) -> bytes:
         n = int(self.headers.get("Content-Length") or 0)
         if n <= 0:
             raise CommonsError("empty body")
-        if n > MAX_BODY_BYTES:
-            raise CommonsError(f"body too large (max {MAX_BODY_BYTES} bytes)")
+        if n > limit:
+            raise CommonsError(f"body too large (max {limit} bytes)")
         try:
             return self.rfile.read(n)
         except TimeoutError:
@@ -498,6 +515,21 @@ class CommonsHandler(BaseHTTPRequestHandler):
                 p["says"] = self.store.get_says(p["key_id"])
             self._send(200, {"label": UNSAFE_LABEL, "posts": posts})
             return
+        if self.path == "/commons/stalls":
+            listing = self.stall_store.list_stalls(hidden_keys=self.store.opted_out_keys())
+            for st in listing["stalls"]:
+                st["held"] = self.known_keys.held(st["key_id"])
+                st["says"] = self.store.get_says(st["key_id"])
+            self._send(200, listing)
+            return
+        if self.path == "/commons/stall-rules":
+            body = stalls.render_rules_page()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         self._send(404, {"error": "no such path"})
 
     def do_POST(self):
@@ -513,7 +545,89 @@ class CommonsHandler(BaseHTTPRequestHandler):
         if self.path == "/commons/says":
             self._handle_says()
             return
+        if self.path in _STALL_ACTIONS:
+            self._handle_stall(self.path)
+            return
         self._send(404, {"error": "no such path"})
+
+    # ── stalls (commons_stalls.py) ──────────────────────────────────────
+
+    def _handle_stall(self, path):
+        """Claim, release, put/remove an item: signed by a known key,
+        like a post. A report is the one unsigned action: a stranger who
+        sees something wrong has no key, and a report changes nothing by
+        itself; it waits in a queue for a human."""
+        try:
+            raw = (self._optional_body() if path == "/commons/stall/release"
+                   else self._raw_body(stalls.MAX_STALL_BODY_BYTES))
+        except CommonsError as e:
+            self._send(400, {"error": str(e)})
+            return
+        now = _now_ms()
+        if path == "/commons/stall/report":
+            try:
+                self.limiter.check(f"report-ip:{self._visitor_ip()}", RATE_REPORT_IP_WINDOW_MS,
+                                   RATE_REPORT_IP_MAX, now)
+                self.limiter.check("report:global", RATE_REPORT_GLOBAL_WINDOW_MS,
+                                   RATE_REPORT_GLOBAL_MAX, now)
+            except CommonsError as e:
+                self._send(429, {"error": str(e)})
+                return
+            try:
+                stall_id, reason = stalls.validate_report(self._json(raw))
+                rid = self.stall_store.report(stall_id, reason, now)
+            except stalls.StallError as e:
+                self._send(e.code, {"error": str(e)})
+                return
+            self._send(201, {"id": rid, "queued_for": "a human steward"})
+            return
+
+        try:
+            who = identify(self.headers, HOST_NODE, self.path, body=raw)
+        except AgoraError as e:
+            self._send(401, {"error": str(e)})
+            return
+        if who == ANONYMOUS:
+            self._send(401, {"error": "stalls require a signed request"})
+            return
+        if who not in self.known_keys:
+            self._send(403, {"error": "key is not known to any node yet"})
+            return
+        if self.store.is_opted_out(who):
+            self._send(403, {"error": "this key has closed its door to the Commons"})
+            return
+        try:
+            self.limiter.check(f"stall-key:{who}", RATE_STALL_KEY_WINDOW_MS,
+                               RATE_STALL_KEY_MAX, now)
+        except CommonsError as e:
+            self._send(429, {"error": str(e)})
+            return
+        try:
+            if path == "/commons/stall/claim":
+                name, description = stalls.validate_claim(self._json(raw))
+                self._send(201, self.stall_store.claim(who, name, description, now))
+            elif path == "/commons/stall/release":
+                if not self.stall_store.release(who, now):
+                    raise stalls.StallError("this key holds no stall", 404)
+                self._send(200, {"released": True})
+            elif path == "/commons/stall/item":
+                item = stalls.validate_item(self._json(raw), resolve=self.resolver)
+                self._send(200 if item["id"] else 201,
+                           self.stall_store.put_item(who, item, now))
+            elif path == "/commons/stall/item/remove":
+                item_id = stalls.validate_remove(self._json(raw))
+                if not self.stall_store.remove_item(who, item_id, now):
+                    raise stalls.StallError("no such item on your stall", 404)
+                self._send(200, {"removed": item_id})
+        except stalls.StallError as e:
+            self._send(e.code, {"error": str(e)})
+
+    @staticmethod
+    def _json(raw):
+        try:
+            return json.loads(raw)
+        except (UnicodeDecodeError, ValueError):
+            raise stalls.StallError("body is not valid JSON")
 
     def _handle_says(self):
         """What the key's own holder says they are. Signed by the key
@@ -640,6 +754,11 @@ class CommonsHandler(BaseHTTPRequestHandler):
         self._send(201, {"id": post_id})
 
 
+_STALL_ACTIONS = frozenset({"/commons/stall/claim", "/commons/stall/release",
+                            "/commons/stall/item", "/commons/stall/item/remove",
+                            "/commons/stall/report"})
+
+
 class _Server(ThreadingHTTPServer):
     # One connection per thread, daemonized so a thread stuck in a slow
     # read (up to CommonsHandler.timeout) never keeps the process alive
@@ -647,9 +766,14 @@ class _Server(ThreadingHTTPServer):
     daemon_threads = True
 
 
-def serve(store, known_keys, host="127.0.0.1", port=8781):
+def serve(store, known_keys, host="127.0.0.1", port=8781, stall_store=None,
+          resolver=None):
+    """stall_store defaults to the Commons' own file; resolver is the
+    link check's name lookup, replaceable so tests never touch DNS."""
     handler = type("Bound", (CommonsHandler,), {
         "store": store, "known_keys": known_keys, "limiter": _SlidingWindow(),
+        "stall_store": stall_store or stalls.StallStore(store.db_path),
+        "resolver": staticmethod(resolver or stalls.resolve_host),
     })
     return _Server((host, port), handler)
 
@@ -671,6 +795,11 @@ def _parse_cli_args(argv):
                               "behind public_door.py)")
     args = parser.parse_args(argv)
     return ("0.0.0.0" if args.bind_all else "127.0.0.1"), args.port
+
+
+# At the bottom on purpose: commons_stalls reuses this module's character
+# set, so it imports us; by the time it does, everything above exists.
+import commons_stalls as stalls  # noqa: E402
 
 
 if __name__ == "__main__":

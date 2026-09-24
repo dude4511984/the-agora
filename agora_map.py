@@ -254,6 +254,37 @@ def _public_commons_ads() -> dict:
     return data
 
 
+def _public_stalls() -> dict:
+    """GET /commons/stalls off The Commons: the market's shops
+    (commons_stalls.py). Same graceful failure as _public_commons_ads(),
+    except the fallback says it's unavailable, so the market can say "shops
+    couldn't load" instead of the untrue "0 shops open"."""
+    fallback = {"label": PUBLIC_COMMONS_FALLBACK_LABEL, "stalls": [], "unavailable": True}
+    try:
+        req = urllib.request.Request(
+            PUBLIC_COMMONS_URL.rstrip("/") + "/commons/stalls",
+            headers={"User-Agent": "agora-map/1"})
+        with urllib.request.urlopen(req, timeout=FETCH_TIMEOUT) as resp:
+            data = json.loads(resp.read(2 * 1024 * 1024).decode())
+    except Exception:
+        return fallback
+    if not isinstance(data, dict) or not isinstance(data.get("stalls"), list):
+        return fallback
+    return data
+
+
+def _public_stall_rules() -> bytes | None:
+    """The Commons' rendered STALL_RULES.md page, or None."""
+    try:
+        req = urllib.request.Request(
+            PUBLIC_COMMONS_URL.rstrip("/") + "/commons/stall-rules",
+            headers={"User-Agent": "agora-map/1"})
+        with urllib.request.urlopen(req, timeout=FETCH_TIMEOUT) as resp:
+            return resp.read(256 * 1024)
+    except Exception:
+        return None
+
+
 PAGE = """<!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
@@ -4049,6 +4080,16 @@ class Handler(BaseHTTPRequestHandler):
             return
         if route == "/public-commons-ads":
             self._send(200, json.dumps(_public_commons_ads()).encode(), "application/json")
+            return
+        if route == "/public-stalls":
+            self._send(200, json.dumps(_public_stalls()).encode(), "application/json")
+            return
+        if route == "/public-stall-rules":
+            page = _public_stall_rules()
+            if page is None:
+                self._send(502, b'{"error":"the Commons is not answering"}', "application/json")
+            else:
+                self._send(200, page, "text/html; charset=utf-8")
             return
         if self.path.startswith("/proxy"):
             q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
