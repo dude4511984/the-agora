@@ -38,8 +38,17 @@ from shape3d_ritual import claimed_shape3d
 from kin_diary.agora.wire import sign_request
 from kin_diary.keys import DEFAULT_KEYS_ROOT, load_current
 
+# kin_talk (push-to-talk with a Kin) lives in ~/pops_shop on Frosty and is
+# not in this repo. Imported unconditionally, it stopped the map from
+# starting on any machine but Frosty: ModuleNotFoundError at import, before
+# a single page was served (found 2026-09-24, on a cloud box). The map is
+# the first thing an outside steward runs. Optional now: without it the map
+# serves everything and the voice route says so plainly.
 sys.path.insert(0, os.path.expanduser("~/pops_shop"))
-import kin_talk as kin_talk  # noqa: E402
+try:
+    import kin_talk as kin_talk  # noqa: E402
+except ImportError:
+    kin_talk = None
 
 DEFAULT_PORT = 8791
 MODELS_DIR = (Path(__file__).parent / "static" / "models").resolve()
@@ -3736,8 +3745,13 @@ async function sendVoiceToBackend(blob, target){
 
     if (!resp.ok){
       const errTxt = await resp.text().catch(() => '');
+      let why = errTxt;
+      try { const j = JSON.parse(errTxt); if (j && j.error) why = j.error; } catch (_) {}
       if (voiceStatusEl){
-        voiceStatusEl.innerHTML = `<span style="color:#e8756b">Voice server (${resp.status}): ${errTxt.slice(0, 70)}</span>`;
+        const span = document.createElement('span');
+        span.style.color = '#e8756b';
+        span.textContent = `Voice (${resp.status}): ${why.slice(0, 70)}`;
+        voiceStatusEl.replaceChildren(span);
       }
       return;
     }
@@ -4284,6 +4298,10 @@ class Handler(BaseHTTPRequestHandler):
         if not kin or not audio:
             self._send(400, b'{"ok":false,"error":"kin and audio required"}',
                        "application/json")
+            return
+        if kin_talk is None:
+            self._send(503, json.dumps({"ok": False, "error":
+                       "voice isn't set up on this node"}).encode(), "application/json")
             return
         try:
             wav, heard, said = kin_talk.voice_turn(kin, audio, act)
