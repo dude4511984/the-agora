@@ -78,6 +78,8 @@ const SPUR_HW = 1.9, SPUR_LEN = 13;    // the one way in: a short lane south to 
 // on a platform you walk around him and the arcade still runs underneath.
 const PLAZA_R = 9.0, PLAZA_Y = BRIDGE_H + 0.03;
 let STATUE_R = 2.4;                    // Cthulhu's footprint; measured from the model when it loads
+// Cthulhu is the tallest thing here; Nosferatu Rex stands below him (Don, 2026-09-24).
+const CTHULHU_H = 10.0, NOSFERATU_H = 6.5, MAST_H = 7.0;
 const TWO_PI = Math.PI * 2;
 
 function P(t){ return {x: (W / 2) * Math.sin(2 * t), z: L * Math.sin(t)}; }
@@ -269,10 +271,10 @@ world.add(ribbon(0, TWO_PI, -DECK_HW, DECK_HW, H, H, stoneMat, 3.2));
   const f = frame(0);
   for (const side of [-1, 1]){
     const x = f.N.x * side * (PLAZA_R - 0.5), z = f.N.z * side * (PLAZA_R - 0.5);
-    const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.22, 9, 8), ironMat);
-    mast.position.set(x, PLAZA_Y + 4.5, z);
+    const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.22, MAST_H, 8), ironMat);
+    mast.position.set(x, PLAZA_Y + MAST_H / 2, z);
     const cage = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.9, 0.7), glowMat);
-    cage.position.set(x, PLAZA_Y + 9.2, z);
+    cage.position.set(x, PLAZA_Y + MAST_H + 0.2, z);
     world.add(mast, cage);
   }
 }
@@ -390,9 +392,10 @@ function fitTo(obj, height){
 {
   const g = new THREE.Group(); g.position.set(0, PLAZA_Y, 0); world.add(g);
   const up = new THREE.SpotLight(0x9ab0ff, 1.2, 22, 0.55, 0.7, 1.5);
-  up.position.set(0, 0.2, 5.5); up.target.position.set(0, 4, 0); g.add(up, up.target);
+  up.position.set(0, 0.2, 6.5); up.target.position.set(0, 6, 0); g.add(up, up.target);
   tryModel('/models/statues/cthulhu.glb', obj => {
-    STATUE_R = fitTo(carve(obj), 7.0) + 0.1; g.add(obj);
+    // The tallest thing in the market (Don, via Frosty): 10 m on a 5.5 m platform.
+    STATUE_R = fitTo(carve(obj), CTHULHU_H) + 0.1; g.add(obj);
   }, () => {
     const p = new THREE.Mesh(new THREE.CylinderGeometry(2.2, 2.4, 1.4, 16), darkStone); p.position.y = 0.7; g.add(p);
   });
@@ -401,11 +404,11 @@ const STATUE_AT = {x: 0, z: -0.62 * L};
 {
   const g = new THREE.Group(); g.position.set(STATUE_AT.x, 0, STATUE_AT.z); world.add(g);
   const up = new THREE.SpotLight(0xff9a6a, 1.6, 26, 0.5, 0.6, 1.5);
-  up.position.set(0, 0.3, 6); up.target.position.set(0, 7, 0); g.add(up, up.target);
+  up.position.set(0, 0.3, 6); up.target.position.set(0, 4.5, 0); g.add(up, up.target);
   // Nosferatu Rex: Don's original vampire lord, on his own named pedestal.
   tryModel('/models/statues/nosferatu.glb', obj => {
     const base = new THREE.Mesh(new THREE.BoxGeometry(5, 0.4, 5), darkStone); base.position.y = 0.2; g.add(base);
-    fitTo(carve(obj), 9.0); obj.position.y += 0.4; g.add(obj);
+    fitTo(carve(obj), NOSFERATU_H); obj.position.y += 0.4; g.add(obj);
   }, () => {
     const plinth = new THREE.Mesh(new THREE.BoxGeometry(5, 1.6, 5), darkStone); plinth.position.y = 0.8; g.add(plinth);
     // Stand-in: a cloaked figure, one hand raised. Original, not anyone's character.

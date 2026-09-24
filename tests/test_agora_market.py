@@ -68,8 +68,14 @@ class CthulhuAtTheCrossing(unittest.TestCase):
 
     def test_there_is_room_to_walk_round_him(self):
         plaza_r = const("PLAZA_R")
-        statue_r = 2.24 + 0.1          # measured from cthulhu.glb at 7 m tall
+        statue_r = 3.16                # measured from cthulhu.glb at 10 m tall (+0.1)
         self.assertGreater((plaza_r - 0.6) - (statue_r + 0.35), 3.0)
+
+    def test_cthulhu_is_the_tallest_thing_in_the_market(self):
+        # Before (measured): Cthulhu 7 m, Nosferatu 9 m. Don: flip them.
+        self.assertGreaterEqual(const("CTHULHU_H"), 9.0)
+        self.assertLessEqual(const("NOSFERATU_H"), 7.0)
+        self.assertLess(const("MAST_H") + 0.65, const("CTHULHU_H"))
 
     def test_the_arcade_walker_never_steps_onto_the_platform(self):
         self.assertIn("if (Math.cos(state.t) > 0.9){", PAGE)

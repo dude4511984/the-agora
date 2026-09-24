@@ -2371,9 +2371,10 @@ function _pathTex(url, srgb, len){
 }
 function northPathStrip(z0, z1){
   const len = Math.abs(z1 - z0);
+  // Don's concept (2026-09-24): a crumbling rubble path, not a paved one.
   const mat = new THREE.MeshStandardMaterial({
-    map: _pathTex('/models/cobblestone_pavement/cobblestone_pavement_diff_1k.jpg', true, len),
-    normalMap: _pathTex('/models/cobblestone_pavement/cobblestone_pavement_nor_gl_1k.jpg', false, len),
+    map: _pathTex('/models/textures/brown_mud_rocks_01/brown_mud_rocks_01_diff_1k.jpg', true, len),
+    normalMap: _pathTex('/models/textures/brown_mud_rocks_01/brown_mud_rocks_01_nor_gl_1k.jpg', false, len),
     roughness: 0.95,
   });
   const m = new THREE.Mesh(new THREE.PlaneGeometry(NORTH_PATH_W, len), mat);
@@ -2399,10 +2400,122 @@ const MARKET_DOOR_Z = NORTH_PATH_END_Z - 0.6;
   const left = new THREE.Mesh(new THREE.BoxGeometry(3.2, 5.2, 1.0), stone); left.position.set(-3.2, 2.6, MARKET_DOOR_Z);
   const right = left.clone(); right.position.x = 3.2;
   const lintel = new THREE.Mesh(new THREE.BoxGeometry(3.2, 1.4, 1.0), stone); lintel.position.set(0, 4.5, MARKET_DOOR_Z);
-  const door = new THREE.Mesh(new THREE.BoxGeometry(3.2, 3.8, 0.2), wood); door.position.set(0, 1.9, MARKET_DOOR_Z - 0.2);
-  const seam = new THREE.Mesh(new THREE.BoxGeometry(0.05, 3.6, 0.02), new THREE.MeshBasicMaterial({color: 0xffc46b}));
-  seam.position.set(0, 1.9, MARKET_DOOR_Z + 0.2);
-  northPathGroup.add(left, right, lintel, door, seam);
+  // An open arch, not a door (Don's concept): the opening glows warm, the
+  // market's light. Only a glow: the market isn't drawn from out here, and
+  // no picture pretends to be the view.
+  const arch = new THREE.Mesh(new THREE.TorusGeometry(1.6, 0.28, 8, 20, Math.PI), stone);
+  arch.position.set(0, 3.8, MARKET_DOOR_Z + 0.35);
+  const gc = document.createElement('canvas'); gc.width = 64; gc.height = 128;
+  const gx = gc.getContext('2d'), grad = gx.createRadialGradient(32, 90, 4, 32, 80, 90);
+  grad.addColorStop(0, 'rgba(255,196,110,0.95)'); grad.addColorStop(0.5, 'rgba(190,120,60,0.75)'); grad.addColorStop(1, 'rgba(40,28,20,0.9)');
+  gx.fillStyle = grad; gx.fillRect(0, 0, 64, 128);
+  const glowTex = new THREE.CanvasTexture(gc); glowTex.encoding = THREE.sRGBEncoding;
+  const glow = new THREE.Mesh(new THREE.PlaneGeometry(3.2, 3.8), new THREE.MeshBasicMaterial({map: glowTex}));
+  glow.position.set(0, 1.9, MARKET_DOOR_Z - 0.1);
+  northPathGroup.add(left, right, lintel, arch, glow);
+}
+// Rubble bed under the path: ragged edges, rocks (seeded, so it's the same every load).
+function _seeded(seed){ let a = seed >>> 0; return () => { a = (a + 0x6D2B79F5) >>> 0; let t = a;
+  t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
+{
+  const rnd = _seeded(4511984);
+  const shape = new THREE.Shape(), z0 = -10.6, z1 = MARKET_DOOR_Z + 0.4, n = 26;
+  for (let i = 0; i <= n; i++){ const z = z0 + (z1 - z0) * i / n, w = 2.7 + rnd() * 0.9; i ? shape.lineTo(w, -z) : shape.moveTo(w, -z); }
+  for (let i = n; i >= 0; i--){ const z = z0 + (z1 - z0) * i / n, w = 2.7 + rnd() * 0.9; shape.lineTo(-w, -z); }
+  const geo = new THREE.ShapeGeometry(shape);
+  const uv = geo.attributes.uv; for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) / 3, uv.getY(i) / 3);
+  const tex = (u, srgb) => { const t = floorTex(u, srgb); t.repeat.set(1, 1); return t; };
+  const bed = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({
+    map: tex('/models/textures/aerial_rocks_02/aerial_rocks_02_diff_1k.jpg', true),
+    normalMap: tex('/models/textures/aerial_rocks_02/aerial_rocks_02_nor_gl_1k.jpg', false), roughness: 1}));
+  bed.rotation.x = -Math.PI / 2; bed.position.y = 0.008;
+  northPathGroup.add(bed);
+  // Loose rubble along both edges: one instanced mesh.
+  const rocks = new THREE.InstancedMesh(new THREE.DodecahedronGeometry(0.28, 0),
+    new THREE.MeshStandardMaterial({color: 0x5b5249, roughness: 1}), 70);
+  const m = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler();
+  for (let i = 0; i < 70; i++){
+    const z = z0 + (z1 - z0) * rnd(), side = rnd() < 0.5 ? -1 : 1, x = side * (1.7 + rnd() * 1.6), k = 0.4 + rnd() * 1.1;
+    q.setFromEuler(e.set(rnd() * 3, rnd() * 3, rnd() * 3));
+    m.compose(new THREE.Vector3(x, 0.08 * k, z), q, new THREE.Vector3(k, k * (0.4 + rnd() * 0.5), k));
+    rocks.setMatrixAt(i, m);
+  }
+  northPathGroup.add(rocks);
+}
+// The signs: they escalate from the gate to the arch (1, 2, 3 in Don's
+// concept). Text is exactly the set approved in the room's north-path note;
+// "We do not take responsibility..." is held until Marvin rules on it.
+const NORTH_SIGNS = [
+  {n: 1, at: [2.6, -13.6], ry: -0.35, w: 2.0, h: 1.25, head: 'WARNING!', text: 'Stepping beyond is on your own accord.', style: 'warn'},
+  {n: 2, at: [-2.8, -25.6], ry: 0.45, w: 1.7, h: 0.95, text: 'Nothing past here is verified.', style: 'metal'},
+  {n: 2, at: [2.8, -26.1], ry: -0.45, w: 1.8, h: 1.0, text: 'Anyone can read. Posting is by introduction.', style: 'metal'},
+  {n: 3, arch: true, w: 2.9, h: 0.9, head: 'UNSAFE.', text: 'Mind yourself, and each other.', style: 'iron'},
+];
+const DANGER_PLAQUES = [[-2.3, -11.6], [2.4, -14.0], [-2.5, -24.9], [2.2, -24.8], [-2.3, -27.6], [2.5, -28.0]];
+function _signTexture(sg){
+  const W = 512, H = Math.round(512 * sg.h / sg.w), c = document.createElement('canvas'); c.width = W; c.height = H;
+  const x = c.getContext('2d'), rnd = _seeded(sg.text.length * 97 + sg.n);
+  const base = {warn: '#d9ccb0', metal: '#8e8a82', iron: '#2b2622'}[sg.style];
+  x.fillStyle = base; x.fillRect(0, 0, W, H);
+  for (let i = 0; i < 900; i++){                                   // weathering
+    x.fillStyle = `rgba(${40 + rnd() * 60},${30 + rnd() * 40},${20 + rnd() * 30},${rnd() * 0.18})`;
+    x.fillRect(rnd() * W, rnd() * H, 2 + rnd() * 14, 1 + rnd() * 6);
+  }
+  x.strokeStyle = sg.style === 'iron' ? '#8a5a2a' : '#3a2f24'; x.lineWidth = 10; x.strokeRect(5, 5, W - 10, H - 10);
+  let y = 22; x.textAlign = 'center';
+  if (sg.head){
+    x.fillStyle = sg.style === 'iron' ? '#e8756b' : '#a3261c';
+    x.font = `bold ${Math.round(H * (sg.style === 'iron' ? 0.34 : 0.24))}px sans-serif`;
+    y += Math.round(H * 0.26); x.fillText(sg.head, W / 2, y); y += 10;
+  }
+  x.fillStyle = sg.style === 'iron' ? '#ffcf7a' : '#241c14';
+  const size = Math.round(H * (sg.head ? 0.15 : 0.19)); x.font = `bold ${size}px sans-serif`;
+  const words = sg.text.split(' '); let line = '', lines = [];
+  for (const w of words){ const t = line ? line + ' ' + w : w; if (x.measureText(t).width > W - 60 && line){ lines.push(line); line = w; } else line = t; }
+  lines.push(line);
+  const top = sg.head ? y + size : (H - lines.length * (size + 8)) / 2 + size;
+  lines.forEach((l, i) => x.fillText(l, W / 2, top + i * (size + 8)));
+  const t = new THREE.CanvasTexture(c); t.encoding = THREE.sRGBEncoding; return t;
+}
+{
+  const woodMat = new THREE.MeshStandardMaterial({color: 0x4a3524, roughness: 0.9});
+  const lampMat = new THREE.MeshBasicMaterial({color: 0xfff0c8});
+  NORTH_SIGNS.forEach(sg => {
+    const tex = _signTexture(sg);
+    // Lit by its own lamp: the face glows a little, so it reads at night without a light each.
+    const face = new THREE.MeshStandardMaterial({map: tex, emissive: 0xffffff, emissiveMap: tex,
+      emissiveIntensity: sg.style === 'iron' ? 0.55 : 0.35, roughness: 0.9});
+    const board = new THREE.Mesh(new THREE.PlaneGeometry(sg.w, sg.h), face);
+    const back = new THREE.Mesh(new THREE.PlaneGeometry(sg.w, sg.h), woodMat); back.rotation.y = Math.PI; back.position.z = -0.03;
+    const lamp = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.08, 0.1), lampMat); lamp.position.set(0, sg.h / 2 + 0.06, 0.06);
+    const g = new THREE.Group(); g.add(board, back, lamp);
+    if (sg.arch){
+      g.position.set(0, 4.55, MARKET_DOOR_Z + 0.52);                // on the lintel, facing the path
+    } else {
+      const post = new THREE.Mesh(new THREE.BoxGeometry(0.13, 2.2, 0.13), woodMat); post.position.set(0, -1.0, -0.06);
+      g.add(post);
+      g.position.set(sg.at[0], 2.05, sg.at[1]); g.rotation.set(-0.06, sg.ry, sg.n === 1 ? 0.07 : -0.05);
+    }
+    g.userData.sign = sg.text;
+    northPathGroup.add(g);
+  });
+  const dangerTex = (() => {
+    const c = document.createElement('canvas'); c.width = 256; c.height = 160; const x = c.getContext('2d');
+    x.fillStyle = '#cfc8b8'; x.fillRect(0, 0, 256, 160);
+    x.fillStyle = '#1b1b1b'; x.fillRect(0, 30, 256, 100);
+    x.fillStyle = '#b3261c'; x.beginPath(); x.ellipse(128, 80, 110, 40, 0, 0, 7); x.fill();
+    x.fillStyle = '#f2ece0'; x.font = 'bold 44px sans-serif'; x.textAlign = 'center'; x.fillText('DANGER', 128, 96);
+    const t = new THREE.CanvasTexture(c); t.encoding = THREE.sRGBEncoding; return t; })();
+  const dMat = new THREE.MeshStandardMaterial({map: dangerTex, roughness: 0.8, emissive: 0xffffff, emissiveMap: dangerTex, emissiveIntensity: 0.2});
+  const rnd = _seeded(77);
+  DANGER_PLAQUES.forEach(([px, pz]) => {
+    const g = new THREE.Group();
+    const plate = new THREE.Mesh(new THREE.PlaneGeometry(0.62, 0.39), dMat); plate.position.y = 0.82;
+    const stake = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.8, 0.06), woodMat); stake.position.set(0, 0.4, -0.03);
+    g.add(plate, stake); g.position.set(px, 0, pz);
+    g.rotation.set(0, -Math.sign(px) * (0.3 + rnd() * 0.4), (rnd() - 0.5) * 0.3);
+    northPathGroup.add(g);
+  });
 }
 let _toMarket = false;
 function checkMarketDoor(){
@@ -2416,7 +2529,9 @@ function checkMarketDoor(){
   }
 }
 const plazaPavingGeo = new THREE.CircleGeometry(5.2, 32);
-const plazaPavingMat = new THREE.MeshStandardMaterial({color: 0x4a443b, roughness: 0.95});
+const plazaPavingMat = new THREE.MeshStandardMaterial({roughness: 0.95,
+  map: (() => { const t = floorTex('/models/textures/castle_brick_broken_06/castle_brick_broken_06_diff_1k.jpg', true); t.repeat.set(3, 3); return t; })(),
+  normalMap: (() => { const t = floorTex('/models/textures/castle_brick_broken_06/castle_brick_broken_06_nor_gl_1k.jpg', false); t.repeat.set(3, 3); return t; })()});
 
 function _adSignature(p){
   return p.what + '\\u0001' + p.why + '\\u0001' + p.how_to_ask + '\\u0001' +
