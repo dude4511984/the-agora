@@ -15,6 +15,28 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import easel  # noqa: E402
 
+# Hermetic, as the docstring says: make() checks that the brush and model
+# exist on disk before it ever calls the injected _run, so off Frosty every
+# fake-brush test died at "no brush at ~/easel/bin/sd-cli" (clean checkout,
+# 2026-09-24). Point the easel at stand-in files for this module's run; the
+# brush itself is always the injected fake.
+_STANDIN = None
+_REAL = None
+
+
+def setUpModule():
+    global _STANDIN, _REAL
+    _STANDIN = tempfile.TemporaryDirectory()
+    b, m = Path(_STANDIN.name) / "sd-cli", Path(_STANDIN.name) / "model.gguf"
+    b.write_bytes(b""); m.write_bytes(b"")
+    _REAL = (easel.BIN, easel.MODEL)
+    easel.BIN, easel.MODEL = b, m
+
+
+def tearDownModule():
+    easel.BIN, easel.MODEL = _REAL
+    _STANDIN.cleanup()
+
 
 def _fake_run(ok=True, writes=True):
     def run(cmd, **kw):

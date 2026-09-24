@@ -14,7 +14,12 @@ sys.path.insert(0, os.path.expanduser("~/kin_diary"))
 sys.path.insert(0, os.path.expanduser("~/pops_shop"))
 
 import agora_map  # noqa: E402
-import kin_talk as kt  # noqa: E402
+try:
+    import kin_talk as kt  # noqa: E402
+except ImportError:           # Frosty's voice stack lives in ~/pops_shop, not in this repo
+    kt = None
+NEEDS_KIN_TALK = unittest.skipIf(
+    kt is None, "needs kin_talk from ~/pops_shop (Frosty's voice stack; not in this repo)")
 
 
 class _H:
@@ -54,6 +59,7 @@ class _H:
         return W(self)
 
 
+@NEEDS_KIN_TALK
 class VoiceContract(unittest.TestCase):
     def test_unknown_kin_is_404(self):
         h = _H("/voice_chat?kin=NotAKin", body=b"xxxx")
@@ -108,6 +114,7 @@ class VoiceContract(unittest.TestCase):
         self.assertEqual(h.code, 200)
 
 
+@NEEDS_KIN_TALK
 class KinTalkReuse(unittest.TestCase):
     def test_bong_is_on_the_same_voice_map(self):
         self.assertIn("Bong", kt.KIN_BY_NAME)

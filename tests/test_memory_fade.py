@@ -6,10 +6,19 @@ from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
 
+# kin_memory is Echo Bloom's (EchoBloom repo, scripts/kin_memory.py), found
+# here only at Don's own install path. This test belongs in EchoBloom; until it
+# moves, it skips anywhere that path isn't.
 sys.path.insert(0, "/home/thedude/echo_bloom/scripts")
-import kin_memory
+try:
+    import kin_memory
+except ImportError:
+    kin_memory = None
+NEEDS_KIN_MEMORY = unittest.skipIf(
+    kin_memory is None, "needs Echo Bloom's kin_memory (EchoBloom scripts/; not in this repo)")
 
 
+@NEEDS_KIN_MEMORY
 class MemoryFadeTests(unittest.TestCase):
 
     def _db(self, rows):
