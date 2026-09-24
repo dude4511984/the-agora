@@ -33,6 +33,7 @@ import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from agora_market import render_market_page
 from avatar_ritual import claimed_face
 from shape3d_ritual import claimed_shape3d
 from kin_diary.agora.wire import sign_request
@@ -2384,6 +2385,33 @@ const northPathGroup = new THREE.Group();
   northPathGroup.add(northPathStrip(plazaFar - 0.3, NORTH_PATH_END_Z));
 }
 publicCommonsGroup.add(northPathGroup);
+// The market door at the end of the north path: an arch in a short wall,
+// a dark door with light at the seam. Walk into it and you're in the
+// market (/market). The torches and the gargoyle are on the market's side,
+// marking the way back out.
+const MARKET_DOOR_Z = NORTH_PATH_END_Z - 0.6;
+{
+  const stone = new THREE.MeshStandardMaterial({color: 0x3d372f, roughness: 0.95});
+  const wood = new THREE.MeshStandardMaterial({color: 0x5a3f28, roughness: 0.85});
+  const left = new THREE.Mesh(new THREE.BoxGeometry(3.2, 5.2, 1.0), stone); left.position.set(-3.2, 2.6, MARKET_DOOR_Z);
+  const right = left.clone(); right.position.x = 3.2;
+  const lintel = new THREE.Mesh(new THREE.BoxGeometry(3.2, 1.4, 1.0), stone); lintel.position.set(0, 4.5, MARKET_DOOR_Z);
+  const door = new THREE.Mesh(new THREE.BoxGeometry(3.2, 3.8, 0.2), wood); door.position.set(0, 1.9, MARKET_DOOR_Z - 0.2);
+  const seam = new THREE.Mesh(new THREE.BoxGeometry(0.05, 3.6, 0.02), new THREE.MeshBasicMaterial({color: 0xffc46b}));
+  seam.position.set(0, 1.9, MARKET_DOOR_Z + 0.2);
+  northPathGroup.add(left, right, lintel, door, seam);
+}
+let _toMarket = false;
+function checkMarketDoor(){
+  if (_toMarket || traveling || currentRoomMode === 'Home' || !publicCommonsGroup.visible) return;
+  if (player.position.z < MARKET_DOOR_Z + 0.9 && Math.abs(player.position.x) < 1.5) {
+    _toMarket = true;
+    const veil = document.getElementById('cross'), lab = document.getElementById('cross-label');
+    if (lab) lab.innerHTML = 'into <b>the market</b>… <span style="color:#e8756b">unsafe</span>';
+    if (veil) veil.classList.add('on');
+    setTimeout(() => { location.href = '/market'; }, 800);
+  }
+}
 const plazaPavingGeo = new THREE.CircleGeometry(5.2, 32);
 const plazaPavingMat = new THREE.MeshStandardMaterial({color: 0x4a443b, roughness: 0.95});
 
@@ -3526,6 +3554,9 @@ setInterval(() => {
   loadNode();
 }, 15000);
 setInterval(pollKinIntents, 1500);
+if (new URLSearchParams(location.search).get('from') === 'market' && currentRoomMode !== 'Home') {
+  teleportPlayer(0, MARKET_DOOR_Z + 2.6, 'Frosty');
+}
 const _autoCross = new URLSearchParams(location.search).get('cross');
 if (_autoCross) {
   setTimeout(() => {
@@ -4019,6 +4050,7 @@ function updateCompass(){
 function animate(){
   requestAnimationFrame(animate);
   updateCompass();
+  checkMarketDoor();
   const dt = Math.min(clock.getDelta(), 0.1);
   const t = clock.getElapsedTime();
   stepPlayer(dt);
@@ -4181,6 +4213,9 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 html = PAGE.replace("__PRESETS__", json.dumps(PRESET_NODES))
             self._send(200, html.encode(), "text/html; charset=utf-8")
+            return
+        if route == "/market":
+            self._send(200, render_market_page().encode(), "text/html; charset=utf-8")
             return
         if route == "/3d":
             qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
