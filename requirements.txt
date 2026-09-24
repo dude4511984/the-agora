@@ -1,0 +1,9 @@
+# What a node and the test suite need. Verified 2026-09-24: on a clean clone with
+# an empty HOME and only this installed, run_tests.py is 806 OK, 24 skipped
+# (each skip names what it needs: Frosty's Kin data, ~/pops_shop modules, or a tool).
+cryptography>=41
+
+# Optional, only for the parts that use them:
+# requests              the Kin-facing runners (kin_easel_*, kin_chess_table)
+# fastapi, httpx        vault integration tests; they also need tests/dev.db (Frosty's)
+# rsvg-convert          system tool for the workbench renders (apt install librsvg2-bin)
