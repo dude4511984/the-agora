@@ -36,14 +36,36 @@ def _load_or_create_key(author: str) -> KeyRecord:
         return generate_keypair(author)
 
 
-def _setup_systemd(service_name: str) -> None:
+def _setup_systemd(service_name: str) -> str | None:
+    """None if systemd took the service; otherwise why it didn't.
+
+    It used to swallow every failure and let found print "serving on :8770"
+    regardless. On a box with no systemd user session (a container, a plain
+    ssh login) nothing was serving (found following STAND_UP_A_NODE.md on a
+    clean box, 2026-09-24)."""
     for cmd in (["daemon-reload"], ["enable", "--now", service_name]):
         try:
             res = subprocess.run(["systemctl", "--user"] + cmd, capture_output=True, text=True)
-            if res.returncode != 0 and "Failed to connect to bus" not in res.stderr:
-                pass
         except FileNotFoundError:
+            return "systemctl is not installed"
+        if res.returncode != 0:
+            return (res.stderr.strip().splitlines() or [f"systemctl --user {' '.join(cmd)} failed"])[-1]
+    return None
+
+
+def _answers(port: int, wait_s: float = 8.0) -> bool:
+    """Does a node banner actually come back on this port?"""
+    import time, urllib.request
+    deadline = time.time() + wait_s
+    while time.time() < deadline:
+        try:
+            with urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=1) as r:
+                if b"EverySynthetic Node" in r.read(200):
+                    return True
+        except Exception:
             pass
+        time.sleep(0.4)
+    return False
 
 
 def _cmd_found(args: list[str]) -> int:
@@ -142,7 +164,10 @@ def _cmd_found(args: list[str]) -> int:
         serve_node_exec = str(repo_root / "serve_node.py")
 
     exec_args = [
-        "/usr/bin/python3", "-u", serve_node_exec,
+        # The Python running found, not /usr/bin/python3: in a venv (how a
+        # stranger on a modern distro installs cryptography) the system Python
+        # doesn't have it, and the service would die on start.
+        sys.executable, "-u", serve_node_exec,
         node_name, str(port),
         f"steward={steward_key.key_id}",
     ]
@@ -164,15 +189,21 @@ WantedBy=default.target
 """
     service_path.write_text(service_content, encoding="utf-8")
 
-    # Run daemon-reload and enable --now
-    _setup_systemd(service_name)
+    # Run daemon-reload and enable --now, then believe only the port.
+    why_not = _setup_systemd(service_name)
+    if why_not is None and not _answers(port):
+        why_not = f"systemd took the service, but nothing answers on :{port} (see ~/{node_name.lower()}_node.log)"
 
-    # Print serving line, keys directory, and backup reminder
     keys_dir = Path.home() / ".config" / "kin_diary" / "keys"
-    print(
-        f"{node_name} serving on :{port} — speaker={node.speaker} "
-        f"residents={sorted(node.residents)} node_key={node_key.key_id[:16]}…"
-    )
+    facts = (f"speaker={node.speaker} residents={sorted(node.residents)} "
+             f"node_key={node_key.key_id[:16]}…")
+    if why_not is None:
+        print(f"{node_name} serving on :{port} — {facts}")
+    else:
+        print(f"{node_name} founded, NOT serving yet — {facts}")
+        print(f"  why: {why_not}")
+        home = str(Path.home())
+        print("  start it by hand:  " + " ".join(a.replace("%h", home) for a in exec_args))
     print(f"keys directory: {keys_dir}")
     print("back this up.")
     return 0

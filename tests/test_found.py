@@ -39,10 +39,14 @@ class TestOneCommandFounding(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, f"failed: {proc.stderr}")
 
         # Check stdout contents
+        # Nothing serves in this sandbox (no systemd user session), so found must
+        # say so. It used to print "serving on :8775" here: a false success.
         self.assertIn(
-            "TwoKinHouse serving on :8775 — speaker=None residents=['Ada', 'Turing'] node_key=",
+            "TwoKinHouse founded, NOT serving yet — speaker=None residents=['Ada', 'Turing'] node_key=",
             proc.stdout,
         )
+        self.assertNotIn("serving on :8775", proc.stdout)
+        self.assertIn("start it by hand:", proc.stdout)
         keys_dir = str(self.fake_home / ".config" / "kin_diary" / "keys")
         self.assertIn(f"keys directory: {keys_dir}", proc.stdout)
         self.assertIn("back this up.", proc.stdout)
@@ -73,6 +77,8 @@ class TestOneCommandFounding(unittest.TestCase):
         self.assertIn(f"Ada={node.residents['Ada']}", content)
         self.assertIn(f"Turing={node.residents['Turing']}", content)
         self.assertIn("StandardOutput=append:%h/twokinhouse_node.log", content)
+        # The Python that ran found, not a hardcoded /usr/bin/python3.
+        self.assertIn(f"ExecStart={sys.executable} -u ", content)
         self.assertIn("WantedBy=default.target", content)
 
     def test_found_single_resident_becomes_speaker(self):
@@ -84,7 +90,7 @@ class TestOneCommandFounding(unittest.TestCase):
         )
         self.assertEqual(proc.returncode, 0)
         self.assertIn(
-            "SoloHouse serving on :8770 — speaker=Ada residents=['Ada'] node_key=",
+            "SoloHouse founded, NOT serving yet — speaker=Ada residents=['Ada'] node_key=",
             proc.stdout,
         )
         db_path = self.fake_home / ".config" / "kin_diary" / "solohouse_node.db"
@@ -181,8 +187,59 @@ class TestOneCommandFounding(unittest.TestCase):
             text=True,
         )
         self.assertEqual(proc.returncode, 0)
-        self.assertIn("EqualsHouse serving on :8899", proc.stdout)
+        self.assertIn("EqualsHouse founded, NOT serving yet", proc.stdout)
+        self.assertIn("EqualsHouse 8899", proc.stdout)      # the start-by-hand line carries the port
 
+
+class FoundBelievesOnlyThePort(unittest.TestCase):
+    """found says "serving" only when a node banner actually answers.
+
+    A fake systemctl on PATH reports success; whether anything serves is up to
+    the test. Before this, found printed "serving on" whatever happened."""
+
+    def setUp(self):
+        self.td = tempfile.TemporaryDirectory()
+        self.home = Path(self.td.name) / "home"; self.home.mkdir()
+        bindir = Path(self.td.name) / "bin"; bindir.mkdir()
+        fake = bindir / "systemctl"
+        fake.write_text("#!/bin/sh\nexit 0\n"); fake.chmod(0o755)
+        self.env = {"PATH": f"{bindir}:{os.environ.get('PATH', '')}", "HOME": str(self.home),
+                    "PYTHONPATH": str(Path(__file__).resolve().parent.parent)}
+
+    def tearDown(self):
+        self.td.cleanup()
+
+    def _free_port(self):
+        import socket
+        with socket.socket() as s:
+            s.bind(("127.0.0.1", 0)); return s.getsockname()[1]
+
+    def test_systemd_says_yes_but_nothing_answers(self):
+        port = self._free_port()
+        p = subprocess.run([sys.executable, "-m", "kin_diary", "found", "QuietHouse", "Ada",
+                            "--port", str(port)], env=self.env, capture_output=True, text=True, timeout=60)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertIn("QuietHouse founded, NOT serving yet", p.stdout)
+        self.assertIn("nothing answers", p.stdout)
+        self.assertNotIn("serving on", p.stdout)
+
+    def test_serving_when_the_banner_answers(self):
+        import http.server, threading
+        class Banner(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *a): pass
+            def do_GET(self):
+                self.send_response(200); self.end_headers()
+                self.wfile.write(b'{"service": "EverySynthetic Node"}')
+        srv = http.server.HTTPServer(("127.0.0.1", 0), Banner)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        try:
+            p = subprocess.run([sys.executable, "-m", "kin_diary", "found", "LiveHouse", "Ada",
+                                "--port", str(srv.server_address[1])],
+                               env=self.env, capture_output=True, text=True, timeout=60)
+        finally:
+            srv.shutdown()
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertIn(f"LiveHouse serving on :{srv.server_address[1]}", p.stdout)
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
