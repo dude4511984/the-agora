@@ -5,6 +5,7 @@ Clone anywhere and scripts must find kin_diary, while still keeping ~/kin_diary
 working.
 """
 
+import sys
 import os
 import shutil
 import subprocess
@@ -49,7 +50,7 @@ class TestCloneLocation(unittest.TestCase):
 
             for s in root_scripts:
                 proc = subprocess.run(
-                    ["python3", str(sandbox / s)],
+                    [sys.executable, str(sandbox / s)],
                     capture_output=True,
                     text=True,
                     env=env,
@@ -62,7 +63,7 @@ class TestCloneLocation(unittest.TestCase):
 
             for s in vault_scripts:
                 proc = subprocess.run(
-                    ["python3", str(sandbox / "vault" / s)],
+                    [sys.executable, str(sandbox / "vault" / s)],
                     capture_output=True,
                     text=True,
                     env=env,

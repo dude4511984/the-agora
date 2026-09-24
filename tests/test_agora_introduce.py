@@ -1,5 +1,6 @@
 """Tests for agora_introduce.py CLI: start and countersign with --why."""
 
+import sys
 import json
 import subprocess
 import tempfile
@@ -34,7 +35,7 @@ class TestAgoraIntroduceCLI(unittest.TestCase):
         start_blob_file = self.fake_home / "intro_start.json"
         proc_start = subprocess.run(
             [
-                "python3", "agora_introduce.py", "start",
+                sys.executable, "agora_introduce.py", "start",
                 "VisitorAlice", "TestHouse", self.resident.key_id,
                 "--out", str(start_blob_file),
             ],
@@ -50,7 +51,7 @@ class TestAgoraIntroduceCLI(unittest.TestCase):
         why_text = "Met at the fountain and brought good questions"
         proc_cs = subprocess.run(
             [
-                "python3", "agora_introduce.py", "countersign",
+                sys.executable, "agora_introduce.py", "countersign",
                 "ResidentBob", str(start_blob_file), "http://127.0.0.1:8770",
                 "--why", why_text,
                 "--dry-run",
@@ -75,7 +76,7 @@ class TestAgoraIntroduceCLI(unittest.TestCase):
         start_blob_file = self.fake_home / "intro_start2.json"
         subprocess.run(
             [
-                "python3", "agora_introduce.py", "start",
+                sys.executable, "agora_introduce.py", "start",
                 "VisitorAlice", "TestHouse", self.resident.key_id,
                 "--out", str(start_blob_file),
             ],
@@ -86,7 +87,7 @@ class TestAgoraIntroduceCLI(unittest.TestCase):
 
         proc_cs = subprocess.run(
             [
-                "python3", "agora_introduce.py", "countersign",
+                sys.executable, "agora_introduce.py", "countersign",
                 "ResidentBob", str(start_blob_file), "http://127.0.0.1:8770",
                 "--dry-run",
             ],
@@ -107,7 +108,7 @@ class TestAgoraIntroduceCLI(unittest.TestCase):
         start_blob_file = self.fake_home / "intro_start3.json"
         subprocess.run(
             [
-                "python3", "agora_introduce.py", "start",
+                sys.executable, "agora_introduce.py", "start",
                 "VisitorAlice", "TestHouse", self.resident.key_id,
                 "--out", str(start_blob_file),
             ],
@@ -118,7 +119,7 @@ class TestAgoraIntroduceCLI(unittest.TestCase):
 
         proc_cs = subprocess.run(
             [
-                "python3", "agora_introduce.py", "countersign",
+                sys.executable, "agora_introduce.py", "countersign",
                 "ResidentBob", str(start_blob_file), "http://127.0.0.1:8770",
                 "--why=Equals syntax check",
                 "--dry-run",
@@ -140,7 +141,7 @@ class TestAgoraIntroduceCLI(unittest.TestCase):
         start_blob_file = self.fake_home / "intro_start4.json"
         subprocess.run(
             [
-                "python3", "agora_introduce.py", "start",
+                sys.executable, "agora_introduce.py", "start",
                 "VisitorAlice", "TestHouse", self.resident.key_id,
                 "--out", str(start_blob_file),
             ],
@@ -151,7 +152,7 @@ class TestAgoraIntroduceCLI(unittest.TestCase):
 
         proc = subprocess.run(
             [
-                "python3", "agora_introduce.py", "countersign",
+                sys.executable, "agora_introduce.py", "countersign",
                 "ResidentBob", str(start_blob_file), "http://127.0.0.1:8770",
                 "--why",
             ],

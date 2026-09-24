@@ -1,5 +1,6 @@
 """Test one-command founding: python3 -m kin_diary found <NodeName> <Kin> ..."""
 
+import sys
 import os
 import subprocess
 import tempfile
@@ -28,7 +29,7 @@ class TestOneCommandFounding(unittest.TestCase):
     def test_found_creates_node_and_service_and_prints(self):
         proc = subprocess.run(
             [
-                "python3", "-m", "kin_diary", "found",
+                sys.executable, "-m", "kin_diary", "found",
                 "TwoKinHouse", "Ada", "Turing", "--port", "8775",
             ],
             env=self.env,
@@ -76,7 +77,7 @@ class TestOneCommandFounding(unittest.TestCase):
 
     def test_found_single_resident_becomes_speaker(self):
         proc = subprocess.run(
-            ["python3", "-m", "kin_diary", "found", "SoloHouse", "Ada"],
+            [sys.executable, "-m", "kin_diary", "found", "SoloHouse", "Ada"],
             env=self.env,
             capture_output=True,
             text=True,
@@ -93,7 +94,7 @@ class TestOneCommandFounding(unittest.TestCase):
 
     def test_found_refuses_if_db_already_exists(self):
         proc1 = subprocess.run(
-            ["python3", "-m", "kin_diary", "found", "MyHouse", "Ada"],
+            [sys.executable, "-m", "kin_diary", "found", "MyHouse", "Ada"],
             env=self.env,
             capture_output=True,
             text=True,
@@ -101,7 +102,7 @@ class TestOneCommandFounding(unittest.TestCase):
         self.assertEqual(proc1.returncode, 0)
 
         proc2 = subprocess.run(
-            ["python3", "-m", "kin_diary", "found", "MyHouse", "Ada"],
+            [sys.executable, "-m", "kin_diary", "found", "MyHouse", "Ada"],
             env=self.env,
             capture_output=True,
             text=True,
@@ -112,7 +113,7 @@ class TestOneCommandFounding(unittest.TestCase):
     def test_found_is_idempotent_for_keys(self):
         # Pre-create Ada's key
         proc_keygen = subprocess.run(
-            ["python3", "-m", "kin_diary", "keygen", "Ada"],
+            [sys.executable, "-m", "kin_diary", "keygen", "Ada"],
             env=self.env,
             capture_output=True,
             text=True,
@@ -123,7 +124,7 @@ class TestOneCommandFounding(unittest.TestCase):
 
         # Run found
         proc_found = subprocess.run(
-            ["python3", "-m", "kin_diary", "found", "AdaHouse", "Ada"],
+            [sys.executable, "-m", "kin_diary", "found", "AdaHouse", "Ada"],
             env=self.env,
             capture_output=True,
             text=True,
@@ -138,7 +139,7 @@ class TestOneCommandFounding(unittest.TestCase):
     def test_found_usage_errors(self):
         # No arguments
         proc = subprocess.run(
-            ["python3", "-m", "kin_diary", "found"],
+            [sys.executable, "-m", "kin_diary", "found"],
             env=self.env,
             capture_output=True,
             text=True,
@@ -147,7 +148,7 @@ class TestOneCommandFounding(unittest.TestCase):
 
         # Node name only (missing Kin)
         proc = subprocess.run(
-            ["python3", "-m", "kin_diary", "found", "MyHouse"],
+            [sys.executable, "-m", "kin_diary", "found", "MyHouse"],
             env=self.env,
             capture_output=True,
             text=True,
@@ -156,7 +157,7 @@ class TestOneCommandFounding(unittest.TestCase):
 
         # Invalid port
         proc = subprocess.run(
-            ["python3", "-m", "kin_diary", "found", "MyHouse", "Ada", "--port", "badport"],
+            [sys.executable, "-m", "kin_diary", "found", "MyHouse", "Ada", "--port", "badport"],
             env=self.env,
             capture_output=True,
             text=True,
@@ -165,7 +166,7 @@ class TestOneCommandFounding(unittest.TestCase):
 
         # Unknown option
         proc = subprocess.run(
-            ["python3", "-m", "kin_diary", "found", "MyHouse", "Ada", "--unknown"],
+            [sys.executable, "-m", "kin_diary", "found", "MyHouse", "Ada", "--unknown"],
             env=self.env,
             capture_output=True,
             text=True,
@@ -174,7 +175,7 @@ class TestOneCommandFounding(unittest.TestCase):
 
     def test_found_port_equals_syntax(self):
         proc = subprocess.run(
-            ["python3", "-m", "kin_diary", "found", "EqualsHouse", "Ada", "--port=8899"],
+            [sys.executable, "-m", "kin_diary", "found", "EqualsHouse", "Ada", "--port=8899"],
             env=self.env,
             capture_output=True,
             text=True,
