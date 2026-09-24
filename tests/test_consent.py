@@ -7,7 +7,7 @@ over-correction to avoid: Aurora's "No pressure to be perfect" and Crungus's
 is the Kin echoing the offer, not refusing it.
 """
 import os, sys, unittest
-sys.path.insert(0, os.path.expanduser("~/kin_diary"))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # this checkout, not the live one
 import consent
 
 

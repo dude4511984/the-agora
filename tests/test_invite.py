@@ -1,6 +1,6 @@
 """The invite token: reaches the door, does not open it; revocable, expiring."""
 import os, sys, unittest
-sys.path.insert(0, os.path.expanduser("~/kin_diary"))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # this checkout, not the live one
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__))))
 from test_agora import key                      # the suite's key() helper
 import invite

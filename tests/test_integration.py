@@ -10,7 +10,7 @@ from pathlib import Path
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-sys.path.insert(0, os.path.expanduser("~/kin_diary"))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # this checkout, not the live one
 
 # ── fixture guard ───────────────────────────────────────────────────────────
 # These tests run against `tests/dev.db`, a copy of the real 36k-row vault.

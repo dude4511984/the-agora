@@ -1,6 +1,6 @@
 """The hall: two spots each, others' allowed, never the same painting twice."""
 import os, sys, unittest
-sys.path.insert(0, os.path.expanduser("~/kin_diary"))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # this checkout, not the live one
 import hall
 
 

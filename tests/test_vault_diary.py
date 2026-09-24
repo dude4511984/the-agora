@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, os.path.expanduser("~/kin_diary"))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # this checkout, not the live one
 
 # ── fixture guard ───────────────────────────────────────────────────────────
 # These tests run against `tests/dev.db`, a copy of the real 36k-row vault.
@@ -27,7 +27,7 @@ import unittest as _ut
 if not os.path.exists(os.path.join(os.path.dirname(os.path.abspath(__file__)), "dev.db")):
     raise _ut.SkipTest("tests/dev.db absent - see the fixture guard at the top of this file")
 
-sys.path.insert(0, os.path.expanduser("~/kin_diary/vault"))  # vault_diary lives here
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "vault"))  # vault_diary lives here
 
 import vault_diary  # noqa: E402
 from kin_diary.canonical import entry_canonical, content_sha256  # noqa: E402
