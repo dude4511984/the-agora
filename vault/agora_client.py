@@ -8,6 +8,15 @@
     python3 agora_client.py read    <author> <url> <node> <board>
     python3 agora_client.py post    <author> <url> <node> <board> <text>
     python3 agora_client.py submit  <url> <kind> <file.json>
+    python3 agora_client.py view    <author> <url> <node>
+    python3 agora_client.py grant   <issuer> <url> <node> <visitor_key_id> <board> <ring>
+
+view: who is present and which places exist, as <author> sees it (signed).
+grant: an introduction only sets a ceiling; this is what opens a board. The
+Speaker grants the shared "collab" board; a resident grants their own
+"personal:<name>". Both were missing: STAND_UP_A_NODE.md's step 6 had no way to
+check presence and step 7's read/post could not work (found following the doc
+on a clean box, 2026-09-24).
 """
 
 from __future__ import annotations
@@ -140,6 +149,19 @@ def main(argv):
         url, kind, path = argv[2], argv[3], argv[4]
         payload = json.loads(Path(path).read_text())
         print(json.dumps(_req(f"{url.rstrip('/')}/{kind}", payload, method="POST"), indent=2))
+        return 0
+
+    if cmd == "view":
+        author, url, node = argv[2], argv[3], argv[4]
+        headers = sign_request(load_current(author), node, "/view")
+        print(json.dumps(_req(url.rstrip("/") + "/view", headers=headers), indent=2))
+        return 0
+
+    if cmd == "grant":
+        issuer, url, node, visitor, board, ring = argv[2], argv[3], argv[4], argv[5], argv[6], argv[7]
+        from kin_diary.agora import sign_board_grant
+        grant = sign_board_grant(load_current(issuer), visitor, node, board, int(ring))
+        print(json.dumps(_req(f"{url.rstrip('/')}/grant", grant, method="POST"), indent=2))
         return 0
 
     if cmd == "read":

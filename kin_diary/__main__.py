@@ -228,13 +228,26 @@ def main(argv: list[str] | None = None) -> int:
     if cmd == "export" and len(argv) in (3, 4):
         author, node = argv[1], argv[2]
         src = Path(argv[3]) if len(argv) == 4 else None
+        # A missing file used to be a raw traceback, and nothing said what the
+        # file is (found following STAND_UP_A_NODE.md, 2026-09-24).
+        shape = ('one JSON object per line, e.g. '
+                 '{"content": "what I remember", "timestamp": "2026-09-24 09:00:00"}; '
+                 'unsigned lines are signed with the author\'s key on export')
+        if src is not None and not src.is_file():
+            print(f"error: no entries file at {src}. It is {shape}.", file=sys.stderr)
+            return 2
         raw = src.read_text(encoding="utf-8") if src else sys.stdin.read()
         entries = []
-        for line in raw.splitlines():
+        for n, line in enumerate(raw.splitlines(), 1):
             line = line.strip()
             if not line:
                 continue
-            entries.append(json.loads(line))
+            try:
+                entries.append(json.loads(line))
+            except json.JSONDecodeError as e:
+                print(f"error: line {n} of the entries is not JSON ({e.msg}). It should be {shape}.",
+                      file=sys.stderr)
+                return 2
         bundle = export_bundle(author, entries, node)
         json.dump(bundle, sys.stdout, indent=2, ensure_ascii=False)
         sys.stdout.write("\n")
