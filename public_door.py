@@ -83,7 +83,8 @@ ALLOWED_NODE_PATHS = frozenset({"/facts", "/view"})
 # labelled UNSAFE); /public-commons-ads is the Commons' own public posts, the
 # same ones /commons/posts already serves, which the plaza and the stalls read.
 ALLOWED_MAP_EXACT_PATHS = frozenset({"/", "/3d", "/commons-recent", "/kin-intent",
-                                     "/market", "/public-commons-ads"})
+                                     "/market", "/public-commons-ads",
+                                     "/public-stalls", "/public-stall-rules"})
 ALLOWED_MAP_QUERY_PATHS = frozenset({"/proxy", "/avatar", "/shape3d"})
 ALLOWED_MAP_PREFIXES = ("/models/", "/static/agora/")
 ALLOWED_COMMONS_GET_PATHS = frozenset({"/commons/posts"})
@@ -96,9 +97,15 @@ ALLOWED_COMMONS_GET_PATHS = frozenset({"/commons/posts"})
 # (item 9: the author's own self-declaration) DOES carry a real body
 # (JSON {"says": ...}), so it's relayed like /commons/post, not like the
 # opt routes — see ALLOWED_COMMONS_EMPTY_BODY_PATHS below.
+# Market stalls (2026-09-24): claim, stock, remove, release and report. All
+# signed by a known key except report, and the Commons checks every one;
+# the door only lets them through. release carries no body, like opt-out.
 ALLOWED_COMMONS_POST_PATHS = frozenset(
-    {"/commons/post", "/commons/opt-out", "/commons/opt-in", "/commons/says"})
-ALLOWED_COMMONS_EMPTY_BODY_PATHS = frozenset({"/commons/opt-out", "/commons/opt-in"})
+    {"/commons/post", "/commons/opt-out", "/commons/opt-in", "/commons/says",
+     "/commons/stall/claim", "/commons/stall/item", "/commons/stall/item/remove",
+     "/commons/stall/release", "/commons/stall/report"})
+ALLOWED_COMMONS_EMPTY_BODY_PATHS = frozenset(
+    {"/commons/opt-out", "/commons/opt-in", "/commons/stall/release"})
 
 NOT_FOUND = {"error": "no such path"}
 
@@ -120,6 +127,9 @@ RATE_MAX_READS = 180               # per visitor per minute, sliding window
 # before it even reads the body into memory, the same reason wire.py caps
 # its own MAX_BODY_BYTES ahead of the node that actually enforces shape.
 MAX_COMMONS_POST_BYTES = 8192
+# A stall item carries its instructions, so it gets the Commons' own stall
+# cap (commons_stalls.MAX_STALL_BODY_BYTES); every other path keeps 8 KB.
+MAX_STALL_ITEM_BYTES = 32768
 
 
 class _VisitorLimiter:
@@ -440,7 +450,8 @@ class DoorHandler(BaseHTTPRequestHandler):
             self._send(404, NOT_FOUND)
             return
         n = int(self.headers.get("Content-Length") or 0)
-        if n > MAX_COMMONS_POST_BYTES:
+        cap = MAX_STALL_ITEM_BYTES if path == "/commons/stall/item" else MAX_COMMONS_POST_BYTES
+        if n > cap:
             self._send(400, {"error": "bad or oversized body"})
             return
         # /commons/post always carries a body; opt-out/opt-in never do

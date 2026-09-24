@@ -199,6 +199,10 @@ class _DoorCase(unittest.TestCase):
         _FakeNodeUpstream.seen.clear()
         _FakeMapUpstream.seen.clear()
         _FakeCommonsUpstream.seen.clear()
+        # A fresh budget per test: the class's 30 reads were shared across
+        # every test, so adding tests pushed later ones into 429s. The limit
+        # itself has its own test (max_reads=3) below.
+        self.door.RequestHandlerClass.limiter = public_door._VisitorLimiter(max_reads=self.max_reads)
 
     def _get(self, path, headers=None, method="GET", body=None):
         conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
@@ -252,6 +256,49 @@ class _DoorCase(unittest.TestCase):
         self.assertEqual([p for p, _ in _FakeMapUpstream.seen], ["/market", "/public-commons-ads"])
         for _, req_hdrs in _FakeMapUpstream.seen:
             self.assertEqual(req_hdrs.get("X-Agora-Door"), "1")
+
+    def test_the_stalls_listing_and_rules_reach_the_map(self):
+        """Market stalls (2026-09-24): the room reads /public-stalls and links
+        /public-stall-rules. Without these the public market says "shops
+        couldn't load"."""
+        for path in ("/public-stalls", "/public-stall-rules"):
+            self._get(path)
+        self.assertEqual([p for p, _ in _FakeMapUpstream.seen], ["/public-stalls", "/public-stall-rules"])
+
+    def test_every_stall_action_is_relayed_with_its_signature(self):
+        owner = generate_keypair("Stall-owner", keys_root=Path(self._tmp.name))
+        for path in ("/commons/stall/claim", "/commons/stall/item",
+                     "/commons/stall/item/remove", "/commons/stall/report"):
+            _FakeCommonsUpstream.seen.clear()
+            body = b'{"x": 1}'
+            h = sign_request(owner, "Commons", path, body=body)
+            status, _, _ = self._get(path, headers=h, method="POST", body=body)
+            self.assertEqual(status, 201, path)
+            method, seen_path, req_hdrs, req_body = _FakeCommonsUpstream.seen[0]
+            self.assertEqual((method, seen_path, req_body), ("POST", path, body))
+            self.assertEqual(req_hdrs.get("X-Agora-Key"), owner.key_id)
+
+    def test_stall_release_is_relayed_with_no_body(self):
+        owner = generate_keypair("Stall-leaver", keys_root=Path(self._tmp.name))
+        h = sign_request(owner, "Commons", "/commons/stall/release", body=b"")
+        status, _, _ = self._get("/commons/stall/release", headers=h, method="POST")
+        self.assertEqual(status, 201)
+        self.assertEqual(_FakeCommonsUpstream.seen[0][3], b"")
+
+    def test_only_a_stall_item_gets_the_bigger_body_cap(self):
+        """Instructions make an item bigger than a post: 32 KB for
+        /commons/stall/item, 8 KB for everything else, over it refused here."""
+        mid = b"w" * (public_door.MAX_COMMONS_POST_BYTES + 1)
+        status, _, _ = self._get("/commons/stall/item", method="POST", body=mid,
+                                 headers={"Content-Length": str(len(mid))})
+        self.assertEqual(status, 201)
+        _FakeCommonsUpstream.seen.clear()
+        for path, body in (("/commons/stall/claim", mid),
+                           ("/commons/stall/item", b"w" * (public_door.MAX_STALL_ITEM_BYTES + 1))):
+            status, _, _ = self._get(path, method="POST", body=body,
+                                     headers={"Content-Length": str(len(body))})
+            self.assertEqual(status, 400, path)
+        self.assertEqual(_FakeCommonsUpstream.seen, [])
 
     def test_leaving_the_market_lands_back_on_the_path(self):
         """/3d?from=market reaches the map as /3d?public=1&from=market; any
