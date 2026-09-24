@@ -21,6 +21,8 @@ gargoyle, brazier). Each loads if present; otherwise a plainly labelled
 stand-in is drawn. Nothing here pretends to be what it isn't.
 """
 
+from agora_pawn import PAWN_JS
+
 MARKET_PAGE = r"""<!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
@@ -505,11 +507,10 @@ const FLAMES = [];
 }
 
 // ── The walker: t along the path, u across it; or in the door's lane ────
-const walker = new THREE.Group();
-// r128 exposes the name CapsuleGeometry but it isn't constructible; a cylinder it is.
-const body = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 1.6, 10),
-  new THREE.MeshStandardMaterial({color: 0xcfc7b8, roughness: 0.7}));
-body.position.y = 0.8; walker.add(body); scene.add(walker);
+// The same pawn as the node view: a spirit carrying a lantern (agora_pawn.py).
+const walker = new THREE.Group(); scene.add(walker);
+const player = walker;
+""" + PAWN_JS + r"""
 const state = {mode: 'lane', x: 0, z: SPUR_Z1 - 1.6, t: Math.PI / 2, u: 0};
 let yaw = 0, pitch = 0.28;     // camera looks north on arrival (the door is behind you)
 
@@ -665,6 +666,7 @@ function frameTick(){
     camera.position.x = Math.max(-SPUR_HW - 0.2, Math.min(SPUR_HW + 0.2, camera.position.x));
   }
   camera.lookAt(p.x, p.y + 1.3, p.z);
+  placeLantern(tt);
   FLAMES.forEach(f => {
     const k = 0.85 + 0.15 * Math.sin(tt * 11 + f.seed) * Math.sin(tt * 7.3 + f.seed * 2);
     f.flame.scale.set(1, k, 1); if (f.inner) f.inner.scale.set(1, 0.9 + 0.2 * k, 1);

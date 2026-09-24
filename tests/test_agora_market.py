@@ -93,6 +93,15 @@ class WhatThePageTellsYou(unittest.TestCase):
         self.assertIn("Stand-in. Nosferatu Rex did not load.", PAGE)
         self.assertIn("getObjectByName('flame')", PAGE)
 
+    def test_the_walker_is_the_same_pawn_as_the_node_view(self):
+        # Don, 2026-09-24: the market's pawn is the lantern and spirit from /3d,
+        # one copy (agora_pawn.PAWN_JS) spliced into both pages.
+        import agora_pawn, agora_map
+        self.assertIn(agora_pawn.PAWN_JS, PAGE)
+        self.assertIn(agora_pawn.PAWN_JS, agora_map.PAGE_3D)
+        self.assertIn("placeLantern(tt);", PAGE)
+        self.assertNotIn("CylinderGeometry(0.3, 0.3, 1.6, 10)", PAGE)
+
     def test_the_walker_is_tracked_along_the_path(self):
         self.assertIn("state.t += along / f.speed", PAGE)
         self.assertIn("const LANE_SIDE = Math.sign(frame(Math.PI / 2).N.z)", PAGE)
