@@ -108,6 +108,11 @@ class WhatThePageTellsYou(unittest.TestCase):
         import agora_map
         self.assertIn("teleportPlayer(0, MARKET_DOOR_Z + 4.0, 'Frosty');\n  camera.position.set(0, player.position.y + 3.2, MARKET_DOOR_Z + 0.8);", agora_map.PAGE_3D)
 
+    def test_the_room_sign_says_where_the_panel_really_is(self):
+        # Labels must be true: the panel moved bottom-right (0b60d22).
+        self.assertNotIn("top of your screen", PAGE)
+        self.assertIn("are in the panel, bottom right.", PAGE)
+
     def test_the_walker_is_the_same_pawn_as_the_node_view(self):
         # Don, 2026-09-24: the market's pawn is the lantern and spirit from /3d,
         # one copy (agora_pawn.PAWN_JS) spliced into both pages.

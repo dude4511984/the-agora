@@ -632,7 +632,7 @@ function fillRoom(shop){
   roomDynamic.children.slice().forEach(c => { roomDynamic.remove(c); if (c.material && c.material.map) c.material.map.dispose(); });
   const sign = new THREE.Mesh(new THREE.PlaneGeometry(3.4, 2.0), new THREE.MeshBasicMaterial({map: cardTexture([
     [shop.name || '', 32, '#ffcf7a'], [shop.description || '', 20, '#cfc7b8'],
-    [shop.label || '', 20, '#e8756b'], ['Stall rules and "report this stall" are at the top of your screen.', 16, '#8f877a']], true)}));
+    [shop.label || '', 20, '#e8756b'], ['Stall rules and "report this stall" are in the panel, bottom right.', 16, '#8f877a']], true)}));
   sign.position.set(0, 1.9, -ROOM.hd + 0.03); roomDynamic.add(sign);
   const byTable = {}; (shop.items || []).forEach(it => { byTable[it.table] = it; });
   TABLES.forEach(([x, z], i) => {
