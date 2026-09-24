@@ -13,3 +13,6 @@
 
 Already in the repo: gothic_statue, lantern_01, marble_bust_01, large_castle_door.
 Not on Poly Haven: gargoyle, wall torches, Cthulhu, market stalls. Those come from Quaternius or Kenney (fetched on Frosty), or get built in code.
+
+## Ground textures for the north path (Poly Haven, CC0, 1k jpg: diff, nor_gl, arm)
+All by Rob Tuytel, in `textures/`: aerial_rocks_02 (broken rock), brown_mud_rocks_01 (dirt and stones), burned_ground_01 (scorched earth), castle_brick_broken_06 (crumbling brick, for the arch edges).
