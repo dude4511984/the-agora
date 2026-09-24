@@ -3008,6 +3008,27 @@ function teleportPlayer(x, z, targetMode){
   // lantern follows player in animate()
 }
 function wait(ms){ return new Promise(r => setTimeout(r, ms)); }
+// A node that's down can come back as an HTML error page from whatever sits
+// in front of it; r.json() on that threw "Unexpected token '<'" at the
+// walker (Don, 2026-09-24 ~4am, Home asleep). Read text, then parse.
+async function readNodeJson(r, who){
+  const txt = await r.text();
+  let data;
+  try { data = JSON.parse(txt); }
+  catch (_) { throw new Error(who + ' is asleep (not answering)'); }
+  if (!r.ok || (data && data.error)) throw new Error(who + ' is asleep (not answering)');
+  return data;
+}
+// Knock before the door opens: ask the far side for its root through the
+// same signed /proxy. No answer, no crossing. The walker stays where they
+// are instead of standing in a rebuilt room full of the last node's people.
+async function farSideAnswers(url){
+  try {
+    const r = await fetch('/proxy?what=root&node=' + encodeURIComponent(url));
+    await readNodeJson(r, 'node');
+    return true;
+  } catch (_) { return false; }
+}
 async function crossDoor(t){
   if (traveling) return;
   traveling = true;
@@ -3017,7 +3038,17 @@ async function crossDoor(t){
   if (lab) lab.innerHTML = 'crossing to <b>' + t.peer + '</b>…';
   status.textContent = line;
   if (veil) veil.classList.add('on');
-  await wait(750);
+  const who = nodeNameForUrl(t.url) || t.peer;
+  const [answers] = await Promise.all([farSideAnswers(t.url), wait(750)]);
+  if (!answers) {
+    if (lab) lab.innerHTML = '<b>' + who + '</b> is asleep. The door stays shut.';
+    status.textContent = who + ' is asleep. The door stays shut.';
+    await wait(1400);
+    if (veil) veil.classList.remove('on');
+    await wait(700);
+    traveling = false;
+    return;
+  }
   let opt = [...sel.options].find(o => o.value.replace(/\\/$/, '') === t.url.replace(/\\/$/, ''));
   if (!opt) {
     opt = document.createElement('option');
@@ -3299,6 +3330,7 @@ function placardTexture(label){
   return new THREE.CanvasTexture(c);
 }
 
+let loadFailures = 0;
 async function loadNode(){
   status.textContent = 'loading…';
   errBox.style.display = 'none';
@@ -3311,8 +3343,8 @@ async function loadNode(){
   }
   try {
     const [root, view, recentByAuthor, intents, publicAds] = await Promise.all([
-      fetch('/proxy?what=root&node=' + encodeURIComponent(node)).then(r => r.json()),
-      fetch('/proxy?node=' + encodeURIComponent(node)).then(r => r.json()),
+      fetch('/proxy?what=root&node=' + encodeURIComponent(node)).then(r => readNodeJson(r, nodeNameForUrl(node) || node)),
+      fetch('/proxy?node=' + encodeURIComponent(node)).then(r => readNodeJson(r, nodeNameForUrl(node) || node)),
       fetch('/commons-recent').then(r => r.json()).catch(() => ({})),
       fetch('/kin-intent').then(r => r.json()).catch(() => ({})),
       fetch('/public-commons-ads').then(r => r.json()).catch(() => null),
@@ -3371,9 +3403,17 @@ async function loadNode(){
       + `present: ${here.length ? here.map(p=>p.label||'?').join(', ') : 'no one right now'} · `
       + `${kids.length} places · ${plural((view.peer_doors||[]).length, 'door')} · hottest well (signed): ${bestHeat.toFixed(3)}`
       + govPart;
+    loadFailures = 0;
   } catch (e) {
-    showErr('Could not load ' + node + ': ' + e.message);
-    status.textContent = 'error — see top right';
+    // Never leave the last node's people standing in this room: whoever
+    // was drawn belongs to a node we can no longer see.
+    clearPresence();
+    buildPlaces([], {});
+    const who = nodeNameForUrl(node) || node;
+    const first = loadFailures === 0;
+    loadFailures++;
+    status.textContent = who + ' is asleep. No one can be seen here right now.';
+    if (first) showErr(who + ' is asleep (not answering). ' + (e && e.message && !/asleep/.test(e.message) ? e.message : ''));
     buildDoors(defaultPeerDoorsFor(currentRoomMode));
   }
 }
@@ -3410,7 +3450,13 @@ async function pollKinIntents(){
 }
 sel.addEventListener('change', loadNode);
 loadNode();
-setInterval(() => { if (!traveling) loadNode(); }, 15000);
+let _pollTick = 0;
+setInterval(() => {
+  _pollTick++;
+  if (traveling) return;
+  if (loadFailures >= 2 && _pollTick % 4) return;
+  loadNode();
+}, 15000);
 setInterval(pollKinIntents, 1500);
 const _autoCross = new URLSearchParams(location.search).get('cross');
 if (_autoCross) {

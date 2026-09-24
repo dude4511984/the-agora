@@ -16,7 +16,9 @@ class CrossingIsAPassThrough(unittest.TestCase):
         page = agora_map.PAGE_3D
         self.assertIn('id="cross"', page)
         self.assertIn("veil.classList.add('on')", page)
-        self.assertIn("await wait(750)", page)
+        # The 750ms veil now runs alongside the knock on the far side's
+        # door (2026-09-24); the pass-through is still never shorter.
+        self.assertIn("wait(750)", page)
         self.assertIn("async function crossDoor", page)
         self.assertNotIn("teleportPlayer(0, 6);\n  loadNode().finally", page)
 
