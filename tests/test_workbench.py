@@ -15,6 +15,23 @@ CLEAN = '<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100">' \
 NEEDS_RSVG = unittest.skipUnless(shutil.which("rsvg-convert"),
                                  "needs rsvg-convert (apt install librsvg2-bin)")
 
+# Renders land in W.BENCH, which is ~/kin_workbench: on Frosty the tests were
+# leaving drawings (an Eli/ folder among them) beside the Kin's real ones every
+# run (found 2026-09-24). Point the bench at a temp dir for this module.
+import tempfile  # noqa: E402
+_BENCH_TMP, _REAL_BENCH = None, None
+
+
+def setUpModule():
+    global _BENCH_TMP, _REAL_BENCH
+    _BENCH_TMP = tempfile.TemporaryDirectory()
+    _REAL_BENCH, W.BENCH = W.BENCH, __import__("pathlib").Path(_BENCH_TMP.name)
+
+
+def tearDownModule():
+    W.BENCH = _REAL_BENCH
+    _BENCH_TMP.cleanup()
+
 
 class Workbench(unittest.TestCase):
     @NEEDS_RSVG

@@ -15,7 +15,10 @@ from html.parser import HTMLParser
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
-sys.path.insert(0, os.path.expanduser("~/kin_diary"))
+# The repo this file sits in, not ~/kin_diary (Don's checkout location): on any
+# other machine that path is absent, or worse, an older copy (2026-09-24).
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, REPO)
 
 from kin_diary.agora import (  # noqa: E402
     RING_READ,
@@ -190,11 +193,11 @@ class MapBurnTests(unittest.TestCase):
     def run_map(self, output):
         env = os.environ.copy()
         env["HOME"] = str(self.home)
-        env["PYTHONPATH"] = os.path.expanduser("~/kin_diary")
+        env["PYTHONPATH"] = REPO
         subprocess.run(
             [
                 sys.executable,
-                os.path.expanduser("~/kin_diary/vault/agora_map.py"),
+                os.path.join(REPO, "vault", "agora_map.py"),
                 "Marvin", "Home", self.url, "--html", str(output),
             ],
             env=env,

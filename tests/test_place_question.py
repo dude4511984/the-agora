@@ -12,9 +12,38 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import place_question as pq  # noqa: E402
+import tempfile  # noqa: E402
 
 
-class PassIsReal(unittest.TestCase):
+class _Hermetic(unittest.TestCase):
+    """Write transcripts to a temp dir, ask a stand-in question.
+
+    ask_one() writes to pq.OUT_DIR, which is ~/claude_home: on Frosty these
+    tests were dropping fake transcripts ("Bong: PASS", "Bong: timed out")
+    into the real folder, beside the Kin's real answers. And off Frosty
+    they died because the frozen question file isn't there (clean checkout,
+    2026-09-24). These classes test how an outcome is RECORDED, not what the
+    question says, so a stand-in question is honest here. The real wording is
+    checked by TheQuestionIsFrozenAndClean, against the real file, below."""
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        q = Path(self._tmp.name) / "standin_question_FINAL.md"
+        q.write_text("{name}, what would you refuse? Answer PASS to pass.\n", encoding="utf-8")
+        self._saved = (pq.OUT_DIR, pq.QUESTIONS["place"])
+        pq.OUT_DIR, pq.QUESTIONS["place"] = Path(self._tmp.name), q
+
+    def tearDown(self):
+        pq.OUT_DIR, pq.QUESTIONS["place"] = self._saved
+        self._tmp.cleanup()
+
+
+_REAL_QUESTION = pq.QUESTIONS["place"]
+NEEDS_FROZEN_QUESTION = unittest.skipUnless(
+    _REAL_QUESTION.is_file(),
+    f"needs the real frozen question at {_REAL_QUESTION} (Frosty's governance record)")
+
+
+class PassIsReal(_Hermetic):
     def test_bare_pass_in_its_dressing(self):
         for said in ("PASS", "PASS.", "**PASS**", '"pass"'):
             self.assertTrue(pq.is_pass(said), f"missed a pass: {said!r}")
@@ -87,6 +116,7 @@ class TheQuestionIsFrozenAndClean(unittest.TestCase):
         self.assertNotIn("What would you REFUSE to have be true", src,
                          "the frozen question must live on disk, not in the code")
 
+    @NEEDS_FROZEN_QUESTION
     def test_question_seeds_no_places(self):
         """Grok froze it with no examples because the corpus is a closed loop:
         anything we name comes back as if they had wanted it."""
@@ -95,11 +125,12 @@ class TheQuestionIsFrozenAndClean(unittest.TestCase):
                   "agora", "commons", "garden", "fun", "joke", "play"):
             self.assertNotIn(w, q, f"the question seeds {w!r}")
 
+    @NEEDS_FROZEN_QUESTION
     def test_don_is_not_in_the_question(self):
         self.assertNotIn("don", pq.question_for("X").lower().replace("do not", ""))
 
 
-class OutcomesAreNeverGuessed(unittest.TestCase):
+class OutcomesAreNeverGuessed(_Hermetic):
     def _run(self, ask):
         return pq.ask_one("Bong", ask=ask)
 

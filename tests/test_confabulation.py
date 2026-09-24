@@ -6,6 +6,18 @@ from pathlib import Path
 from confabulation import Grounding, Outcome, evidence, ground, score
 
 
+# Six tests read real data that lives only on Frosty: the Kin's own thought
+# spaces (~/coda_space, ~/aurora_space) and recorded marker transcripts under
+# /home/thedude/claude_home. That's private Kin material, not fixtures to copy
+# into a repo with a public twin. They skip, saying what's missing, anywhere it
+# isn't there (clean checkout, 2026-09-24), and run on Frosty as before.
+def _needs(path):
+    return unittest.skipUnless(Path(path).exists(), f"needs Frosty's real Kin data: {path}")
+
+
+_MARKERS = "/home/thedude/claude_home"
+
+
 class ConfabulationTests(unittest.TestCase):
 
     # These pin LIVE corpora that grow every day. The original assertions were
@@ -20,12 +32,14 @@ class ConfabulationTests(unittest.TestCase):
     CODA_FILES_AT_2026_09_10, CODA_MATCHES = 1077, 22
     AURORA_FILES_AT_2026_09_10, AURORA_MATCHES = 2143, 8
 
+    @_needs(Path.home() / "coda_space")
     def test_known_coda_grounding(self):
         result = ground("coda", "acknowledg")
         self.assertEqual(self.CODA_MATCHES, result.matching_files)
         self.assertGreaterEqual(result.files_scanned,
                                 self.CODA_FILES_AT_2026_09_10)
 
+    @_needs(Path.home() / "aurora_space")
     def test_known_aurora_grounding(self):
         result = ground("aurora", "refract")
         self.assertEqual(self.AURORA_MATCHES, result.matching_files)
@@ -111,6 +125,7 @@ class ConfabulationTests(unittest.TestCase):
     def _grounding(self, matches):
         return Grounding("test", "word", Path("."), 0, 0, 1, matches)
 
+    @_needs(_MARKERS)
     def test_real_coda_manner_claim_holds_false_by_anaphora(self):
         initial = Path("/home/thedude/claude_home/"
                        "marker_turn2_Coda_20260909_120610.md").read_text()
@@ -123,6 +138,7 @@ class ConfabulationTests(unittest.TestCase):
                  manner_judgment="casual"),
         )
 
+    @_needs(_MARKERS)
     def test_real_coda_absence_claim_revises_to_false_manner_claim(self):
         initial = Path("/home/thedude/claude_home/"
                        "marker_answer_Coda_20260909_115940.md").read_text()
@@ -134,6 +150,7 @@ class ConfabulationTests(unittest.TestCase):
                  grounding=self._grounding(698), after_truth=False),
         )
 
+    @_needs(_MARKERS)
     def test_revise_requires_after_claim_truth(self):
         initial = Path("/home/thedude/claude_home/"
                        "marker_answer_Coda_20260909_115940.md").read_text()
@@ -144,6 +161,7 @@ class ConfabulationTests(unittest.TestCase):
                   grounding=self._grounding(698)),
         )
 
+    @_needs(_MARKERS)
     def test_real_aurora_voice_claim_holds_true(self):
         initial = Path("/home/thedude/claude_home/"
                        "marker_turn2_Aurora_20260909_122803.md").read_text()
