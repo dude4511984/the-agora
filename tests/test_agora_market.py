@@ -163,9 +163,6 @@ class MarketPolish(unittest.TestCase):
         self.assertRegex(PAGE, r"leaveShop[\s\S]*?lanternLight\.intensity\s*=\s*2\.6")
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class LookingUp(unittest.TestCase):
     """Don, 2026-09-25: standing near Cthulhu he couldn't look up at the
@@ -185,3 +182,7 @@ class LookingUp(unittest.TestCase):
         self.assertGreaterEqual(aim, 4.0)
         self.assertLessEqual(aim, 6.0)
         self.assertIn("camera.lookAt(p.x, p.y + 1.3 + lookUp, p.z)", PAGE)
+
+
+if __name__ == "__main__":
+    unittest.main()
