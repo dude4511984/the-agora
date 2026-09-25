@@ -87,7 +87,9 @@ ALLOWED_MAP_EXACT_PATHS = frozenset({"/", "/3d", "/commons-recent", "/kin-intent
                                      "/public-stalls", "/public-stall-rules"})
 ALLOWED_MAP_QUERY_PATHS = frozenset({"/proxy", "/avatar", "/shape3d"})
 ALLOWED_MAP_PREFIXES = ("/models/", "/static/agora/")
-ALLOWED_COMMONS_GET_PATHS = frozenset({"/commons/posts"})
+# The map reads the stall listing and the rules through this door too
+# (PUBLIC_COMMONS_URL on Frosty is the public URL), so both are readable here.
+ALLOWED_COMMONS_GET_PATHS = frozenset({"/commons/posts", "/commons/stalls", "/commons/stall-rules"})
 # /commons/opt-out and /commons/opt-in carry no body (commons_server.py's
 # own _optional_body() expects that) but are otherwise relayed exactly
 # like /commons/post: the caller's own signed headers, untouched. Without

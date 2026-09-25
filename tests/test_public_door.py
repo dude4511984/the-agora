@@ -265,6 +265,15 @@ class _DoorCase(unittest.TestCase):
             self._get(path)
         self.assertEqual([p for p, _ in _FakeMapUpstream.seen], ["/public-stalls", "/public-stall-rules"])
 
+    def test_the_stall_listing_and_rules_read_through_to_the_commons(self):
+        """Frosty's map reads the Commons at the public URL, through this door.
+        Live 2026-09-24: /commons/stalls was refused, so the market said
+        "shops couldn't load" and /public-stall-rules was a 502."""
+        for path in ("/commons/stalls", "/commons/stall-rules"):
+            status, _, _ = self._get(path)
+            self.assertNotEqual(status, 404, path)
+        self.assertEqual([s[1] for s in _FakeCommonsUpstream.seen], ["/commons/stalls", "/commons/stall-rules"])
+
     def test_every_stall_action_is_relayed_with_its_signature(self):
         owner = generate_keypair("Stall-owner", keys_root=Path(self._tmp.name))
         for path in ("/commons/stall/claim", "/commons/stall/item",
