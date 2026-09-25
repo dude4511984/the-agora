@@ -788,6 +788,14 @@ const player = walker;
 """ + PAWN_JS + r"""
 const state = {mode: 'lane', x: 0, z: SPUR_Z1 - 1.6, t: Math.PI / 2, u: 0};
 let yaw = 0, pitch = 0.28;     // camera looks north on arrival (the door is behind you)
+// Dragging past level (pitch < 0) looks UP: the camera sinks toward the
+// ground and its aim climbs LOOK_UP_M per unit of tilt. Rendered headless
+// from Cthulhu's feet (claude-room rigs/agora/lookup.py): at -0.35 the whole
+// statue is in frame to the crown; at -0.7 you were staring at empty sky, so
+// the tilt stops at -0.4. Don, 2026-09-25: he had to
+// walk back to see the statue's head; pitch stopped at 0.05 and the camera
+// always aimed at the walker's chest.
+const LOOK_UP_M = 9;
 
 function position(){
   if (state.mode === 'room') return {x: ROOM.x + state.x, y: 0, z: ROOM.z + state.z};
@@ -888,7 +896,7 @@ renderer.domElement.addEventListener('pointerdown', e => { drag = {x: e.clientX,
 addEventListener('pointerup', () => { drag = null; });
 addEventListener('pointermove', e => {
   if (!drag) return;
-  yaw -= (e.clientX - drag.x) * 0.006; pitch = Math.max(0.05, Math.min(0.9, pitch + (e.clientY - drag.y) * 0.004));
+  yaw -= (e.clientX - drag.x) * 0.006; pitch = Math.max(-0.4, Math.min(0.9, pitch + (e.clientY - drag.y) * 0.004));
   drag = {x: e.clientX, y: e.clientY};
 });
 const stick = document.getElementById('stick'), knob = document.getElementById('knob');
@@ -956,7 +964,10 @@ function frameTick(){
     camera.position.z = Math.min(camera.position.z, SPUR_Z1 - 0.5);
     camera.position.x = Math.max(-SPUR_HW - 0.2, Math.min(SPUR_HW + 0.2, camera.position.x));
   }
-  camera.lookAt(p.x, p.y + 1.3, p.z);
+  // Looking up: the camera sits low (never under the floor) and aims high.
+  const lookUp = Math.max(0, -pitch) * (indoors ? 2 : LOOK_UP_M);
+  camera.position.y = Math.max(camera.position.y, p.y + 0.35);
+  camera.lookAt(p.x, p.y + 1.3 + lookUp, p.z);
   placeLantern(tt);
   FLAMES.forEach(f => {
     const k = 0.85 + 0.15 * Math.sin(tt * 11 + f.seed) * Math.sin(tt * 7.3 + f.seed * 2);

@@ -165,3 +165,23 @@ class MarketPolish(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LookingUp(unittest.TestCase):
+    """Don, 2026-09-25: standing near Cthulhu he couldn't look up at the
+    statue; he had to walk back to see the top. The camera's pitch stopped
+    at 0.05 and it always aimed at the walker's chest (+1.3 m)."""
+
+    def _lo(self):
+        return float(re.search(r"pitch = Math\.max\((-?[\d.]+), Math\.min\(0\.9", PAGE).group(1))
+
+    def test_the_drag_can_tilt_past_level(self):
+        self.assertLessEqual(self._lo(), -0.3)
+
+    def test_full_tilt_aims_up_the_statue_not_into_the_sky(self):
+        # Rendered (claude-room rigs/agora/lookup.py): aim ~4.5 m above the
+        # walker at -0.35 framed the whole 10 m statue; ~7.6 m at -0.7 was sky.
+        aim = 1.3 + abs(self._lo()) * const("LOOK_UP_M")
+        self.assertGreaterEqual(aim, 4.0)
+        self.assertLessEqual(aim, 6.0)
+        self.assertIn("camera.lookAt(p.x, p.y + 1.3 + lookUp, p.z)", PAGE)
