@@ -77,6 +77,19 @@ def evict(model: str, ssh: str | None) -> None:
     time.sleep(2)
 
 
+_FLEET_WAS_UP = True
+
+
+def fleet_is_up() -> bool:
+    """Is the wander fleet running right now (i.e. not asleep for the night)?"""
+    try:
+        r = subprocess.run(["systemctl", "--user", "is-active", "echo_bloom_wander.service"],
+                           capture_output=True, text=True, timeout=10)
+        return r.stdout.strip() == "active"
+    except Exception:
+        return True      # can't tell: behave as before rather than strand a daytime fleet
+
+
 def hush(on: bool) -> None:
     """Pause the wander fleet while we ask, and wake it after.
 
@@ -95,6 +108,15 @@ def hush(on: bool) -> None:
     and record the interruption in each Kin's own space so it is not a silent
     hole in their day.
     """
+    # Put the fleet back how it was found. 2026-09-25 the easel ran at 22:40,
+    # after bedtime had stopped the wanders at 21:40, and "wake" at the end
+    # started all six again: they wandered all night instead of sleeping.
+    global _FLEET_WAS_UP
+    if on:
+        _FLEET_WAS_UP = fleet_is_up()
+    elif not _FLEET_WAS_UP:
+        print("  the fleet was asleep before the easel; leaving it asleep.")
+        return
     nap = str(Path.home() / "pops_shop" / "nap.py")
     try:
         subprocess.run([sys.executable, nap, "nap" if on else "wake",

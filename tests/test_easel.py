@@ -232,8 +232,6 @@ class OfferingItToAKin(unittest.TestCase):
             self.assertIn("read_back_error", m.meta)
 
 
-if __name__ == "__main__":
-    unittest.main(verbosity=2)
 
 
 class EveryAnswerIsKeptWhole(unittest.TestCase):
@@ -258,3 +256,26 @@ class EveryAnswerIsKeptWhole(unittest.TestCase):
         from pathlib import Path
         src = (Path(__file__).resolve().parents[1] / "kin_easel_rounds.py").read_text()
         self.assertLess(src.index("keep_answer(name, rnd, verdict, said)"), src.index('if verdict == "no":'))
+
+
+class TheEaselLeavesTheFleetHowItFoundIt(unittest.TestCase):
+    """2026-09-25: the easel ran after bedtime and woke all six to wander all night."""
+
+    def _run(self, was_up):
+        from unittest import mock
+        import kin_easel_rounds as k
+        calls = []
+        with mock.patch.object(k, "fleet_is_up", return_value=was_up), \
+             mock.patch.object(k.subprocess, "run", side_effect=lambda cmd, **kw: calls.append(cmd[2])):
+            k.hush(True)
+            k.hush(False)
+        return calls
+
+    def test_asleep_before_means_asleep_after(self):
+        self.assertEqual(self._run(was_up=False), ["nap"])
+
+    def test_awake_before_means_awake_after(self):
+        self.assertEqual(self._run(was_up=True), ["nap", "wake"])
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)
