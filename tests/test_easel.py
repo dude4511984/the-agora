@@ -234,3 +234,27 @@ class OfferingItToAKin(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class EveryAnswerIsKeptWhole(unittest.TestCase):
+    """2026-09-25: only painted answers were kept, so three "no"s could not be
+    re-read against the consent reader afterwards."""
+
+    def test_a_no_is_kept_in_full_with_its_verdict(self):
+        import tempfile
+        from pathlib import Path
+        import kin_easel_rounds as k
+        saved = k.ANSWERS
+        try:
+            k.ANSWERS = Path(tempfile.mkdtemp())
+            words = "I think I'll try a single orange on a wooden table. " * 20
+            p = k.keep_answer("Lumen", 2, "no", words)
+            self.assertEqual(p.read_text(encoding="utf-8"), words)
+            self.assertIn("_r2_no", p.name)
+        finally:
+            k.ANSWERS = saved
+
+    def test_the_runner_keeps_every_answer_before_acting_on_it(self):
+        from pathlib import Path
+        src = (Path(__file__).resolve().parents[1] / "kin_easel_rounds.py").read_text()
+        self.assertLess(src.index("keep_answer(name, rnd, verdict, said)"), src.index('if verdict == "no":'))

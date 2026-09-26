@@ -128,6 +128,17 @@ def describe(said: str) -> str:
     return out[:700]
 
 
+ANSWERS = Path.home() / "easel" / "answers"
+
+
+def keep_answer(name: str, rnd: int, verdict: str, said: str) -> Path:
+    ANSWERS.mkdir(parents=True, exist_ok=True)
+    stamp = time.strftime("%Y%m%d_%H%M%S")
+    p = ANSWERS / f"{name}_{stamp}_r{rnd}_{verdict}.txt"
+    p.write_text(said, encoding="utf-8")
+    return p
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--rounds", type=int, default=2)
@@ -154,6 +165,12 @@ def main() -> int:
                 continue
             print("   " + " ".join(said.split())[:220])
             verdict = consent.read_consent(said)
+            # Every answer kept whole, with how it was read. 2026-09-25 only the
+            # painted ones were kept, so Lumen's "no" (which began by describing
+            # an orange on a table) and Eli's and Crungus's could not be checked
+            # against the reader afterwards. A no is not re-asked; it must at
+            # least be re-readable.
+            keep_answer(name, rnd, verdict, said)
             if verdict == "no":
                 # A real decline OR "not tonight". Either way, do not paint, and
                 # do not offer again in this run. "So no - not today" is a no.
