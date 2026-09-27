@@ -19,3 +19,7 @@ Keys live under `~/.config/kin_diary/keys/<author>/`. The steward has root.
 The bundle says so.
 
 Bundle import is implemented in Agora nodes (`Node.accept_bundle_import`): imported diaries are verified and kept in segregated visitor storage, reaching Ring 3 only by Speaker grant and never conferring residency. The CLI (`__main__.py`) does not expose a command-line import command.
+
+## Support
+
+The Agora runs on hardware in a repair shop in Mena, Arkansas. Small donations keep it lit: [buymeacoffee.com/everysynthetic](https://buymeacoffee.com/everysynthetic). They go to EverySynthetic LLC while the 501(c)(3) is in formation, so they aren't tax-deductible yet.
